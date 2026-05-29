@@ -1,10 +1,22 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+
+
+@dataclass(frozen=True)
+class NoteStats:
+    total: int
+    llm_generated: int
+    llm_failed: int
+    llm_skipped: int
+    embedding_indexed: int
+    embedding_failed: int
+    embedding_skipped: int
 
 
 @dataclass(frozen=True)
@@ -199,6 +211,65 @@ class PrismDatabase:
                 """).fetchall()
         return [_row_to_record(row) for row in rows]
 
+    def list_recent_notes(self, limit: int) -> list[NoteRecord]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"SELECT {_NOTE_COLUMNS} FROM notes ORDER BY date_saved DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [_row_to_record(row) for row in rows]
+
+    def list_tags_with_counts(self) -> list[tuple[str, int]]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT tags_json FROM notes WHERE llm_status = 'generated' AND tags_json IS NOT NULL"
+            ).fetchall()
+        counts: dict[str, int] = {}
+        for row in rows:
+            try:
+                tags = json.loads(row[0])
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if isinstance(tags, list):
+                for tag in tags:
+                    if isinstance(tag, str) and tag:
+                        counts[tag] = counts.get(tag, 0) + 1
+        return sorted(counts.items(), key=lambda x: (-x[1], x[0]))
+
+    def get_note_stats(self) -> NoteStats:
+        with self.connect() as conn:
+            row = conn.execute("""
+                SELECT
+                    COUNT(*) as total,
+                    SUM(CASE WHEN llm_status = 'generated' THEN 1 ELSE 0 END) as llm_generated,
+                    SUM(CASE WHEN llm_status = 'failed' THEN 1 ELSE 0 END) as llm_failed,
+                    SUM(CASE WHEN llm_status = 'skipped' THEN 1 ELSE 0 END) as llm_skipped,
+                    SUM(CASE WHEN embedding_status = 'indexed' THEN 1 ELSE 0 END) as embedding_indexed,
+                    SUM(CASE WHEN embedding_status = 'failed' THEN 1 ELSE 0 END) as embedding_failed,
+                    SUM(CASE WHEN embedding_status = 'skipped' THEN 1 ELSE 0 END) as embedding_skipped
+                FROM notes
+            """).fetchone()
+        return NoteStats(
+            total=row["total"] or 0,
+            llm_generated=row["llm_generated"] or 0,
+            llm_failed=row["llm_failed"] or 0,
+            llm_skipped=row["llm_skipped"] or 0,
+            embedding_indexed=row["embedding_indexed"] or 0,
+            embedding_failed=row["embedding_failed"] or 0,
+            embedding_skipped=row["embedding_skipped"] or 0,
+        )
+
+    def list_notes_by_tag(self, tag: str, limit: int) -> list[NoteRecord]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"""SELECT {_NOTE_COLUMNS} FROM notes
+                    WHERE llm_status = 'generated' AND tags_json LIKE ?
+                    ORDER BY date_saved DESC LIMIT ?""",
+                (f'%"{tag}"%', limit),
+            ).fetchall()
+        records = [_row_to_record(row) for row in rows]
+        return [r for r in records if tag in _parse_tags_json(r.tags_json)]
+
     def update_embedding_metadata(
         self,
         note_id: str,
@@ -340,3 +411,13 @@ def _row_to_record(row: sqlite3.Row) -> NoteRecord:
         embedding_text_hash=row["embedding_text_hash"],
         related_notes_json=row["related_notes_json"],
     )
+
+
+def _parse_tags_json(raw: str | None) -> list[str]:
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+        return data if isinstance(data, list) else []
+    except json.JSONDecodeError:
+        return []
