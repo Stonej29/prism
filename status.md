@@ -6,14 +6,13 @@ Last updated: 2026-05-29
 
 PRISM is a Docker Compose Telegram bot that saves links into an Obsidian-compatible vault, archives source material, extracts text, deduplicates captures, optionally generates structured LLM notes, builds a LanceDB semantic index for related-note search and Obsidian backlinks, exposes retrieval/browse and maintenance commands from Telegram, and can synthesize and rate new project ideas from the saved knowledge base.
 
-## Scope vs `overview.md`
+## Scope
 
-The build plan (overview.md §24, Phases 1–6) is fully implemented, and the full MVP scope (overview.md §22) is now complete.
+The full MVP scope is implemented across Phases 1–6.
 
 - **MVP complete:** Telegram bot, default link saving, website/PDF/GitHub fetching, cleaned-text + raw-HTML snapshots, structured Markdown note generation, Obsidian vault + YAML frontmatter, tags, related notes, personal profile, evaluation scores, SQLite metadata, LanceDB semantic search, duplicate detection, `/ask`, `/more`, `/recent`, `/tags`, `/related`, `/idea`, idea Markdown files, and 1–5 star idea ratings.
-- **Beyond MVP / listed as "later":** `/reprocess`, arXiv metadata, and GitHub repo metadata (stars/license/language) are already implemented. `/find`, `/status`, and `/help` are extra retrieval/observability/usability commands not in the MVP includes list.
-- **Not implemented (non-MVP):** live web search in `/ask` is intentionally excluded per the MVP rule. Scheduled daily/weekly ideas and other overview.md §23 items remain future work.
-- **Minor divergence:** generated-idea note fields differ from the example in overview.md §17 (PRISM uses `created`/`rating`/`status` and sections Problem/Approach/Why It Fits/Components/Risks, rather than `date_generated`/`user_rating`/`novelty_score`/`feasibility_score`/`next step`). Functionally complete for generation + ratings; the exact frontmatter keys could be aligned later if desired.
+- **Beyond MVP:** `/reprocess`, arXiv metadata, and GitHub repo metadata (stars/license/language) are implemented. `/find`, `/status`, `/retry_failed`, `/delete`, `/wipe_all`, `/reset_me`, `/update_me`, and `/help` are extra commands beyond the original scope.
+- **Not implemented:** live web search in `/ask` is intentionally excluded. Scheduled daily/weekly ideas remain future work.
 
 ## Completed
 
@@ -127,7 +126,7 @@ Manual checks still recommended for Phase 4:
 
 ## Next Recommended Work
 
-Phases 1–6 and the full MVP scope are now implemented. Suggested follow-ups (all post-MVP / overview.md §23 future features):
+Phases 1–6 and the full MVP scope are now implemented. Suggested follow-ups:
 
 1. Add note-editing commands beyond deletion, such as rename, retag, and reviewed/useful status markers.
 2. Add optional local embedding/LLM backend support if direct API costs or reliability become an issue.
