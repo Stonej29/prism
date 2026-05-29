@@ -17,6 +17,14 @@ class NoteRecord:
     status: str
     title: str
     summary: str
+    source_kind: str = "unknown"
+    local_archive: str | None = None
+    pdf_path: str | None = None
+    content_hash: str | None = None
+    fetch_status: str = "not_fetched"
+    fetch_error: str | None = None
+    fetched_at: str | None = None
+    metadata_json: str | None = None
 
 
 class PrismDatabase:
@@ -37,9 +45,8 @@ class PrismDatabase:
 
     def find_by_source_url(self, source_url: str) -> NoteRecord | None:
         with self.connect() as conn:
-            row = conn.execute(
-                """
-                SELECT note_id, source_url, resolved_url, note_path, date_saved, status, title, summary
+            row = conn.execute(f"""
+                SELECT {_NOTE_COLUMNS}
                 FROM notes
                 WHERE source_url = ?
                 """,
@@ -47,11 +54,25 @@ class PrismDatabase:
             ).fetchone()
         return _row_to_record(row) if row else None
 
+    def find_by_content_hash(self, content_hash: str | None) -> NoteRecord | None:
+        if not content_hash:
+            return None
+        with self.connect() as conn:
+            row = conn.execute(f"""
+                SELECT {_NOTE_COLUMNS}
+                FROM notes
+                WHERE content_hash = ? AND content_hash IS NOT NULL AND content_hash != ''
+                ORDER BY date_saved ASC
+                LIMIT 1
+                """,
+                (content_hash,),
+            ).fetchone()
+        return _row_to_record(row) if row else None
+
     def find_by_note_id(self, note_id: str) -> NoteRecord | None:
         with self.connect() as conn:
-            row = conn.execute(
-                """
-                SELECT note_id, source_url, resolved_url, note_path, date_saved, status, title, summary
+            row = conn.execute(f"""
+                SELECT {_NOTE_COLUMNS}
                 FROM notes
                 WHERE note_id = ?
                 """,
@@ -64,9 +85,11 @@ class PrismDatabase:
             conn.execute(
                 """
                 INSERT INTO notes (
-                    note_id, source_url, resolved_url, note_path, date_saved, status, title, summary
+                    note_id, source_url, resolved_url, note_path, date_saved, status, title, summary,
+                    source_kind, local_archive, pdf_path, content_hash, fetch_status, fetch_error,
+                    fetched_at, metadata_json
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record.note_id,
@@ -77,6 +100,14 @@ class PrismDatabase:
                     record.status,
                     record.title,
                     record.summary,
+                    record.source_kind,
+                    record.local_archive,
+                    record.pdf_path,
+                    record.content_hash,
+                    record.fetch_status,
+                    record.fetch_error,
+                    record.fetched_at,
+                    record.metadata_json,
                 ),
             )
 
@@ -101,6 +132,38 @@ class PrismDatabase:
                 )
                 """
             )
+            _add_missing_columns(conn)
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_notes_content_hash
+                ON notes(content_hash)
+                WHERE content_hash IS NOT NULL AND content_hash != ''
+                """
+            )
+
+
+_NOTE_COLUMNS = """
+    note_id, source_url, resolved_url, note_path, date_saved, status, title, summary,
+    source_kind, local_archive, pdf_path, content_hash, fetch_status, fetch_error, fetched_at, metadata_json
+"""
+
+_ADDED_COLUMNS = {
+    "source_kind": "TEXT NOT NULL DEFAULT 'unknown'",
+    "local_archive": "TEXT",
+    "pdf_path": "TEXT",
+    "content_hash": "TEXT",
+    "fetch_status": "TEXT NOT NULL DEFAULT 'not_fetched'",
+    "fetch_error": "TEXT",
+    "fetched_at": "TEXT",
+    "metadata_json": "TEXT",
+}
+
+
+def _add_missing_columns(conn: sqlite3.Connection) -> None:
+    existing = {row["name"] for row in conn.execute("PRAGMA table_info(notes)")}
+    for column, definition in _ADDED_COLUMNS.items():
+        if column not in existing:
+            conn.execute(f"ALTER TABLE notes ADD COLUMN {column} {definition}")
 
 
 def _row_to_record(row: sqlite3.Row) -> NoteRecord:
@@ -113,4 +176,12 @@ def _row_to_record(row: sqlite3.Row) -> NoteRecord:
         status=row["status"],
         title=row["title"],
         summary=row["summary"],
+        source_kind=row["source_kind"],
+        local_archive=row["local_archive"],
+        pdf_path=row["pdf_path"],
+        content_hash=row["content_hash"],
+        fetch_status=row["fetch_status"],
+        fetch_error=row["fetch_error"],
+        fetched_at=row["fetched_at"],
+        metadata_json=row["metadata_json"],
     )

@@ -16,7 +16,7 @@ class PrismBot:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
         self.database = PrismDatabase(settings.sqlite_path)
-        self.notes = NoteService(settings.vault_path, self.database)
+        self.notes = NoteService(settings.vault_path, self.database, settings.archive_path)
 
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         del context
@@ -35,9 +35,12 @@ class PrismBot:
         result = self.notes.save_url(source_url)
         record = result.record
         if result.created:
-            reply = f"Saved: {record.title}\n{record.summary}\n/more {record.note_id}"
+            archive_status = "archived" if record.fetch_status == "fetched" else "fetch failed"
+            reply = f"Saved: {record.title}\n{record.source_kind}, {archive_status}\n/more {record.note_id}"
         else:
-            reply = f"Already saved: {record.title}\n{record.summary}\n/more {record.note_id}"
+            prefix = "Already saved" if result.duplicate_reason == "source_url" else "Already captured"
+            archive_status = "archived" if record.fetch_status == "fetched" else "fetch failed"
+            reply = f"{prefix}: {record.title}\n{record.source_kind}, {archive_status}\n/more {record.note_id}"
         await message.reply_text(reply)
 
     async def handle_more(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -62,6 +65,8 @@ class PrismBot:
             f"{record.title}\n"
             f"{record.summary}\n"
             f"Status: {record.status}\n"
+            f"Fetch: {record.fetch_status}\n"
+            f"Kind: {record.source_kind}\n"
             f"Path: {record.note_path}\n"
             f"Source: {record.source_url}"
         )
@@ -71,7 +76,7 @@ class PrismBot:
         if not await self._is_allowed(update):
             return
         if update.effective_message:
-            await update.effective_message.reply_text("Send a URL to save a PRISM placeholder note.")
+            await update.effective_message.reply_text("Send a URL to save and archive it in PRISM.")
 
     async def _is_allowed(self, update: Update) -> bool:
         user = update.effective_user
@@ -98,5 +103,6 @@ def main() -> None:
     logging.getLogger("httpcore").setLevel(logging.WARNING)
     settings = load_settings()
     settings.vault_path.mkdir(parents=True, exist_ok=True)
-    LOGGER.info("Starting PRISM bot with vault at %s and SQLite at %s", settings.vault_path, settings.sqlite_path)
+    settings.archive_path.mkdir(parents=True, exist_ok=True)
+    LOGGER.info("Starting PRISM bot with vault at %s, archives at %s, and SQLite at %s", settings.vault_path, settings.archive_path, settings.sqlite_path)
     build_application(settings).run_polling(allowed_updates=Update.ALL_TYPES)

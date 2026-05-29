@@ -14,6 +14,7 @@ class Settings:
     llm_model: str | None
     vault_path: Path
     sqlite_path: Path
+    archive_path: Path
 
 
 def load_settings() -> Settings:
@@ -33,6 +34,7 @@ def load_settings() -> Settings:
         llm_model=_optional_env("LLM_MODEL"),
         vault_path=Path(os.getenv("VAULT_PATH", "/data/research-vault")),
         sqlite_path=Path(os.getenv("SQLITE_PATH", "/data/prism.sqlite3")),
+        archive_path=Path(os.getenv("ARCHIVE_PATH", "/data/archives")),
     )
 
 
