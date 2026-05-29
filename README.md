@@ -1,5 +1,10 @@
 # PRISM
 
+### TODO
+- update docs
+- terminal interface
+- web interface
+
 **Personal Research Interlinked System** — a self-hosted research memory and idea engine.
 
 Send a URL to a Telegram bot and PRISM resolves, fetches, archives, and extracts the
