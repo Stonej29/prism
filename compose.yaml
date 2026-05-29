@@ -6,5 +6,5 @@ services:
       - path: .env
         required: false
     volumes:
-      - ./runtime:/data:Z
+      - ./runtime:/data:z
     restart: unless-stopped

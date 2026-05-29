@@ -13,6 +13,7 @@ import yaml
 
 from prism.db import NoteRecord, PrismDatabase
 from prism.fetch import FetchResult, extract_website_text, fetch_source
+from prism.index import NoteIndexer, RelatedCandidate, canonical_index_text
 from prism.llm import LLMClient, LLMConfig, build_llm_context
 
 URL_RE = re.compile(r"https?://[^\s<>()]+", re.IGNORECASE)
@@ -43,13 +44,21 @@ class ReprocessResult:
 
 
 class NoteService:
-    def __init__(self, vault_path: Path, database: PrismDatabase, archive_path: Path, llm_config: LLMConfig | None = None) -> None:
+    def __init__(
+        self,
+        vault_path: Path,
+        database: PrismDatabase,
+        archive_path: Path,
+        llm_config: LLMConfig | None = None,
+        indexer: NoteIndexer | None = None,
+    ) -> None:
         self.vault_path = vault_path
         self.notes_path = vault_path / "notes"
         self.archive_path = archive_path
         self.profile_path = vault_path / "profile" / "personal.md"
         self.database = database
         self.llm_config = llm_config or LLMConfig("https://openrouter.ai/api/v1", None, None)
+        self.indexer = indexer
         self.notes_path.mkdir(parents=True, exist_ok=True)
         self.archive_path.mkdir(parents=True, exist_ok=True)
         ensure_profile(self.profile_path)
@@ -94,6 +103,7 @@ class NoteService:
         record = self._apply_llm(record, fetch.extracted_text, fetch.metadata)
         note_path.write_text(render_note(record, fetch.extracted_text), encoding="utf-8")
         self.database.insert_note(record)
+        record = self._index_after_persist(record)
         return SaveResult(record=record, created=True)
 
     def reprocess(self, note_id: str) -> ReprocessResult:
@@ -128,6 +138,7 @@ class NoteService:
         note_path = self.vault_path / updated.note_path
         note_path.write_text(render_note(updated, extracted_text), encoding="utf-8")
         self.database.update_note(updated)
+        updated = self._index_after_persist(updated)
         if updated.llm_status == "generated":
             return ReprocessResult(record=updated, ok=True, message=f"Reprocessed: {updated.title}")
         return ReprocessResult(record=updated, ok=False, message=f"LLM {updated.llm_status}: {updated.llm_error or 'not generated'}")
@@ -141,6 +152,7 @@ class NoteService:
             return replace(record, llm_status="skipped", llm_error="no extracted text available")
 
         try:
+            related_candidates = self._related_candidates(record, extracted_text)
             context = build_llm_context(
                 title=record.title,
                 source_kind=record.source_kind,
@@ -151,9 +163,10 @@ class NoteService:
                 fetch_error=record.fetch_error,
                 metadata=metadata,
                 extracted_text=extracted_text,
+                related_candidates=[candidate.to_llm_dict() for candidate in related_candidates],
             )
             generation = LLMClient(self.llm_config).generate_note(context, self.profile_path.read_text(encoding="utf-8"))
-            structured = normalize_structured_summary(generation.data)
+            structured = normalize_structured_summary(generation.data, related_candidates)
             title = clean_title(_string_field(structured, "title")) or record.title
             summary = _string_field(structured, "quick_summary") or record.summary
             tags = _tags(structured.get("tags"))
@@ -170,11 +183,35 @@ class NoteService:
                 tags_json=json.dumps(tags, ensure_ascii=True),
                 scores_json=json.dumps(scores, ensure_ascii=True, sort_keys=True),
                 structured_summary_json=json.dumps(structured, ensure_ascii=True, sort_keys=True),
+                related_notes_json=json.dumps(structured.get("related_notes", []), ensure_ascii=True, sort_keys=True),
             )
         except Exception as exc:
             if force or record.llm_status != "generated":
                 return replace(record, llm_status="failed", llm_error=f"{type(exc).__name__}: {exc}"[:1000])
             return record
+
+    def _related_candidates(self, record: NoteRecord, extracted_text: str) -> list[RelatedCandidate]:
+        if not self.indexer or not self.indexer.is_configured:
+            return []
+        query = f"{canonical_index_text(record)}\nExtracted text: {extracted_preview(extracted_text)[:8000]}"
+        try:
+            return self.indexer.search_text(query, limit=10, exclude_note_id=record.note_id)
+        except Exception:
+            return []
+
+    def _index_after_persist(self, record: NoteRecord) -> NoteRecord:
+        if not self.indexer:
+            return record
+        result = self.indexer.index_record(record, self.database)
+        return replace(
+            record,
+            embedding_status=result.status,
+            embedding_error=result.error,
+            embedded_at=result.embedded_at,
+            embedding_model=result.model,
+            embedding_dimensions=result.dimensions,
+            embedding_text_hash=result.text_hash,
+        )
 
     def _new_note_id(self) -> str:
         while True:
@@ -273,6 +310,7 @@ def render_note(record: NoteRecord, extracted_text: str = "") -> str:
         "interest_score": scores.get("interest"),
         "overall_score": scores.get("overall"),
         "summary_status": "generated" if generated else "placeholder",
+        "related_notes": [item["id"] for item in related_notes_for_record(record)],
     }
     yaml_text = yaml.safe_dump(frontmatter, sort_keys=False, allow_unicode=False).strip()
 
@@ -295,6 +333,7 @@ def render_generated_body(record: NoteRecord, structured: dict[str, Any], extrac
         f"## Why It Matters\n\n{_block_field(structured, 'why_it_matters')}\n\n"
         f"## Personal Relevance\n\n{_block_field(structured, 'personal_relevance')}\n\n"
         f"## Possible Project Ideas\n\n{_list_or_text(structured.get('project_ideas'))}\n\n"
+        f"## Related Notes\n\n{_related_note_lines(record)}\n\n"
         f"## Source\n\n{_source_lines(record)}\n\n"
         f"## Archive\n\n{_archive_lines(record)}\n\n"
         f"## Extracted Text Preview\n\n{preview}\n"
@@ -335,11 +374,48 @@ def more_summary_for_record(record: NoteRecord) -> str:
     return _string_field(structured, "detailed_summary") or record.summary
 
 
-def normalize_structured_summary(data: dict[str, Any]) -> dict[str, Any]:
+def normalize_structured_summary(data: dict[str, Any], related_candidates: list[RelatedCandidate] | None = None) -> dict[str, Any]:
     normalized = dict(data)
     normalized["tags"] = _tags(normalized.get("tags"))
+    normalized["related_notes"] = normalize_related_notes(normalized.get("related_notes"), related_candidates or [])
     for key, value in _scores(normalized).items():
         normalized[key] = value
+    return normalized
+
+
+def normalize_related_notes(value: Any, related_candidates: list[RelatedCandidate] | None = None) -> list[dict[str, str]]:
+    if not isinstance(value, list):
+        return []
+    candidates = {candidate.note_id: candidate for candidate in (related_candidates or [])}
+    related: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        note_id = str(item.get("id") or item.get("note_id") or "").strip().lower()
+        if not note_id or note_id in seen:
+            continue
+        candidate = candidates.get(note_id)
+        title = _clean_related_text(item.get("title")) or (candidate.title if candidate else note_id)
+        reason = _clean_related_text(item.get("reason")) or "Related context."
+        path = candidate.note_path if candidate else ""
+        related.append({"id": note_id, "title": title, "reason": reason, "path": path})
+        seen.add(note_id)
+    return related[:10]
+
+
+def related_notes_for_record(record: NoteRecord) -> list[dict[str, str]]:
+    data = _json_array(record.related_notes_json)
+    normalized: list[dict[str, str]] = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        note_id = str(item.get("id") or "").strip()
+        title = str(item.get("title") or note_id).strip()
+        reason = str(item.get("reason") or "Related context.").strip()
+        path = str(item.get("path") or "").strip()
+        if note_id:
+            normalized.append({"id": note_id, "title": title, "reason": reason, "path": path})
     return normalized
 
 
@@ -348,6 +424,23 @@ def extracted_preview(text: str) -> str:
     if len(preview) > PREVIEW_LIMIT:
         return preview[:PREVIEW_LIMIT].rstrip() + "..."
     return preview
+
+
+def _related_note_lines(record: NoteRecord) -> str:
+    items = related_notes_for_record(record)
+    if not items:
+        return "None selected."
+    lines: list[str] = []
+    for item in items:
+        stem = Path(item.get("path") or item["title"]).stem or item["id"]
+        lines.append(f"- [[{stem}|{item['title']}]] - {item['reason']}")
+    return "\n".join(lines)
+
+
+def _clean_related_text(value: Any) -> str:
+    if not isinstance(value, str):
+        return ""
+    return re.sub(r"\s+", " ", value).strip()[:300]
 
 
 def _source_lines(record: NoteRecord) -> str:

@@ -32,6 +32,13 @@ class NoteRecord:
     tags_json: str | None = None
     scores_json: str | None = None
     structured_summary_json: str | None = None
+    embedding_status: str = "skipped"
+    embedding_error: str | None = None
+    embedded_at: str | None = None
+    embedding_model: str | None = None
+    embedding_dimensions: int | None = None
+    embedding_text_hash: str | None = None
+    related_notes_json: str | None = None
 
 
 class PrismDatabase:
@@ -95,9 +102,10 @@ class PrismDatabase:
                     note_id, source_url, resolved_url, note_path, date_saved, status, title, summary,
                     source_kind, local_archive, pdf_path, content_hash, fetch_status, fetch_error,
                     fetched_at, metadata_json, llm_status, llm_error, llm_generated_at, llm_model,
-                    tags_json, scores_json, structured_summary_json
+                    tags_json, scores_json, structured_summary_json, embedding_status, embedding_error,
+                    embedded_at, embedding_model, embedding_dimensions, embedding_text_hash, related_notes_json
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record.note_id,
@@ -123,6 +131,13 @@ class PrismDatabase:
                     record.tags_json,
                     record.scores_json,
                     record.structured_summary_json,
+                    record.embedding_status,
+                    record.embedding_error,
+                    record.embedded_at,
+                    record.embedding_model,
+                    record.embedding_dimensions,
+                    record.embedding_text_hash,
+                    record.related_notes_json,
                 ),
             )
 
@@ -135,7 +150,9 @@ class PrismDatabase:
                     title = ?, summary = ?, source_kind = ?, local_archive = ?, pdf_path = ?,
                     content_hash = ?, fetch_status = ?, fetch_error = ?, fetched_at = ?,
                     metadata_json = ?, llm_status = ?, llm_error = ?, llm_generated_at = ?,
-                    llm_model = ?, tags_json = ?, scores_json = ?, structured_summary_json = ?
+                    llm_model = ?, tags_json = ?, scores_json = ?, structured_summary_json = ?,
+                    embedding_status = ?, embedding_error = ?, embedded_at = ?, embedding_model = ?,
+                    embedding_dimensions = ?, embedding_text_hash = ?, related_notes_json = ?
                 WHERE note_id = ?
                 """,
                 (
@@ -161,9 +178,62 @@ class PrismDatabase:
                     record.tags_json,
                     record.scores_json,
                     record.structured_summary_json,
+                    record.embedding_status,
+                    record.embedding_error,
+                    record.embedded_at,
+                    record.embedding_model,
+                    record.embedding_dimensions,
+                    record.embedding_text_hash,
+                    record.related_notes_json,
                     record.note_id,
                 ),
             )
+
+
+    def list_notes_for_reindexing(self) -> list[NoteRecord]:
+        with self.connect() as conn:
+            rows = conn.execute(f"""
+                SELECT {_NOTE_COLUMNS}
+                FROM notes
+                ORDER BY date_saved ASC
+                """).fetchall()
+        return [_row_to_record(row) for row in rows]
+
+    def update_embedding_metadata(
+        self,
+        note_id: str,
+        *,
+        embedding_status: str,
+        embedding_error: str | None = None,
+        embedded_at: str | None = None,
+        embedding_model: str | None = None,
+        embedding_dimensions: int | None = None,
+        embedding_text_hash: str | None = None,
+        related_notes_json: str | None = None,
+    ) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE notes
+                SET embedding_status = ?, embedding_error = ?, embedded_at = ?, embedding_model = ?,
+                    embedding_dimensions = ?, embedding_text_hash = ?, related_notes_json = COALESCE(?, related_notes_json)
+                WHERE note_id = ?
+                """,
+                (
+                    embedding_status,
+                    embedding_error,
+                    embedded_at,
+                    embedding_model,
+                    embedding_dimensions,
+                    embedding_text_hash,
+                    related_notes_json,
+                    note_id,
+                ),
+            )
+
+    def update_related_notes(self, note_id: str, related_notes_json: str | None) -> None:
+        with self.connect() as conn:
+            conn.execute("UPDATE notes SET related_notes_json = ? WHERE note_id = ?", (related_notes_json, note_id))
 
     def note_id_exists(self, note_id: str) -> bool:
         with self.connect() as conn:
@@ -199,7 +269,9 @@ class PrismDatabase:
 _NOTE_COLUMNS = """
     note_id, source_url, resolved_url, note_path, date_saved, status, title, summary,
     source_kind, local_archive, pdf_path, content_hash, fetch_status, fetch_error, fetched_at, metadata_json,
-    llm_status, llm_error, llm_generated_at, llm_model, tags_json, scores_json, structured_summary_json
+    llm_status, llm_error, llm_generated_at, llm_model, tags_json, scores_json, structured_summary_json,
+    embedding_status, embedding_error, embedded_at, embedding_model, embedding_dimensions,
+    embedding_text_hash, related_notes_json
 """
 
 _ADDED_COLUMNS = {
@@ -218,6 +290,13 @@ _ADDED_COLUMNS = {
     "tags_json": "TEXT",
     "scores_json": "TEXT",
     "structured_summary_json": "TEXT",
+    "embedding_status": "TEXT NOT NULL DEFAULT 'skipped'",
+    "embedding_error": "TEXT",
+    "embedded_at": "TEXT",
+    "embedding_model": "TEXT",
+    "embedding_dimensions": "INTEGER",
+    "embedding_text_hash": "TEXT",
+    "related_notes_json": "TEXT",
 }
 
 
@@ -253,4 +332,11 @@ def _row_to_record(row: sqlite3.Row) -> NoteRecord:
         tags_json=row["tags_json"],
         scores_json=row["scores_json"],
         structured_summary_json=row["structured_summary_json"],
+        embedding_status=row["embedding_status"],
+        embedding_error=row["embedding_error"],
+        embedded_at=row["embedded_at"],
+        embedding_model=row["embedding_model"],
+        embedding_dimensions=row["embedding_dimensions"],
+        embedding_text_hash=row["embedding_text_hash"],
+        related_notes_json=row["related_notes_json"],
     )

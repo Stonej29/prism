@@ -88,6 +88,7 @@ def build_llm_context(
     fetch_error: str | None,
     metadata: dict[str, Any],
     extracted_text: str,
+    related_candidates: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     return {
         "title": title,
@@ -100,6 +101,7 @@ def build_llm_context(
         "metadata": metadata,
         "extracted_text_truncated_to_chars": SOURCE_TEXT_LIMIT,
         "extracted_text": extracted_text[:SOURCE_TEXT_LIMIT],
+        "related_candidates": related_candidates or [],
     }
 
 
@@ -120,7 +122,8 @@ def _system_prompt() -> str:
         "Return only a valid JSON object. Required fields: title, quick_summary, "
         "detailed_summary, key_claims, limitations, technical_details, why_it_matters, "
         "personal_relevance, project_ideas, tags, relevance, novelty, credibility, "
-        "actionability, interest, overall, confidence. Scores are numeric 1-10. "
+        "actionability, interest, overall, confidence, related_notes. Scores are numeric 1-10. "
+        "related_notes must be a list of objects with id, title, and reason selected only from related_candidates. "
         "Use direct language, preserve uncertainty, and favor a healthy mix of "
         "buildable ideas, research novelty, and practical tool value."
     )

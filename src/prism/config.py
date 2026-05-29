@@ -12,9 +12,13 @@ class Settings:
     llm_base_url: str
     llm_api_key: str | None
     llm_model: str | None
+    embedding_base_url: str
+    embedding_api_key: str | None
+    embedding_model: str | None
     vault_path: Path
     sqlite_path: Path
     archive_path: Path
+    lancedb_path: Path
 
 
 def load_settings() -> Settings:
@@ -32,9 +36,13 @@ def load_settings() -> Settings:
         llm_base_url=os.getenv("LLM_BASE_URL", "https://openrouter.ai/api/v1").strip(),
         llm_api_key=_optional_env("LLM_API_KEY"),
         llm_model=_optional_env("LLM_MODEL"),
+        embedding_base_url=os.getenv("EMBEDDING_BASE_URL", "https://api.openai.com/v1").strip(),
+        embedding_api_key=_optional_env("EMBEDDING_API_KEY"),
+        embedding_model=_optional_env("EMBEDDING_MODEL"),
         vault_path=Path(os.getenv("VAULT_PATH", "/data/research-vault")),
         sqlite_path=Path(os.getenv("SQLITE_PATH", "/data/prism.sqlite3")),
         archive_path=Path(os.getenv("ARCHIVE_PATH", "/data/archives")),
+        lancedb_path=Path(os.getenv("LANCEDB_PATH", "/data/lancedb")),
     )
 
 

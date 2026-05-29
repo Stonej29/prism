@@ -7,6 +7,8 @@ from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandl
 
 from prism.config import Settings, load_settings
 from prism.db import PrismDatabase
+from prism.embedding import EmbeddingConfig
+from prism.index import NoteIndexer
 from prism.llm import LLMConfig
 from prism.notes import NoteService, extract_first_url, more_summary_for_record, tags_for_record
 
@@ -22,6 +24,10 @@ class PrismBot:
             self.database,
             settings.archive_path,
             LLMConfig(settings.llm_base_url, settings.llm_api_key, settings.llm_model),
+            NoteIndexer(
+                settings.lancedb_path,
+                EmbeddingConfig(settings.embedding_base_url, settings.embedding_api_key, settings.embedding_model),
+            ),
         )
 
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -77,6 +83,43 @@ class PrismBot:
             f"Source: {record.source_url}"
         )
 
+    async def handle_related(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self._is_allowed(update):
+            return
+
+        message = update.effective_message
+        if not message:
+            return
+
+        query = " ".join(context.args).strip()
+        if not query:
+            await message.reply_text("Usage: /related <query-or-note_id>")
+            return
+
+        indexer = self.notes.indexer
+        if not indexer or not indexer.is_configured:
+            await message.reply_text("Semantic search is not configured. Set EMBEDDING_API_KEY and EMBEDDING_MODEL.")
+            return
+
+        try:
+            record = self.database.find_by_note_id(query.lower()) if len(query.split()) == 1 else None
+            if record:
+                results = indexer.search_related(record, limit=5)
+            else:
+                results = indexer.search_text(query, limit=5)
+        except Exception as exc:
+            await message.reply_text(f"Related search failed: {type(exc).__name__}: {exc}")
+            return
+
+        if not results:
+            if indexer.index_is_empty():
+                await message.reply_text("The semantic index is empty. Run: PYTHONPATH=src python -m prism.index rebuild")
+            else:
+                await message.reply_text("No related notes found.")
+            return
+
+        await message.reply_text(_related_reply(results))
+
     async def handle_reprocess(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._is_allowed(update):
             return
@@ -124,12 +167,28 @@ class PrismBot:
         return False
 
 
+def _related_reply(results) -> str:
+    lines = ["Related notes:"]
+    for item in results:
+        summary = _shorten(item.summary, 180)
+        lines.append(f"{item.title} ({item.score:.3f})\n{summary}\n/more {item.note_id}")
+    return "\n\n".join(lines)
+
+
+def _shorten(text: str, limit: int) -> str:
+    clean = " ".join(text.split())
+    if len(clean) <= limit:
+        return clean
+    return clean[:limit].rstrip() + "..."
+
+
 def build_application(settings: Settings) -> Application:
     bot = PrismBot(settings)
     application = Application.builder().token(settings.telegram_bot_token).build()
     application.add_handler(CommandHandler("start", bot.handle_start))
     application.add_handler(CommandHandler("more", bot.handle_more))
     application.add_handler(CommandHandler("reprocess", bot.handle_reprocess))
+    application.add_handler(CommandHandler("related", bot.handle_related))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot.handle_message))
     return application
 
