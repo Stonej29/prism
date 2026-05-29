@@ -136,3 +136,12 @@ PYTHONPATH=src python -m unittest discover -s tests
 ## Architecture
 
 See `CLAUDE.md` for the full architecture, data flow, and design decisions.
+
+## Planned
+
+- [ ] Terminal interface
+- [ ] Web interface
+- [ ] Browser extension / iOS Shortcut for frictionless link sharing
+- [ ] Scheduled idea generation (daily/weekly)
+- [ ] Note editing commands (rename, retag, review status)
+- [ ] Local LLM and embedding support
