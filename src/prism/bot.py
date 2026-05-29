@@ -114,7 +114,11 @@ class PrismBot:
             return
 
         if not context.args:
-            await message.reply_text("Usage: /more <id>")
+            records = self.database.list_recent_notes(1)
+            if not records:
+                await message.reply_text("No notes saved yet.")
+                return
+            await message.reply_text(_more_reply(records[0]))
             return
 
         note_id = context.args[0].strip().lower()

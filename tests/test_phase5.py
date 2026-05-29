@@ -217,6 +217,29 @@ class Phase5BotTests(unittest.TestCase):
 
         self.assertEqual(update.effective_message.replies[-1], "Saving...")
 
+    def test_handle_more_without_id_uses_latest_note(self) -> None:
+        bot = PrismBot.__new__(PrismBot)
+        bot._is_allowed = AsyncMock(return_value=True)
+        bot.database = Mock()
+        bot.database.list_recent_notes.return_value = [note(title="Latest Note", summary="Latest summary.")]
+        update = _update()
+
+        asyncio.run(bot.handle_more(update, _context([])))
+
+        self.assertIn("Latest Note", update.effective_message.replies[-1])
+        bot.database.list_recent_notes.assert_called_once_with(1)
+
+    def test_handle_more_without_id_reports_empty_vault(self) -> None:
+        bot = PrismBot.__new__(PrismBot)
+        bot._is_allowed = AsyncMock(return_value=True)
+        bot.database = Mock()
+        bot.database.list_recent_notes.return_value = []
+        update = _update()
+
+        asyncio.run(bot.handle_more(update, _context([])))
+
+        self.assertEqual(update.effective_message.replies[-1], "No notes saved yet.")
+
     def test_handle_reprocess_unknown_id_replies_immediately(self) -> None:
         bot = PrismBot.__new__(PrismBot)
         bot._is_allowed = AsyncMock(return_value=True)
