@@ -212,7 +212,7 @@ class Phase4BotRelatedTests(unittest.TestCase):
 
         asyncio.run(bot.handle_related(update, _context(["robotics"])))
 
-        self.assertIn("A (0.750)", update.effective_message.replies[-1])
+        self.assertIn("<b>A</b> (0.750)", update.effective_message.replies[-1])
         self.assertIn("/more abc123", update.effective_message.replies[-1])
 
     def test_related_note_id_query_uses_record_text(self) -> None:
@@ -236,7 +236,7 @@ class _Message:
     def __init__(self) -> None:
         self.replies: list[str] = []
 
-    async def reply_text(self, text: str) -> None:
+    async def reply_text(self, text: str, **kwargs) -> None:
         self.replies.append(text)
 
 

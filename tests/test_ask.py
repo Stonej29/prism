@@ -190,7 +190,7 @@ class _Message:
     def __init__(self) -> None:
         self.replies: list[str] = []
 
-    async def reply_text(self, text: str, reply_markup=None) -> None:
+    async def reply_text(self, text: str, reply_markup=None, **kwargs) -> None:
         self.replies.append(text)
 
 

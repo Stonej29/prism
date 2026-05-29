@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import html
 import logging
 import secrets
 
@@ -31,6 +32,7 @@ from prism.notes import (
 )
 
 LOGGER = logging.getLogger(__name__)
+HTML_PARSE_MODE = "HTML"
 
 PAGE_SIZE = 5
 MAX_SEMANTIC_RESULTS = 20
@@ -86,7 +88,7 @@ class PrismBot:
 
         existing = self.database.find_by_source_url(source_url)
         if existing:
-            await message.reply_text(_already_saved_reply(existing))
+            await message.reply_text(_already_saved_reply(existing), parse_mode=HTML_PARSE_MODE)
             return
 
         await message.reply_text("Saving...")
@@ -101,9 +103,9 @@ class PrismBot:
             return
         record = result.record
         if result.created:
-            await message.reply_text(self._saved_reply(record))
+            await message.reply_text(self._saved_reply(record), parse_mode=HTML_PARSE_MODE)
         else:
-            await message.reply_text(_already_saved_reply(record))
+            await message.reply_text(_already_saved_reply(record), parse_mode=HTML_PARSE_MODE)
 
     async def handle_more(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._is_allowed(update):
@@ -118,7 +120,7 @@ class PrismBot:
             if not records:
                 await message.reply_text("No notes saved yet.")
                 return
-            await message.reply_text(_more_reply(records[0]))
+            await message.reply_text(_more_reply(records[0]), parse_mode=HTML_PARSE_MODE)
             return
 
         note_id = context.args[0].strip().lower()
@@ -127,7 +129,7 @@ class PrismBot:
             await message.reply_text(f"No note found for {note_id}.")
             return
 
-        await message.reply_text(_more_reply(record))
+        await message.reply_text(_more_reply(record), parse_mode=HTML_PARSE_MODE)
 
     async def handle_related(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._is_allowed(update):
@@ -172,9 +174,9 @@ class PrismBot:
         token = self._store_semantic_page(title, results)
         text, keyboard = _semantic_page_view(token, title, results, 0)
         if keyboard:
-            await message.reply_text(text, reply_markup=keyboard)
+            await message.reply_text(text, reply_markup=keyboard, parse_mode=HTML_PARSE_MODE)
         else:
-            await message.reply_text(text)
+            await message.reply_text(text, parse_mode=HTML_PARSE_MODE)
 
     async def handle_reprocess(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._is_allowed(update):
@@ -208,7 +210,7 @@ class PrismBot:
             await message.reply_text(result.message)
             return
         if result.ok:
-            await message.reply_text(self._saved_reply(result.record).replace("Saved:", "Reprocessed:", 1))
+            await message.reply_text(self._saved_reply(result.record).replace("<b>Saved:</b>", "<b>Reprocessed:</b>", 1), parse_mode=HTML_PARSE_MODE)
             return
         await message.reply_text(result.message)
 
@@ -220,7 +222,7 @@ class PrismBot:
         if not message:
             return
         text, keyboard = self._page_view("recent", 0)
-        await message.reply_text(text or "No notes saved yet.", reply_markup=keyboard)
+        await message.reply_text(text or "No notes saved yet.", reply_markup=keyboard, parse_mode=HTML_PARSE_MODE)
 
     async def handle_tags(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._is_allowed(update):
@@ -230,11 +232,11 @@ class PrismBot:
             return
         if not context.args:
             text, keyboard = self._page_view("tags", 0)
-            await message.reply_text(text or "No tags yet. Save some URLs and wait for LLM processing.", reply_markup=keyboard)
+            await message.reply_text(text or "No tags yet. Save some URLs and wait for LLM processing.", reply_markup=keyboard, parse_mode=HTML_PARSE_MODE)
             return
         tag = context.args[0].strip().lstrip("#").lower()
         text, keyboard = self._page_view("tagnotes", 0, tag=tag)
-        await message.reply_text(text or f"No notes tagged #{tag}.", reply_markup=keyboard)
+        await message.reply_text(text or f"No notes tagged #{_h(tag)}.", reply_markup=keyboard, parse_mode=HTML_PARSE_MODE)
 
     async def handle_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._is_allowed(update):
@@ -243,7 +245,7 @@ class PrismBot:
         if not message:
             return
         stats = self.database.get_note_stats()
-        await message.reply_text(_status_reply(stats, self.notes.indexer))
+        await message.reply_text(_status_reply(stats, self.notes.indexer), parse_mode=HTML_PARSE_MODE)
 
     async def handle_find(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._is_allowed(update):
@@ -278,9 +280,9 @@ class PrismBot:
         token = self._store_semantic_page(title, results)
         text, keyboard = _semantic_page_view(token, title, results, 0)
         if keyboard:
-            await message.reply_text(text, reply_markup=keyboard)
+            await message.reply_text(text, reply_markup=keyboard, parse_mode=HTML_PARSE_MODE)
         else:
-            await message.reply_text(text)
+            await message.reply_text(text, parse_mode=HTML_PARSE_MODE)
 
     async def handle_ask(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._is_allowed(update):
@@ -315,9 +317,9 @@ class PrismBot:
         token = self._store_semantic_page("Sources:", result.sources) if result.sources else None
         reply, keyboard = _ask_reply(result, token=token, offset=0)
         if keyboard:
-            await message.reply_text(reply, reply_markup=keyboard)
+            await message.reply_text(reply, reply_markup=keyboard, parse_mode=HTML_PARSE_MODE)
         else:
-            await message.reply_text(reply)
+            await message.reply_text(reply, parse_mode=HTML_PARSE_MODE)
 
     async def handle_idea(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._is_allowed(update):
@@ -343,7 +345,7 @@ class PrismBot:
         if not result.ok or not result.record:
             await message.reply_text(result.message)
             return
-        await message.reply_text(_idea_reply(result.record), reply_markup=_rating_keyboard(result.record.idea_id))
+        await message.reply_text(_idea_reply(result.record), reply_markup=_rating_keyboard(result.record.idea_id), parse_mode=HTML_PARSE_MODE)
 
     async def handle_rating(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         del context
@@ -366,7 +368,7 @@ class PrismBot:
         if not record:
             await query.edit_message_text("Idea not found.")
             return
-        await query.edit_message_text(f"Rated {_stars(rating)}: {record.title}")
+        await query.edit_message_text(f"<b>Rated {_stars(rating)}:</b> {_h(record.title)}", parse_mode=HTML_PARSE_MODE)
 
     async def handle_ideas(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         del context
@@ -376,7 +378,7 @@ class PrismBot:
         if not message:
             return
         text, keyboard = self._page_view("ideas", 0)
-        await message.reply_text(text or "No ideas yet. Use /idea to generate one.", reply_markup=keyboard)
+        await message.reply_text(text or "No ideas yet. Use <code>/idea</code> to generate one.", reply_markup=keyboard, parse_mode=HTML_PARSE_MODE)
 
     async def handle_page(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         del context
@@ -393,7 +395,7 @@ class PrismBot:
         text, keyboard = self._page_view(kind, offset, tag=tag)
         if not text:
             return
-        await query.edit_message_text(text, reply_markup=keyboard)
+        await query.edit_message_text(text, reply_markup=keyboard, parse_mode=HTML_PARSE_MODE)
 
     async def handle_semantic_page(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         del context
@@ -413,7 +415,7 @@ class PrismBot:
             return
         title, results = cached
         text, keyboard = _semantic_page_view(token, title, results, offset)
-        await query.edit_message_text(text, reply_markup=keyboard)
+        await query.edit_message_text(text, reply_markup=keyboard, parse_mode=HTML_PARSE_MODE)
 
     def _semantic_cache(self) -> dict[str, tuple[str, list]]:
         if not hasattr(self, "_semantic_pages"):
@@ -453,12 +455,12 @@ class PrismBot:
 
     def _saved_reply(self, record) -> str:
         if record.llm_status == "generated":
-            tags = " ".join(f"#{tag}" for tag in tags_for_record(record))
-            tags_line = f"\nTags: {tags}" if tags else ""
-            return f"Saved: {record.title}\n{record.summary}{tags_line}\n/more {record.note_id}"
+            tags = " ".join(f"#{_h(tag)}" for tag in tags_for_record(record))
+            tags_line = f"\n<b>Tags:</b> {tags}" if tags else ""
+            return f"<b>Saved:</b> {_h(record.title)}\n{_h(record.summary)}{tags_line}\n{_cmd('more', record.note_id)}"
         archive_status = "archived" if record.fetch_status == "fetched" else "fetch failed"
         llm_status = "LLM failed" if record.llm_status == "failed" else "LLM skipped"
-        return f"Saved: {record.title}\n{record.source_kind}, {archive_status}, {llm_status}\n/more {record.note_id}"
+        return f"<b>Saved:</b> {_h(record.title)}\n{_h(record.source_kind)}, {_h(archive_status)}, {_h(llm_status)}\n{_cmd('more', record.note_id)}"
 
     async def handle_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         del context
@@ -466,7 +468,8 @@ class PrismBot:
             return
         if update.effective_message:
             await update.effective_message.reply_text(
-                "Send a URL to save and archive it in PRISM.\n\n" + _HELP_TEXT
+                "Send a URL to save and archive it in PRISM.\n\n" + _HELP_TEXT,
+                parse_mode=HTML_PARSE_MODE,
             )
 
     async def handle_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -474,7 +477,7 @@ class PrismBot:
         if not await self._is_allowed(update):
             return
         if update.effective_message:
-            await update.effective_message.reply_text(_HELP_TEXT)
+            await update.effective_message.reply_text(_HELP_TEXT, parse_mode=HTML_PARSE_MODE)
 
     async def _is_allowed(self, update: Update) -> bool:
         user = update.effective_user
@@ -492,58 +495,58 @@ def _already_saved_reply(record) -> str:
     quick = s.get("quick_summary") if generated else None
     summary = quick.strip() if isinstance(quick, str) and quick.strip() else record.summary
     tags = tags_for_record(record)
-    tags_line = "Tags: " + " ".join(f"#{t}" for t in tags) if tags else ""
-    parts = [f"Already saved: {record.title}", summary]
+    tags_line = "<b>Tags:</b> " + " ".join(f"#{_h(t)}" for t in tags) if tags else ""
+    parts = [f"<b>Already saved:</b> {_h(record.title)}", _h(summary)]
     if tags_line:
         parts.append(tags_line)
-    parts.append(f"/more {record.note_id}")
+    parts.append(_cmd("more", record.note_id))
     return "\n\n".join(parts)
 
 
 def _more_reply(record) -> str:
     s = structured_summary(record)
     generated = record.llm_status == "generated"
-    parts: list[str] = [record.title]
+    parts: list[str] = [f"<b>{_h(record.title)}</b>"]
 
     quick = s.get("quick_summary") if generated else None
     if isinstance(quick, str) and quick.strip():
-        parts.append(quick.strip())
+        parts.append(_h(quick.strip()))
     elif record.summary:
-        parts.append(record.summary)
+        parts.append(_h(record.summary))
 
     if generated:
         detailed = s.get("detailed_summary")
         if isinstance(detailed, str) and detailed.strip():
-            parts.append(_shorten(detailed.strip(), 500))
+            parts.append(_section("Detailed", _h(_shorten(detailed.strip(), 500))))
 
         claims = s.get("key_claims")
         if isinstance(claims, list):
-            lines = [f"- {str(c).strip()}" for c in claims[:5] if str(c).strip()]
+            lines = [f"- {_h(str(c).strip())}" for c in claims[:5] if str(c).strip()]
             if lines:
-                parts.append("Key claims:\n" + "\n".join(lines))
+                parts.append(_section("Key claims", "\n".join(lines)))
 
         limitations = s.get("limitations")
         if isinstance(limitations, list):
-            lines = [f"- {str(l).strip()}" for l in limitations[:3] if str(l).strip()]
+            lines = [f"- {_h(str(l).strip())}" for l in limitations[:3] if str(l).strip()]
             if lines:
-                parts.append("Limitations:\n" + "\n".join(lines))
+                parts.append(_section("Limitations", "\n".join(lines)))
 
     scores = scores_for_record(record)
     if scores:
         score_parts = [
-            f"{key} {int(scores[key])}"
+            f"{_h(key)} {int(scores[key])}"
             for key in ("relevance", "novelty", "overall")
             if key in scores
         ]
         if score_parts:
-            parts.append("Scores: " + " · ".join(score_parts))
+            parts.append("<b>Scores:</b> " + " · ".join(score_parts))
 
     related = related_notes_for_record(record)
     if related:
-        rel_lines = [f"- {item['title']} (/more {item['id']})" for item in related[:5]]
-        parts.append("Related:\n" + "\n".join(rel_lines))
+        rel_lines = [f"- {_h(item['title'])} ({_cmd('more', item['id'])})" for item in related[:5]]
+        parts.append(_section("Related", "\n".join(rel_lines)))
 
-    parts.append(f"Source: {record.source_url}")
+    parts.append(f"<b>Source:</b> {_link(record.source_url)}")
 
     reply = "\n\n".join(parts)
     if len(reply) > 4000:
@@ -553,62 +556,80 @@ def _more_reply(record) -> str:
 
 def _status_reply(stats, indexer) -> str:
     lines = [
-        f"Notes: {stats.total}",
-        f"LLM: {stats.llm_generated} generated, {stats.llm_failed} failed, {stats.llm_skipped} skipped",
-        f"Embeddings: {stats.embedding_indexed} indexed, {stats.embedding_failed} failed, {stats.embedding_skipped} skipped",
+        f"<b>Notes:</b> {stats.total}",
+        f"<b>LLM:</b> {stats.llm_generated} generated, {stats.llm_failed} failed, {stats.llm_skipped} skipped",
+        f"<b>Embeddings:</b> {stats.embedding_indexed} indexed, {stats.embedding_failed} failed, {stats.embedding_skipped} skipped",
     ]
     if indexer and indexer.is_configured:
         index_state = "empty" if indexer.index_is_empty() else "ready"
-        lines.append(f"Index: {index_state}")
+        lines.append(f"<b>Index:</b> {_h(index_state)}")
     else:
-        lines.append("Index: not configured (set EMBEDDING_API_KEY and EMBEDDING_MODEL)")
+        lines.append("<b>Index:</b> not configured (set <code>EMBEDDING_API_KEY</code> and <code>EMBEDDING_MODEL</code>)")
     return "\n".join(lines)
 
 
 def _recent_reply(records) -> str:
-    lines = ["Recent notes:"]
+    lines = ["<b>Recent notes:</b>"]
     for r in records:
         date = r.date_saved[:10]
-        lines.append(f"{r.title}\n{r.source_kind}, {date}\n/more {r.note_id}")
+        lines.append(f"<b>{_h(r.title)}</b>\n{_h(r.source_kind)}, {_h(date)}\n{_cmd('more', r.note_id)}")
     return "\n\n".join(lines)
 
 
 def _tags_list_reply(tag_counts) -> str:
-    lines = ["Tags:"]
+    lines = ["<b>Tags:</b>"]
     for tag, count in tag_counts:
-        lines.append(f"#{tag} ({count})")
+        lines.append(f"#{_h(tag)} ({count})")
     return "\n".join(lines)
 
 
 def _tags_notes_reply(tag: str, records) -> str:
-    lines = [f"Notes tagged #{tag}:"]
+    lines = [f"<b>Notes tagged #{_h(tag)}:</b>"]
     for r in records:
-        lines.append(f"{r.title}\n{r.source_kind}, {r.date_saved[:10]}\n/more {r.note_id}")
+        lines.append(f"<b>{_h(r.title)}</b>\n{_h(r.source_kind)}, {_h(r.date_saved[:10])}\n{_cmd('more', r.note_id)}")
     return "\n\n".join(lines)
 
 
 def _related_reply(results, title: str = "Related notes:") -> str:
-    lines = [title]
+    lines = [f"<b>{_h(title)}</b>"]
     for item in results:
         summary = _shorten(item.summary, 180)
-        lines.append(f"{item.title} ({item.score:.3f})\n{summary}\n/more {item.note_id}")
+        lines.append(f"<b>{_h(item.title)}</b> ({item.score:.3f})\n{_h(summary)}\n{_cmd('more', item.note_id)}")
     return "\n\n".join(lines)
 
 
+def _h(value) -> str:
+    return html.escape(str(value), quote=False)
+
+
+def _cmd(command: str, arg: str | None = None) -> str:
+    suffix = f" {_h(arg)}" if arg else ""
+    return f"<code>/{_h(command)}{suffix}</code>"
+
+
+def _section(title: str, body: str) -> str:
+    return f"<b>{_h(title)}:</b>\n{body}"
+
+
+def _link(url: str) -> str:
+    escaped = _h(url)
+    return f'<a href="{html.escape(str(url), quote=True)}">{escaped}</a>'
+
+
 _HELP_TEXT = "\n".join(
-    ["PRISM commands:", "(send a URL) — save, archive, summarize, and index a link"]
-    + [f"/{name} — {desc}" for name, desc in COMMANDS]
+    ["<b>PRISM commands:</b>", "(send a URL) - save, archive, summarize, and index a link"]
+    + [f"<code>/{name}</code> - {_h(desc)}" for name, desc in COMMANDS]
 )
 
 
 def _ask_reply(result, token: str | None = None, offset: int = 0) -> tuple[str, InlineKeyboardMarkup | None]:
-    parts = [result.answer]
+    parts = [_h(result.answer)]
     keyboard = None
     if result.sources:
         page = result.sources[offset:offset + PAGE_SIZE]
         more = len(result.sources) > offset + PAGE_SIZE
-        lines = [f"- {item.title} (/more {item.note_id})" for item in page]
-        parts.append("Sources:\n" + "\n".join(lines))
+        lines = [f"- {_h(item.title)} ({_cmd('more', item.note_id)})" for item in page]
+        parts.append(_section("Sources", "\n".join(lines)))
         if token:
             keyboard = _semantic_page_keyboard(token, offset, more)
     reply = "\n\n".join(parts)
@@ -619,15 +640,15 @@ def _ask_reply(result, token: str | None = None, offset: int = 0) -> tuple[str, 
 
 def _idea_reply(record) -> str:
     tags = _json_array(record.tags_json)
-    tags_line = "\nTags: " + " ".join(f"#{t}" for t in tags) if tags else ""
-    return f"Idea: {record.title}\n{record.summary}{tags_line}\nRate it below."
+    tags_line = "\n<b>Tags:</b> " + " ".join(f"#{_h(t)}" for t in tags) if tags else ""
+    return f"<b>Idea:</b> {_h(record.title)}\n{_h(record.summary)}{tags_line}\nRate it below."
 
 
 def _ideas_list_reply(records) -> str:
-    lines = ["Recent ideas:"]
+    lines = ["<b>Recent ideas:</b>"]
     for r in records:
         rating = _stars(r.rating) if r.rating is not None else "unrated"
-        lines.append(f"{r.title}\n{rating}, {r.created_at[:10]}")
+        lines.append(f"<b>{_h(r.title)}</b>\n{_h(rating)}, {_h(r.created_at[:10])}")
     return "\n\n".join(lines)
 
 

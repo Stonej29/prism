@@ -283,7 +283,7 @@ class _Message:
         self.replies: list[str] = []
         self.markups: list[object] = []
 
-    async def reply_text(self, text: str, reply_markup=None) -> None:
+    async def reply_text(self, text: str, reply_markup=None, **kwargs) -> None:
         self.replies.append(text)
         self.markups.append(reply_markup)
 
@@ -338,7 +338,7 @@ class Phase6BotTests(unittest.TestCase):
         with patch("prism.bot.asyncio.to_thread", new=AsyncMock(return_value=result)):
             asyncio.run(bot._idea_task("robotics", message))
 
-        self.assertTrue(message.replies[-1].startswith("Idea:"))
+        self.assertTrue(message.replies[-1].startswith("<b>Idea:</b>"))
         markup = message.markups[-1]
         self.assertIsInstance(markup, InlineKeyboardMarkup)
         self.assertEqual(len(markup.inline_keyboard[0]), 5)

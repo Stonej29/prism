@@ -150,10 +150,12 @@ class _Message:
     def __init__(self) -> None:
         self.replies: list[str] = []
         self.markups: list[object] = []
+        self.parse_modes: list[str | None] = []
 
-    async def reply_text(self, text: str, reply_markup=None) -> None:
+    async def reply_text(self, text: str, reply_markup=None, **kwargs) -> None:
         self.replies.append(text)
         self.markups.append(reply_markup)
+        self.parse_modes.append(kwargs.get("parse_mode"))
 
 
 def _update():
@@ -201,7 +203,7 @@ class Phase5BotTests(unittest.TestCase):
             asyncio.run(bot.handle_message(update, _context([])))
             mock_task.assert_not_called()
 
-        self.assertTrue(update.effective_message.replies[-1].startswith("Already saved:"))
+        self.assertTrue(update.effective_message.replies[-1].startswith("<b>Already saved:</b>"))
 
     def test_handle_message_new_url_acks_and_spawns_task(self) -> None:
         bot = PrismBot.__new__(PrismBot)
@@ -221,12 +223,15 @@ class Phase5BotTests(unittest.TestCase):
         bot = PrismBot.__new__(PrismBot)
         bot._is_allowed = AsyncMock(return_value=True)
         bot.database = Mock()
-        bot.database.list_recent_notes.return_value = [note(title="Latest Note", summary="Latest summary.")]
+        bot.database.list_recent_notes.return_value = [note(title="Latest <Note>", summary="Latest & summary.")]
         update = _update()
 
         asyncio.run(bot.handle_more(update, _context([])))
 
-        self.assertIn("Latest Note", update.effective_message.replies[-1])
+        reply = update.effective_message.replies[-1]
+        self.assertIn("<b>Latest &lt;Note&gt;</b>", reply)
+        self.assertIn("Latest &amp; summary.", reply)
+        self.assertEqual(update.effective_message.parse_modes[-1], "HTML")
         bot.database.list_recent_notes.assert_called_once_with(1)
 
     def test_handle_more_without_id_reports_empty_vault(self) -> None:
@@ -421,7 +426,7 @@ class Phase5BotTests(unittest.TestCase):
         asyncio.run(bot.handle_status(update, _context([])))
 
         reply = update.effective_message.replies[-1]
-        self.assertIn("Notes: 10", reply)
+        self.assertIn("<b>Notes:</b> 10", reply)
         self.assertIn("8 generated", reply)
         self.assertIn("7 indexed", reply)
 
@@ -437,7 +442,7 @@ class Phase5BotTests(unittest.TestCase):
 
         asyncio.run(bot.handle_status(update, _context([])))
 
-        self.assertIn("Index: ready", update.effective_message.replies[-1])
+        self.assertIn("<b>Index:</b> ready", update.effective_message.replies[-1])
 
     def test_related_accepts_optional_limit(self) -> None:
         bot = PrismBot.__new__(PrismBot)
@@ -534,7 +539,7 @@ class Phase5BackgroundTaskTests(unittest.TestCase):
         with patch("prism.bot.asyncio.to_thread", new=AsyncMock(return_value=result)):
             asyncio.run(bot._save_url_task("https://example.com", message))
 
-        self.assertTrue(message.replies[-1].startswith("Saved:"))
+        self.assertTrue(message.replies[-1].startswith("<b>Saved:</b>"))
 
     def test_save_url_task_content_hash_dup(self) -> None:
         bot = PrismBot.__new__(PrismBot)
@@ -545,7 +550,7 @@ class Phase5BackgroundTaskTests(unittest.TestCase):
         with patch("prism.bot.asyncio.to_thread", new=AsyncMock(return_value=result)):
             asyncio.run(bot._save_url_task("https://example.com", message))
 
-        self.assertTrue(message.replies[-1].startswith("Already saved:"))
+        self.assertTrue(message.replies[-1].startswith("<b>Already saved:</b>"))
 
     def test_save_url_task_source_url_dup(self) -> None:
         bot = PrismBot.__new__(PrismBot)
@@ -556,7 +561,7 @@ class Phase5BackgroundTaskTests(unittest.TestCase):
         with patch("prism.bot.asyncio.to_thread", new=AsyncMock(return_value=result)):
             asyncio.run(bot._save_url_task("https://example.com", message))
 
-        self.assertTrue(message.replies[-1].startswith("Already saved:"))
+        self.assertTrue(message.replies[-1].startswith("<b>Already saved:</b>"))
 
     def test_save_url_task_exception(self) -> None:
         bot = PrismBot.__new__(PrismBot)
@@ -579,7 +584,7 @@ class Phase5BackgroundTaskTests(unittest.TestCase):
         with patch("prism.bot.asyncio.to_thread", new=AsyncMock(return_value=result)):
             asyncio.run(bot._reprocess_task("abc123", message))
 
-        self.assertTrue(message.replies[-1].startswith("Reprocessed:"))
+        self.assertTrue(message.replies[-1].startswith("<b>Reprocessed:</b>"))
 
     def test_reprocess_task_failure(self) -> None:
         bot = PrismBot.__new__(PrismBot)
