@@ -94,6 +94,8 @@ def build_application(settings: Settings) -> Application:
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
     settings = load_settings()
     settings.vault_path.mkdir(parents=True, exist_ok=True)
     LOGGER.info("Starting PRISM bot with vault at %s and SQLite at %s", settings.vault_path, settings.sqlite_path)

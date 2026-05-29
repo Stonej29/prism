@@ -1,9 +1,10 @@
 services:
   prism:
     build: .
+    user: "${PRISM_UID:-1000}:${PRISM_GID:-1000}"
     env_file:
       - path: .env
         required: false
     volumes:
-      - ./runtime:/data
+      - ./runtime:/data:Z
     restart: unless-stopped

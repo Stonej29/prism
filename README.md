@@ -47,6 +47,7 @@ Set:
 
 - `TELEGRAM_BOT_TOKEN`
 - `TELEGRAM_ALLOWED_USER_IDS`, as comma-separated numeric Telegram user IDs
+- `PRISM_UID` and `PRISM_GID` if your host user is not `1000:1000`
 
 LLM variables are present for future phases but are not used in Phase 1.
 
