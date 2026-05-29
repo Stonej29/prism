@@ -92,6 +92,32 @@ class Phase3LLMClientTests(unittest.TestCase):
         self.assertIn("response_format", calls[0])
         self.assertNotIn("response_format", calls[1])
 
+    def test_generate_note_accepts_wrapped_json_object(self) -> None:
+        class FakeClient:
+            def __init__(self, timeout) -> None:
+                self.timeout = timeout
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb) -> None:
+                return None
+
+            def post(self, url, headers, json):
+                content = "Here is the JSON:\n```json\n" + json_module.dumps(structured()) + "\n```"
+                return httpx.Response(
+                    200,
+                    request=httpx.Request("POST", url),
+                    json={"model": "model-a", "choices": [{"message": {"content": content}}]},
+                )
+
+        import json as json_module
+
+        with patch("prism.llm.httpx.Client", FakeClient):
+            generation = LLMClient(LLMConfig("https://llm.example", "key", "model-a")).generate_note({"title": "T"}, "profile")
+
+        self.assertEqual(generation.data["title"], "Generated Title")
+
 
 class Phase3DatabaseTests(unittest.TestCase):
     def test_migrates_phase2_schema_with_llm_columns(self) -> None:

@@ -101,6 +101,24 @@ class FetcherIntegrationTests(unittest.TestCase):
             self.assertTrue((Path(tmp) / "abc123" / "source.pdf").exists())
             self.assertTrue((Path(tmp) / "abc123" / "metadata.json").exists())
 
+    def test_arxiv_fetch_continues_when_metadata_api_fails(self) -> None:
+        def fake_get(url: str, headers=None):
+            if "export.arxiv.org" in url:
+                raise RuntimeError("429 rate limited")
+            return b"%PDF", "https://arxiv.org/pdf/1908.04064.pdf", "application/pdf"
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("prism.fetch._http_get_bytes", side_effect=fake_get), patch("prism.fetch._extract_pdf_text", return_value="PDF text"):
+                from prism.fetch import fetch_source
+                result = fetch_source("https://arxiv.org/abs/1908.04064", Path(tmp), "abc123")
+
+            self.assertEqual(result.fetch_status, "fetched")
+            self.assertEqual(result.source_kind, "paper")
+            self.assertEqual(result.title, "1908.04064")
+            self.assertIn("PDF text", result.extracted_text)
+            self.assertIn("429 rate limited", result.metadata.get("metadata_error", ""))
+            self.assertTrue((Path(tmp) / "abc123" / "source.pdf").exists())
+
     def test_pdf_fetch_archives_pdf_and_extracted_text(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             with patch("prism.fetch._http_get_bytes", return_value=(b"%PDF", "https://example.com/a.pdf", "application/pdf")), patch("prism.fetch._extract_pdf_text", return_value="PDF body"):

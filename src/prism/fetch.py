@@ -99,8 +99,15 @@ def _fetch_arxiv(source_url: str, archive_dir: Path, fetched_at: str) -> FetchRe
         raise ValueError("Could not parse arXiv ID")
 
     metadata_url = f"https://export.arxiv.org/api/query?id_list={arxiv_id}"
-    metadata_bytes, metadata_resolved, _ = _http_get_bytes(metadata_url)
-    entry = _parse_arxiv_atom(metadata_bytes)
+    metadata_resolved = metadata_url
+    metadata_error = None
+    try:
+        metadata_bytes, metadata_resolved, _ = _http_get_bytes(metadata_url)
+        entry = _parse_arxiv_atom(metadata_bytes)
+    except Exception as exc:
+        entry = {}
+        metadata_error = f"{type(exc).__name__}: {exc}"[:1000]
+
     pdf_url = f"https://arxiv.org/pdf/{arxiv_id}.pdf"
     pdf_bytes, pdf_resolved, pdf_content_type = _http_get_bytes(pdf_url)
 
@@ -112,6 +119,7 @@ def _fetch_arxiv(source_url: str, archive_dir: Path, fetched_at: str) -> FetchRe
     metadata = {
         "source_url": source_url,
         "metadata_url": metadata_resolved,
+        "metadata_error": metadata_error,
         "pdf_url": pdf_resolved,
         "content_type": pdf_content_type,
         "arxiv_id": arxiv_id,
@@ -123,7 +131,7 @@ def _fetch_arxiv(source_url: str, archive_dir: Path, fetched_at: str) -> FetchRe
         source_url=source_url,
         resolved_url=pdf_resolved,
         source_kind="paper",
-        title=entry.get("title"),
+        title=entry.get("title") or _title_from_url(pdf_resolved),
         summary=entry.get("summary"),
         extracted_text=extracted,
         local_archive=str(archive_dir),

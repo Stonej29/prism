@@ -45,9 +45,7 @@ class LLMClient:
                 raise
 
         content = _assistant_content(data)
-        parsed = json.loads(content)
-        if not isinstance(parsed, dict):
-            raise ValueError("LLM response JSON was not an object")
+        parsed = _parse_json_object(content)
         return LLMGeneration(data=parsed, model=str(data.get("model") or self.config.model))
 
     def generate_idea(self, context: dict[str, Any], profile: str) -> LLMGeneration:
@@ -64,9 +62,7 @@ class LLMClient:
                 raise
 
         content = _assistant_content(data)
-        parsed = json.loads(content)
-        if not isinstance(parsed, dict):
-            raise ValueError("LLM response JSON was not an object")
+        parsed = _parse_json_object(content)
         return LLMGeneration(data=parsed, model=str(data.get("model") or self.config.model))
 
     def answer_question(self, context: dict[str, Any]) -> str:
@@ -100,7 +96,7 @@ class LLMClient:
         payload: dict[str, Any] = {
             "model": self.config.model,
             "temperature": 0.2,
-            "max_tokens": 2500,
+            "max_tokens": 4500,
             "messages": [
                 {"role": "system", "content": _system_prompt()},
                 {"role": "user", "content": json.dumps({"profile": profile, "source": context}, ensure_ascii=True)},
@@ -171,6 +167,30 @@ def build_llm_context(
         "extracted_text": extracted_text[:SOURCE_TEXT_LIMIT],
         "related_candidates": related_candidates or [],
     }
+
+
+def _parse_json_object(content: str) -> dict[str, Any]:
+    text = content.strip()
+    if text.startswith("```"):
+        lines = text.splitlines()
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip().startswith("```"):
+            lines = lines[:-1]
+        text = "\n".join(lines).strip()
+
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        start = text.find("{")
+        end = text.rfind("}")
+        if start == -1 or end <= start:
+            raise
+        parsed = json.loads(text[start:end + 1])
+
+    if not isinstance(parsed, dict):
+        raise ValueError("LLM response JSON was not an object")
+    return parsed
 
 
 def _assistant_content(response: dict[str, Any]) -> str:
