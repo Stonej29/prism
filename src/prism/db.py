@@ -25,6 +25,13 @@ class NoteRecord:
     fetch_error: str | None = None
     fetched_at: str | None = None
     metadata_json: str | None = None
+    llm_status: str = "skipped"
+    llm_error: str | None = None
+    llm_generated_at: str | None = None
+    llm_model: str | None = None
+    tags_json: str | None = None
+    scores_json: str | None = None
+    structured_summary_json: str | None = None
 
 
 class PrismDatabase:
@@ -87,9 +94,10 @@ class PrismDatabase:
                 INSERT INTO notes (
                     note_id, source_url, resolved_url, note_path, date_saved, status, title, summary,
                     source_kind, local_archive, pdf_path, content_hash, fetch_status, fetch_error,
-                    fetched_at, metadata_json
+                    fetched_at, metadata_json, llm_status, llm_error, llm_generated_at, llm_model,
+                    tags_json, scores_json, structured_summary_json
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record.note_id,
@@ -108,6 +116,52 @@ class PrismDatabase:
                     record.fetch_error,
                     record.fetched_at,
                     record.metadata_json,
+                    record.llm_status,
+                    record.llm_error,
+                    record.llm_generated_at,
+                    record.llm_model,
+                    record.tags_json,
+                    record.scores_json,
+                    record.structured_summary_json,
+                ),
+            )
+
+    def update_note(self, record: NoteRecord) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE notes
+                SET source_url = ?, resolved_url = ?, note_path = ?, date_saved = ?, status = ?,
+                    title = ?, summary = ?, source_kind = ?, local_archive = ?, pdf_path = ?,
+                    content_hash = ?, fetch_status = ?, fetch_error = ?, fetched_at = ?,
+                    metadata_json = ?, llm_status = ?, llm_error = ?, llm_generated_at = ?,
+                    llm_model = ?, tags_json = ?, scores_json = ?, structured_summary_json = ?
+                WHERE note_id = ?
+                """,
+                (
+                    record.source_url,
+                    record.resolved_url,
+                    record.note_path,
+                    record.date_saved,
+                    record.status,
+                    record.title,
+                    record.summary,
+                    record.source_kind,
+                    record.local_archive,
+                    record.pdf_path,
+                    record.content_hash,
+                    record.fetch_status,
+                    record.fetch_error,
+                    record.fetched_at,
+                    record.metadata_json,
+                    record.llm_status,
+                    record.llm_error,
+                    record.llm_generated_at,
+                    record.llm_model,
+                    record.tags_json,
+                    record.scores_json,
+                    record.structured_summary_json,
+                    record.note_id,
                 ),
             )
 
@@ -144,7 +198,8 @@ class PrismDatabase:
 
 _NOTE_COLUMNS = """
     note_id, source_url, resolved_url, note_path, date_saved, status, title, summary,
-    source_kind, local_archive, pdf_path, content_hash, fetch_status, fetch_error, fetched_at, metadata_json
+    source_kind, local_archive, pdf_path, content_hash, fetch_status, fetch_error, fetched_at, metadata_json,
+    llm_status, llm_error, llm_generated_at, llm_model, tags_json, scores_json, structured_summary_json
 """
 
 _ADDED_COLUMNS = {
@@ -156,6 +211,13 @@ _ADDED_COLUMNS = {
     "fetch_error": "TEXT",
     "fetched_at": "TEXT",
     "metadata_json": "TEXT",
+    "llm_status": "TEXT NOT NULL DEFAULT 'skipped'",
+    "llm_error": "TEXT",
+    "llm_generated_at": "TEXT",
+    "llm_model": "TEXT",
+    "tags_json": "TEXT",
+    "scores_json": "TEXT",
+    "structured_summary_json": "TEXT",
 }
 
 
@@ -184,4 +246,11 @@ def _row_to_record(row: sqlite3.Row) -> NoteRecord:
         fetch_error=row["fetch_error"],
         fetched_at=row["fetched_at"],
         metadata_json=row["metadata_json"],
+        llm_status=row["llm_status"],
+        llm_error=row["llm_error"],
+        llm_generated_at=row["llm_generated_at"],
+        llm_model=row["llm_model"],
+        tags_json=row["tags_json"],
+        scores_json=row["scores_json"],
+        structured_summary_json=row["structured_summary_json"],
     )

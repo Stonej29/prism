@@ -136,6 +136,32 @@ class FetcherIntegrationTests(unittest.TestCase):
             self.assertIn("Hello world", result.extracted_text)
             self.assertTrue((Path(tmp) / "web123" / "raw.html").exists())
 
+    def test_website_fetch_recovers_same_site_iframe_content(self) -> None:
+        wrapper = b"""<html><head><title>Wrapper</title><meta name='description' content='Wrapper desc'></head><body><iframe src='../shared/index.html?target=world-simulation'></iframe></body></html>"""
+        shell = b"""<html><head><title>Shell</title></head><body><script>const targetFolder = 'world-simulation'; $('#includeHtml').load('../' + targetFolder + '/main.html');</script><div>Navigation noise</div></body></html>"""
+        main = b"""<html><head><title>World Simulation - NVIDIA SIL</title></head><body><main><h1>World Simulation</h1><p>We develop simulation-first methodologies that enable intelligent agents to safely learn, plan, and act in rich, physically realistic worlds.</p><p>World modeling, autonomous vehicle agents, and humanoid agents are developed together for robust decision making and control.</p><p>The page describes research focus areas, policy learning, physics-based control, evaluation at scale, controllable generation, temporal consistency, synthetic data, and simulation systems for embodied agents.</p></main></body></html>"""
+
+        def fake_get(url: str, headers=None):
+            if url == "https://example.com/labs/sil/world-simulation/":
+                return wrapper, url, "text/html"
+            if url == "https://example.com/labs/sil/shared/index.html?target=world-simulation":
+                return shell, url, "text/html"
+            if url == "https://example.com/labs/sil/world-simulation/main.html":
+                return main, url, "text/html"
+            raise AssertionError(url)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("prism.fetch._http_get_bytes", side_effect=fake_get):
+                from prism.fetch import fetch_source
+                result = fetch_source("https://example.com/labs/sil/world-simulation/", Path(tmp), "webifr")
+
+            archive = Path(tmp) / "webifr"
+            self.assertIn("simulation-first methodologies", result.extracted_text)
+            self.assertIn("humanoid agents", result.extracted_text)
+            self.assertEqual(result.metadata.get("extraction_fallback"), "embedded_html")
+            self.assertTrue((archive / "embedded-1.html").exists())
+            self.assertTrue((archive / "embedded-1-main.html").exists())
+
     def test_fetch_failure_returns_failed_result_and_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             with patch("prism.fetch._http_get_bytes", side_effect=RuntimeError("timeout")):

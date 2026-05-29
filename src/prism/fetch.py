@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urljoin, urlparse
 from xml.etree import ElementTree
 
 USER_AGENT = "PRISM/0.2 (+https://github.com/local/prism)"
@@ -237,7 +237,7 @@ def _fetch_website(source_url: str, archive_dir: Path, fetched_at: str) -> Fetch
     html = html_bytes.decode(_guess_encoding(content_type), errors="replace")
     _write_text(archive_dir / "raw.html", html)
 
-    title, extracted, metadata = _extract_html(html, resolved_url)
+    title, extracted, metadata = extract_website_text(html, resolved_url, archive_dir)
     metadata.update({"source_url": source_url, "resolved_url": resolved_url, "content_type": content_type})
     _write_text(archive_dir / "extracted.txt", extracted)
     _write_json(archive_dir / "metadata.json", metadata)
@@ -313,6 +313,89 @@ def _extract_html(html: str, resolved_url: str) -> tuple[str | None, str, dict[s
     return title, extracted.strip(), metadata
 
 
+def extract_website_text(html: str, resolved_url: str, archive_dir: Path | None = None) -> tuple[str | None, str, dict[str, Any]]:
+    title, extracted, metadata = _extract_html(html, resolved_url)
+    if _has_enough_text(extracted):
+        return title, extracted, metadata
+
+    embedded = _extract_embedded_html(html, resolved_url, archive_dir)
+    if embedded is None:
+        if metadata.get("description") and not extracted.strip():
+            metadata["extraction_fallback"] = "metadata_description"
+            return title, metadata["description"], metadata
+        return title, extracted, metadata
+
+    embedded_title, embedded_text, embedded_metadata = embedded
+    merged_metadata = {**metadata, **{f"embedded_{key}": value for key, value in embedded_metadata.items()}}
+    merged_metadata["extraction_fallback"] = "embedded_html"
+    return title or embedded_title, embedded_text, merged_metadata
+
+
+def _has_enough_text(text: str) -> bool:
+    words = re.findall(r"[A-Za-z0-9][A-Za-z0-9-]{2,}", text)
+    return len(words) >= 40
+
+
+def _extract_embedded_html(html: str, resolved_url: str, archive_dir: Path | None) -> tuple[str | None, str, dict[str, Any]] | None:
+    candidates: list[tuple[str, str]] = []
+    for index, iframe_src in enumerate(_iframe_sources(html), start=1):
+        iframe_url = urljoin(resolved_url, iframe_src)
+        if not _same_site(resolved_url, iframe_url):
+            continue
+        candidates.append((f"embedded-{index}.html", iframe_url))
+    best: tuple[str | None, str, dict[str, Any]] | None = None
+    best_word_count = 0
+    seen: set[str] = set()
+    queue = candidates[:3]
+    processed = 0
+    while queue and processed < 6:
+        archive_name, candidate_url = queue.pop(0)
+        if candidate_url in seen:
+            continue
+        seen.add(candidate_url)
+        processed += 1
+        try:
+            payload, fetched_url, content_type = _http_get_bytes(candidate_url)
+        except Exception:
+            continue
+        if content_type and "html" not in content_type.lower():
+            continue
+        candidate_html = payload.decode(_guess_encoding(content_type), errors="replace")
+        if archive_dir is not None:
+            _write_text(archive_dir / archive_name, candidate_html)
+
+        target = parse_qs(urlparse(fetched_url).query).get("target", [None])[0]
+        if target and "targetFolder" in candidate_html and "/main.html" in candidate_html:
+            main_url = urljoin(fetched_url, f"../{target}/main.html")
+            queue.append((archive_name.replace(".html", "-main.html"), main_url))
+
+        candidate_title, candidate_text, candidate_metadata = _extract_html(candidate_html, fetched_url)
+        word_count = len(re.findall(r"[A-Za-z0-9][A-Za-z0-9-]{2,}", candidate_text))
+        score = word_count + (100000 if urlparse(fetched_url).path.endswith("/main.html") else 0)
+        if score > best_word_count:
+            candidate_metadata = dict(candidate_metadata)
+            candidate_metadata["embedded_url"] = fetched_url
+            best = candidate_title, candidate_text, candidate_metadata
+            best_word_count = score
+
+    if best and _has_enough_text(best[1]):
+        return best
+    return None
+
+
+def _iframe_sources(html: str) -> list[str]:
+    parser = _IframeSourceExtractor()
+    parser.feed(html)
+    return parser.sources
+
+
+def _same_site(base_url: str, candidate_url: str) -> bool:
+    base = urlparse(base_url)
+    candidate = urlparse(candidate_url)
+    return candidate.scheme in {"http", "https"} and candidate.netloc == base.netloc
+
+
+
 def _parse_arxiv_atom(data: bytes) -> dict[str, Any]:
     root = ElementTree.fromstring(data)
     ns = {"atom": "http://www.w3.org/2005/Atom"}
@@ -380,6 +463,20 @@ def _write_text(path: Path, text: str) -> None:
 
 def _write_json(path: Path, data: dict[str, Any]) -> None:
     path.write_text(json.dumps(data, ensure_ascii=True, indent=2, sort_keys=True), encoding="utf-8")
+
+
+class _IframeSourceExtractor(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.sources: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag != "iframe":
+            return
+        attr_map = {key.lower(): value for key, value in attrs if value is not None}
+        src = attr_map.get("src")
+        if src:
+            self.sources.append(src)
 
 
 class _SimpleHTMLTextExtractor(HTMLParser):

@@ -7,7 +7,8 @@ from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandl
 
 from prism.config import Settings, load_settings
 from prism.db import PrismDatabase
-from prism.notes import NoteService, extract_first_url
+from prism.llm import LLMConfig
+from prism.notes import NoteService, extract_first_url, more_summary_for_record, tags_for_record
 
 LOGGER = logging.getLogger(__name__)
 
@@ -16,7 +17,12 @@ class PrismBot:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
         self.database = PrismDatabase(settings.sqlite_path)
-        self.notes = NoteService(settings.vault_path, self.database, settings.archive_path)
+        self.notes = NoteService(
+            settings.vault_path,
+            self.database,
+            settings.archive_path,
+            LLMConfig(settings.llm_base_url, settings.llm_api_key, settings.llm_model),
+        )
 
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         del context
@@ -35,8 +41,7 @@ class PrismBot:
         result = self.notes.save_url(source_url)
         record = result.record
         if result.created:
-            archive_status = "archived" if record.fetch_status == "fetched" else "fetch failed"
-            reply = f"Saved: {record.title}\n{record.source_kind}, {archive_status}\n/more {record.note_id}"
+            reply = self._saved_reply(record)
         else:
             prefix = "Already saved" if result.duplicate_reason == "source_url" else "Already captured"
             archive_status = "archived" if record.fetch_status == "fetched" else "fetch failed"
@@ -63,13 +68,44 @@ class PrismBot:
 
         await message.reply_text(
             f"{record.title}\n"
-            f"{record.summary}\n"
+            f"{more_summary_for_record(record)}\n"
             f"Status: {record.status}\n"
             f"Fetch: {record.fetch_status}\n"
+            f"LLM: {record.llm_status}\n"
             f"Kind: {record.source_kind}\n"
             f"Path: {record.note_path}\n"
             f"Source: {record.source_url}"
         )
+
+    async def handle_reprocess(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self._is_allowed(update):
+            return
+
+        message = update.effective_message
+        if not message:
+            return
+
+        if not context.args:
+            await message.reply_text("Usage: /reprocess <id>")
+            return
+
+        result = self.notes.reprocess(context.args[0])
+        if not result.record:
+            await message.reply_text(result.message)
+            return
+        if result.ok:
+            await message.reply_text(self._saved_reply(result.record).replace("Saved:", "Reprocessed:", 1))
+            return
+        await message.reply_text(result.message)
+
+    def _saved_reply(self, record) -> str:
+        if record.llm_status == "generated":
+            tags = " ".join(f"#{tag}" for tag in tags_for_record(record))
+            tags_line = f"\nTags: {tags}" if tags else ""
+            return f"Saved: {record.title}\n{record.summary}{tags_line}\n/more {record.note_id}"
+        archive_status = "archived" if record.fetch_status == "fetched" else "fetch failed"
+        llm_status = "LLM failed" if record.llm_status == "failed" else "LLM skipped"
+        return f"Saved: {record.title}\n{record.source_kind}, {archive_status}, {llm_status}\n/more {record.note_id}"
 
     async def handle_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         del context
@@ -93,6 +129,7 @@ def build_application(settings: Settings) -> Application:
     application = Application.builder().token(settings.telegram_bot_token).build()
     application.add_handler(CommandHandler("start", bot.handle_start))
     application.add_handler(CommandHandler("more", bot.handle_more))
+    application.add_handler(CommandHandler("reprocess", bot.handle_reprocess))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot.handle_message))
     return application
 
