@@ -4,7 +4,16 @@ Last updated: 2026-05-29
 
 ## Current State
 
-PRISM is a Docker Compose Telegram bot that saves links into an Obsidian-compatible vault, archives source material, extracts text, deduplicates captures, optionally generates structured LLM notes, and can build a LanceDB semantic index for related-note search and Obsidian backlinks.
+PRISM is a Docker Compose Telegram bot that saves links into an Obsidian-compatible vault, archives source material, extracts text, deduplicates captures, optionally generates structured LLM notes, builds a LanceDB semantic index for related-note search and Obsidian backlinks, exposes retrieval/browse commands from Telegram, and can synthesize and rate new project ideas from the saved knowledge base.
+
+## Scope vs `overview.md`
+
+The build plan (overview.md §24, Phases 1–6) is fully implemented, and the full MVP scope (overview.md §22) is now complete.
+
+- **MVP complete:** Telegram bot, default link saving, website/PDF/GitHub fetching, cleaned-text + raw-HTML snapshots, structured Markdown note generation, Obsidian vault + YAML frontmatter, tags, related notes, personal profile, evaluation scores, SQLite metadata, LanceDB semantic search, duplicate detection, `/ask`, `/more`, `/recent`, `/tags`, `/related`, `/idea`, idea Markdown files, and 1–5 star idea ratings.
+- **Beyond MVP / listed as "later":** `/reprocess`, arXiv metadata, and GitHub repo metadata (stars/license/language) are already implemented. `/find`, `/status`, and `/help` are extra retrieval/observability/usability commands not in the MVP includes list.
+- **Not implemented (non-MVP):** live web search in `/ask` is intentionally excluded per the MVP rule. Scheduled daily/weekly ideas and other overview.md §23 items remain future work.
+- **Minor divergence:** generated-idea note fields differ from the example in overview.md §17 (PRISM uses `created`/`rating`/`status` and sections Problem/Approach/Why It Fits/Components/Risks, rather than `date_generated`/`user_rating`/`novelty_score`/`feasibility_score`/`next step`). Functionally complete for generation + ratings; the exact frontmatter keys could be aligned later if desired.
 
 ## Completed
 
@@ -52,6 +61,30 @@ PRISM is a Docker Compose Telegram bot that saves links into an Obsidian-compati
 - Generated notes render `related_notes` frontmatter and a `## Related Notes` section with Obsidian wiki links.
 - Telegram `/related <query-or-note_id>` returns top semantic matches with `/more <id>` shortcuts.
 
+### Phase 5: Background Processing and Retrieval Commands
+
+- Slow `save_url` and `reprocess` work runs in background asyncio tasks so Telegram acks immediately.
+- `/recent` browses recent notes and `/tags [tag]` browses tag counts or notes for a tag, both paginated with inline ◀/▶ buttons (`/ideas` too).
+- `/find <query>` runs background semantic search; `/status` reports note/LLM/embedding counts and index state.
+- `/help` lists all commands, and the command list is registered with Telegram's command menu via `set_my_commands`; both are generated from a single `COMMANDS` table in `bot.py`.
+
+### Phase 6: Idea Generation and Ratings
+
+- `IdeaService` (`src/prism/ideas.py`) synthesizes a project idea from the saved knowledge base, the personal profile, and previously rated ideas.
+- `/idea [topic]` does a semantic search for the topic (or draws from recent generated notes when no topic is given) and generates a structured idea in a background task.
+- Ideas are saved as Markdown in `vault/generated-ideas/` and persisted to a new SQLite `ideas` table (migrated via `_add_missing_idea_columns()`).
+- The `/idea` reply carries inline ★1–★5 buttons; a `CallbackQueryHandler` persists the rating to SQLite and rewrites the idea note's `rating` frontmatter.
+- High-rated past ideas are fed into future idea prompts to steer generation toward preferred directions.
+- `/ideas` browses recent generated ideas with their ratings (paginated with inline ◀/▶ buttons).
+- LLM failures produce a degraded idea note (`llm_status="failed"`) rather than blocking, consistent with the rest of the pipeline.
+
+### `/ask`: Retrieval-augmented Q&A
+
+- `NoteService.ask()` (`src/prism/notes.py`) embeds the question, semantic-searches LanceDB, grounds the answer in the retrieved notes' structured summaries (quick + detailed + key claims), and calls the LLM via `LLMClient.answer_question()`.
+- Answers use only saved notes (no live web search per the MVP rule); the system prompt forbids outside knowledge and asks for cited note ids.
+- `/ask <question>` runs in a background task and replies with the answer plus a `Sources:` list of `/more <id>` shortcuts.
+- Degrades gracefully: missing embedding/LLM config, an empty index, no relevant matches, or an LLM error each return a clear message instead of failing.
+
 ## Verified
 
 Automated checks currently pass:
@@ -61,7 +94,7 @@ python -m compileall src tests
 PYTHONPATH=src python -m unittest discover -s tests
 ```
 
-Current unit suite: 36 tests. Four `/related` bot tests are skipped in the host Python environment when `python-telegram-bot` is not installed; the Docker image installs it.
+Current unit suite: 118 tests, all passing with `python-telegram-bot` installed. Bot-handler tests are skipped in host Python environments where `python-telegram-bot` is not installed; the Docker image installs it.
 
 Docker build has also been verified:
 
@@ -83,23 +116,19 @@ Manual checks still recommended for Phase 4:
 - Full JavaScript/browser rendering is not implemented. The iframe fallback fixes some static iframe-shell pages, but arbitrary JS-heavy sites may still extract poorly.
 - LanceDB is an index/cache; SQLite and Markdown remain the source of truth.
 - No background queue or scheduled indexing; indexing runs synchronously and best-effort after save/reprocess or manually through the rebuild CLI.
-- `/ask`, `/recent`, `/tags`, `/idea`, and idea ratings are not implemented.
+- `/ask` and `/idea` draw on note metadata/summaries (not full archived text), so answers and ideas are only as good as the saved summaries and the retrieved slice.
 - GitHub support fetches README metadata/content only; it does not clone or inspect repo structure.
 - LLM generation and embedding/indexing are synchronous in the Telegram request path, so slow providers can delay replies.
 - LLM or embedding provider rate limits surface in SQLite as failed statuses; use `/reprocess <id>` or the rebuild CLI to retry.
 
-## Next Recommended Phase
+## Next Recommended Work
 
-### Phase 5: Operational Hardening and Retrieval UX
+Phases 1–6 and the full MVP scope are now implemented. Suggested follow-ups (all post-MVP / overview.md §23 future features):
 
-Suggested implementation order:
-
-1. Add background jobs for slow LLM and embedding work.
-2. Add `/recent`, `/tags`, and richer `/related` result pagination.
-3. Add `/ask` retrieval over indexed notes.
-4. Add index health/status commands.
-5. Improve README runtime docs for Phase 3 and Phase 4 configuration.
-6. Add optional local embedding backend support if direct API costs or reliability become an issue.
+1. Pagination for semantic-result commands (`/related`, `/find`, `/ask` sources) — the DB-backed browse commands (`/recent`, `/ideas`, `/tags`) are already paginated.
+2. Optional keyword search alongside semantic retrieval in `/ask` (overview.md §16 step 4).
+3. Add optional local embedding/LLM backend support if direct API costs or reliability become an issue.
+4. Scheduled daily/weekly ideas.
 
 ## Useful Commands
 
@@ -140,10 +169,30 @@ Inspect recent LLM and embedding status:
 sqlite3 runtime/prism.sqlite3 "select note_id,title,llm_status,embedding_status,embedding_error,embedding_model,embedding_dimensions from notes order by date_saved desc limit 10;"
 ```
 
+Inspect generated ideas and ratings:
+
+```sh
+sqlite3 runtime/prism.sqlite3 "select idea_id,title,rating,llm_status from ideas order by created_at desc limit 10;"
+```
+
 Reprocess a note from Telegram:
 
 ```text
 /reprocess <note_id>
+```
+
+Generate and rate ideas from Telegram:
+
+```text
+/idea robotics
+/idea
+/ideas
+```
+
+Ask a question grounded in your notes:
+
+```text
+/ask What have I saved about efficient VLMs for robotics?
 ```
 
 Search related notes from Telegram:

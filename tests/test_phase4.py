@@ -188,7 +188,7 @@ class Phase4BotRelatedTests(unittest.TestCase):
 
         asyncio.run(bot.handle_related(update, context))
 
-        self.assertEqual(update.effective_message.replies[-1], "Usage: /related <query-or-note_id>")
+        self.assertEqual(update.effective_message.replies[-1], "Usage: /related <query-or-note_id> [n]")
 
     def test_related_reports_missing_embedding_config(self) -> None:
         bot = PrismBot.__new__(PrismBot)

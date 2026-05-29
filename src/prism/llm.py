@@ -50,6 +50,40 @@ class LLMClient:
             raise ValueError("LLM response JSON was not an object")
         return LLMGeneration(data=parsed, model=str(data.get("model") or self.config.model))
 
+    def generate_idea(self, context: dict[str, Any], profile: str) -> LLMGeneration:
+        if not self.config.is_configured:
+            raise RuntimeError("LLM_API_KEY and LLM_MODEL are required")
+
+        payload = self._idea_payload(context, profile, use_response_format=True)
+        try:
+            data = self._post(payload)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 400:
+                data = self._post(self._idea_payload(context, profile, use_response_format=False))
+            else:
+                raise
+
+        content = _assistant_content(data)
+        parsed = json.loads(content)
+        if not isinstance(parsed, dict):
+            raise ValueError("LLM response JSON was not an object")
+        return LLMGeneration(data=parsed, model=str(data.get("model") or self.config.model))
+
+    def answer_question(self, context: dict[str, Any]) -> str:
+        if not self.config.is_configured:
+            raise RuntimeError("LLM_API_KEY and LLM_MODEL are required")
+        payload: dict[str, Any] = {
+            "model": self.config.model,
+            "temperature": 0.2,
+            "max_tokens": 1200,
+            "messages": [
+                {"role": "system", "content": _ask_system_prompt()},
+                {"role": "user", "content": json.dumps(context, ensure_ascii=True)},
+            ],
+        }
+        data = self._post(payload)
+        return _assistant_content(data).strip()
+
     def _post(self, payload: dict[str, Any]) -> dict[str, Any]:
         assert self.config.api_key is not None
         url = self.config.base_url.rstrip("/") + "/chat/completions"
@@ -75,6 +109,40 @@ class LLMClient:
         if use_response_format:
             payload["response_format"] = {"type": "json_object"}
         return payload
+
+    def _idea_payload(self, context: dict[str, Any], profile: str, use_response_format: bool) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "model": self.config.model,
+            "temperature": 0.7,
+            "max_tokens": 2000,
+            "messages": [
+                {"role": "system", "content": _idea_system_prompt()},
+                {"role": "user", "content": json.dumps({"profile": profile, "context": context}, ensure_ascii=True)},
+            ],
+        }
+        if use_response_format:
+            payload["response_format"] = {"type": "json_object"}
+        return payload
+
+
+def build_idea_context(
+    *,
+    topic: str | None,
+    knowledge: list[dict[str, Any]],
+    past_ideas: list[dict[str, Any]],
+) -> dict[str, Any]:
+    return {
+        "topic": topic or None,
+        "knowledge": knowledge,
+        "past_rated_ideas": past_ideas,
+    }
+
+
+def build_ask_context(*, question: str, notes: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "question": question,
+        "notes": notes,
+    }
 
 
 def build_llm_context(
@@ -126,4 +194,31 @@ def _system_prompt() -> str:
         "related_notes must be a list of objects with id, title, and reason selected only from related_candidates. "
         "Use direct language, preserve uncertainty, and favor a healthy mix of "
         "buildable ideas, research novelty, and practical tool value."
+    )
+
+
+def _idea_system_prompt() -> str:
+    return (
+        "You are PRISM's idea engine. Generate one concrete, buildable project idea "
+        "synthesized from the user's saved knowledge and profile. "
+        "Return only a valid JSON object with fields: title, summary, problem, approach, "
+        "why_it_fits, components, risks, related_notes, tags. "
+        "components, risks, and tags are lists of strings. "
+        "related_notes is a list of objects with id, title, and reason, selected only from "
+        "context.knowledge entries (use their exact ids). "
+        "summary is a single punchy sentence pitching the idea. "
+        "If context.past_rated_ideas is provided, prefer directions similar to highly rated "
+        "ideas and avoid those that rated poorly. "
+        "Be specific and technical, ground the idea in the provided notes, and favor things "
+        "the user could actually build."
+    )
+
+
+def _ask_system_prompt() -> str:
+    return (
+        "You answer the user's question using ONLY the notes provided in context.notes, "
+        "which come from their personal research vault. Do not use outside knowledge and "
+        "never invent facts. If the notes do not contain the answer, say plainly that you "
+        "have nothing saved about it. Cite the note ids you rely on in square brackets, "
+        "e.g. [a1b2c3]. Be concise, direct, and technical."
     )

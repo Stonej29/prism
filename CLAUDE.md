@@ -38,6 +38,11 @@ Inspect note processing status:
 sqlite3 runtime/prism.sqlite3 "select note_id,title,llm_status,embedding_status,embedding_error,embedding_model,embedding_dimensions from notes order by date_saved desc limit 10;"
 ```
 
+Inspect generated ideas and ratings:
+```sh
+sqlite3 runtime/prism.sqlite3 "select idea_id,title,rating,llm_status from ideas order by created_at desc limit 10;"
+```
+
 ## Architecture
 
 PRISM is a Telegram bot that saves URLs into an Obsidian-compatible Markdown vault. The full pipeline for each URL is:
@@ -50,9 +55,11 @@ PRISM is a Telegram bot that saves URLs into an Obsidian-compatible Markdown vau
 
 4. **NoteService** (`notes.py`) — orchestrates the above steps, writes the Markdown note to `vault/notes/`, and persists metadata to SQLite.
 
-5. **Database** (`db.py`) — single SQLite table `notes` with all metadata. Schema evolves by `ALTER TABLE ADD COLUMN` via `_add_missing_columns()` at startup, so old databases are automatically migrated without data loss.
+5. **Database** (`db.py`) — SQLite tables `notes` (all note metadata) and `ideas` (generated ideas + ratings). Both schemas evolve by `ALTER TABLE ADD COLUMN` via `_add_missing_columns()` / `_add_missing_idea_columns()` at startup, so old databases are automatically migrated without data loss.
 
-6. **Bot** (`bot.py`) — wires the pipeline to Telegram handlers. Commands: `/start`, `/more <id>`, `/reprocess <id>`, `/related <query-or-note_id>`.
+6. **Idea engine** (`ideas.py`) — `IdeaService` synthesizes a project idea from the saved knowledge base (semantic search on a topic, else recent generated notes) plus the personal profile and previously rated ideas. Writes an idea Markdown note to `vault/generated-ideas/`, persists an `IdeaRecord` to SQLite, and supports a human 1–5 rating loop that rewrites the note's `rating` frontmatter and feeds future idea prompts.
+
+7. **Bot** (`bot.py`) — wires the pipeline to Telegram handlers. Commands: `/start`, `/help`, `/more <id>`, `/reprocess <id>`, `/related <query-or-note_id>`, `/status`, `/recent`, `/tags [tag]`, `/find <query>`, `/ask <question>`, `/idea [topic]`, `/ideas`. `/ask` answers questions grounded only in saved notes (semantic retrieval → LLM, no live web search). The command list is registered with Telegram's command menu via `set_my_commands` in `_post_init` (sourced from the `COMMANDS` list, which also generates `/help`). Inline-button callbacks are handled by `CallbackQueryHandler`s: idea ratings (`idearate:<idea_id>:<n>`) and list pagination (`pg:<kind>:<offset>[:<tag>]`). The DB-backed browse commands (`/recent`, `/ideas`, `/tags`) paginate `PAGE_SIZE` items per page with ◀/▶ buttons via `_page_view`, backed by `offset` params on the `list_*` DB methods.
 
 ### Data flow
 ```

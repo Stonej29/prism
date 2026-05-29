@@ -1,58 +1,92 @@
-# prism
+# PRISM
 
-Personal Research Interlinked System (PRISM) is a self-hosted personal research memory and idea engine.
+**Personal Research Interlinked System** — a self-hosted research memory and idea engine.
 
-## Phase 2
+Send a URL to a Telegram bot and PRISM resolves, fetches, archives, and extracts the
+source; generates a structured, Obsidian-compatible Markdown note with an LLM; embeds
+it into a LanceDB semantic index with backlinks to related notes; and stores all
+metadata in SQLite. You can then browse, search, and synthesize new project ideas from
+your saved knowledge — and rate those ideas 1–5 to steer future ones.
 
-Phase 2 runs a Docker Compose based Telegram bot. Send it a message containing a URL and it resolves, fetches, archives, and extracts source content before creating an Obsidian-compatible Markdown note in a private mounted vault and recording metadata in SQLite. If fetching fails, PRISM still creates a fallback note with the fetch error recorded.
+Every step degrades gracefully: a fetch, LLM, or embedding failure produces a partial
+note rather than losing the capture.
 
-Runtime data is intentionally kept out of the app repository:
+## Pipeline
 
-- `runtime/research-vault` is the private Obsidian vault and should be its own local git repo with no remote.
-- `runtime/prism.sqlite3` stores app metadata.
-- `runtime/archives` stores raw fetched HTML, PDFs, README files, extracted text, and metadata JSON.
-- `runtime/lancedb` and `runtime/logs` are reserved for later phases.
+```
+Telegram message → handle_message → NoteService.save_url
+  → fetch_source (fetch.py)         → runtime/archives/<id>/   (extracted.txt, metadata.json, raw source)
+  → _apply_llm (llm.py)             → structured JSON fields (summary, tags, scores, related)
+  → render_note (notes.py)          → runtime/research-vault/notes/<date>-<slug>.md
+  → database.insert_note (db.py)    → runtime/prism.sqlite3
+  → _index_after_persist (index.py) → runtime/lancedb/
+```
 
-## Fedora Docker Setup
+Source kinds detected automatically: arXiv papers, GitHub repos (README + metadata),
+PDFs, and general websites. See `CLAUDE.md` for the full architecture and design notes.
 
-Install Docker and Compose:
+## Telegram commands
+
+| Command | Description |
+| --- | --- |
+| *(send a URL)* | Save, archive, summarize, and index the link |
+| `/start` | Intro message |
+| `/help` | List all commands |
+| `/more <id>` | Show the structured detailed view of a note |
+| `/related <query-or-note_id> [n]` | Semantic search for related notes |
+| `/find <query>` | Semantic search by free-text query |
+| `/ask <question>` | Answer a question grounded only in your saved notes, with cited sources |
+| `/recent` | Browse recent notes (◀/▶ paged) |
+| `/tags [tag]` | Browse tag counts, or notes for a tag (◀/▶ paged) |
+| `/status` | Note / LLM / embedding counts and index state |
+| `/reprocess <id>` | Re-run LLM generation from the archived text |
+| `/idea [topic]` | Generate a project idea from your notes (semantic search on a topic, else recent notes) |
+| `/ideas` | Browse generated ideas with their ratings (◀/▶ paged) |
+| *(★1–★5 buttons)* | Rate the idea under each `/idea` reply (1–5) |
+
+## Stack
+
+Python · `python-telegram-bot` · Markdown/Obsidian vault · SQLite (metadata) ·
+LanceDB (vectors) · local filesystem (archive) · OpenAI-compatible LLM and embedding
+APIs. Requires Python ≥ 3.12; runs via Docker Compose.
+
+## Configuration
+
+Copy `.env.example` to `.env` and set:
+
+- `TELEGRAM_BOT_TOKEN`
+- `TELEGRAM_ALLOWED_USER_IDS` — comma-separated numeric Telegram user IDs
+- `PRISM_UID` / `PRISM_GID` if your host user is not `1000:1000`
+
+Optional services (each degrades gracefully if unset):
+
+- `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL` — note and idea generation (default base URL: OpenRouter)
+- `EMBEDDING_BASE_URL` / `EMBEDDING_API_KEY` / `EMBEDDING_MODEL` — semantic indexing, `/related`, `/find`, and topic-based `/idea` (default base URL: OpenAI)
+
+Without an LLM key, links are still fetched and archived (notes are degraded, and
+`/idea` is unavailable). Without an embedding key, semantic search and indexing are
+skipped but everything else works.
+
+`VAULT_PATH`, `SQLITE_PATH`, `ARCHIVE_PATH`, and `LANCEDB_PATH` default to paths under
+`/data` inside the container.
+
+## Fedora Docker setup
 
 ```sh
 sudo dnf install docker docker-compose-plugin
 sudo systemctl enable --now docker
+docker compose version
 ```
 
-Either add your user to the Docker group and log out/in:
+Either add your user to the Docker group and log out/in, or prefix commands with `sudo`:
 
 ```sh
 sudo usermod -aG docker "$USER"
 ```
 
-Or run Compose commands with `sudo docker compose`.
+## Initialize the private vault
 
-Verify Docker:
-
-```sh
-docker compose version
-```
-
-## Local Setup
-
-Create local config:
-
-```sh
-cp .env.example .env
-```
-
-Set:
-
-- `TELEGRAM_BOT_TOKEN`
-- `TELEGRAM_ALLOWED_USER_IDS`, as comma-separated numeric Telegram user IDs
-- `PRISM_UID` and `PRISM_GID` if your host user is not `1000:1000`
-
-`VAULT_PATH`, `SQLITE_PATH`, and `ARCHIVE_PATH` default to paths under `/data` in Docker. LLM variables are present for future phases but are not used in Phase 2.
-
-Initialize the private vault:
+The Obsidian vault is its own local git repo with no remote, kept out of this repo:
 
 ```sh
 mkdir -p runtime/research-vault
@@ -60,21 +94,51 @@ git -C runtime/research-vault init
 printf ".obsidian/workspace*.json\n.trash/\n" > runtime/research-vault/.gitignore
 ```
 
-Build and run:
+## Build and run
 
 ```sh
 docker compose build
-docker compose up
+sudo docker compose up -d --force-recreate
+sudo docker compose logs -f prism
 ```
 
-## Phase 2 Checks
+## Maintenance
 
-- Send a URL from an allowed Telegram account.
-- Confirm a note appears under `runtime/research-vault/notes/`.
-- Confirm archived source files appear under `runtime/archives/<note_id>/`.
-- Confirm SQLite has a matching row in `runtime/prism.sqlite3` with fetch metadata.
-- Send the same exact URL again and confirm the bot returns an existing note response.
-- Send a different URL with the same extracted content and confirm the existing note is reused.
-- Send a message from an unauthorized Telegram account and confirm it is rejected.
-- Run `git status --short` in this repo and confirm runtime data and secrets are ignored.
-- Run `git -C runtime/research-vault status` to inspect the vault's separate git history.
+Rebuild the semantic index from SQLite (the source of truth) at any time:
+
+```sh
+docker compose run --rm prism python -m prism.index rebuild
+# or on the host:
+PYTHONPATH=src SQLITE_PATH=runtime/prism.sqlite3 LANCEDB_PATH=runtime/lancedb python -m prism.index rebuild
+```
+
+Inspect processing status:
+
+```sh
+sqlite3 runtime/prism.sqlite3 "select note_id,title,llm_status,embedding_status from notes order by date_saved desc limit 10;"
+sqlite3 runtime/prism.sqlite3 "select idea_id,title,rating,llm_status from ideas order by created_at desc limit 10;"
+```
+
+Run the test suite (installs `python-telegram-bot` for the bot-handler tests):
+
+```sh
+PYTHONPATH=src python -m unittest discover -s tests
+```
+
+## Runtime data layout
+
+Runtime data is intentionally kept out of this repository (`runtime/` is a Docker
+volume mount):
+
+- `runtime/research-vault/notes/` — generated source notes (Markdown)
+- `runtime/research-vault/generated-ideas/` — generated idea notes (Markdown)
+- `runtime/research-vault/profile/personal.md` — personal profile fed to the LLM
+- `runtime/prism.sqlite3` — note and idea metadata
+- `runtime/archives/<note_id>/` — raw HTML/PDF/README, extracted text, metadata JSON
+- `runtime/lancedb/` — vector index (a rebuildable cache; SQLite + Markdown are authoritative)
+
+## Implementation status
+
+The full `overview.md` **MVP scope** is implemented, including `/ask`
+retrieval-augmented Q&A grounded in saved notes. Build plan Phases 1–6 are complete.
+See `status.md` for the detailed breakdown.

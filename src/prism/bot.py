@@ -3,16 +3,25 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
+from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.ext import (
+    Application,
+    CallbackQueryHandler,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
 
 from prism.config import Settings, load_settings
 from prism.db import PrismDatabase
 from prism.embedding import EmbeddingConfig
+from prism.ideas import IdeaService
 from prism.index import NoteIndexer
 from prism.llm import LLMConfig
 from prism.notes import (
     NoteService,
+    _json_array,
     extract_first_url,
     related_notes_for_record,
     scores_for_record,
@@ -22,21 +31,41 @@ from prism.notes import (
 
 LOGGER = logging.getLogger(__name__)
 
+PAGE_SIZE = 5
+
+# Commands registered with Telegram's command menu, and the source for /help.
+COMMANDS = [
+    ("help", "Show all commands"),
+    ("ask", "Answer a question from your saved notes"),
+    ("find", "Semantic search of your notes"),
+    ("related", "Find notes related to a query or note id"),
+    ("recent", "Browse recent notes"),
+    ("tags", "Browse tags, or notes for a tag"),
+    ("more", "Show the full detail of a note"),
+    ("idea", "Generate a project idea, then rate it"),
+    ("ideas", "Browse generated ideas with ratings"),
+    ("reprocess", "Re-run LLM generation for a note"),
+    ("status", "Show note, LLM, and index counts"),
+]
+
 
 class PrismBot:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
         self.database = PrismDatabase(settings.sqlite_path)
+        llm_config = LLMConfig(settings.llm_base_url, settings.llm_api_key, settings.llm_model)
+        indexer = NoteIndexer(
+            settings.lancedb_path,
+            EmbeddingConfig(settings.embedding_base_url, settings.embedding_api_key, settings.embedding_model),
+        )
         self.notes = NoteService(
             settings.vault_path,
             self.database,
             settings.archive_path,
-            LLMConfig(settings.llm_base_url, settings.llm_api_key, settings.llm_model),
-            NoteIndexer(
-                settings.lancedb_path,
-                EmbeddingConfig(settings.embedding_base_url, settings.embedding_api_key, settings.embedding_model),
-            ),
+            llm_config,
+            indexer,
         )
+        self.ideas = IdeaService(settings.vault_path, self.database, llm_config, indexer)
 
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         del context
@@ -171,23 +200,14 @@ class PrismBot:
         await message.reply_text(result.message)
 
     async def handle_recent(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        del context
         if not await self._is_allowed(update):
             return
         message = update.effective_message
         if not message:
             return
-        n = 5
-        if context.args:
-            try:
-                n = max(1, min(10, int(context.args[0])))
-            except ValueError:
-                await message.reply_text("Usage: /recent [n]  (n is a number, max 10)")
-                return
-        records = self.database.list_recent_notes(n)
-        if not records:
-            await message.reply_text("No notes saved yet.")
-            return
-        await message.reply_text(_recent_reply(records))
+        text, keyboard = self._page_view("recent", 0)
+        await message.reply_text(text or "No notes saved yet.", reply_markup=keyboard)
 
     async def handle_tags(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._is_allowed(update):
@@ -196,18 +216,12 @@ class PrismBot:
         if not message:
             return
         if not context.args:
-            tag_counts = self.database.list_tags_with_counts()
-            if not tag_counts:
-                await message.reply_text("No tags yet. Save some URLs and wait for LLM processing.")
-                return
-            await message.reply_text(_tags_list_reply(tag_counts))
+            text, keyboard = self._page_view("tags", 0)
+            await message.reply_text(text or "No tags yet. Save some URLs and wait for LLM processing.", reply_markup=keyboard)
             return
         tag = context.args[0].strip().lstrip("#").lower()
-        records = self.database.list_notes_by_tag(tag, limit=10)
-        if not records:
-            await message.reply_text(f"No notes tagged #{tag}.")
-            return
-        await message.reply_text(_tags_notes_reply(tag, records))
+        text, keyboard = self._page_view("tagnotes", 0, tag=tag)
+        await message.reply_text(text or f"No notes tagged #{tag}.", reply_markup=keyboard)
 
     async def handle_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._is_allowed(update):
@@ -249,6 +263,136 @@ class PrismBot:
             return
         await message.reply_text(_related_reply(results))
 
+    async def handle_ask(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self._is_allowed(update):
+            return
+        message = update.effective_message
+        if not message:
+            return
+        question = " ".join(context.args).strip() if context.args else ""
+        if not question:
+            await message.reply_text("Usage: /ask <question>")
+            return
+        indexer = self.notes.indexer
+        if not indexer or not indexer.is_configured:
+            await message.reply_text("Semantic search is not configured. Set EMBEDDING_API_KEY and EMBEDDING_MODEL.")
+            return
+        if not self.notes.llm_config.is_configured:
+            await message.reply_text("/ask needs LLM_API_KEY and LLM_MODEL.")
+            return
+        await message.reply_text(f'Searching your notes for "{_shorten(question, 60)}"...')
+        asyncio.create_task(self._ask_task(question, message))
+
+    async def _ask_task(self, question: str, message) -> None:
+        try:
+            result = await asyncio.to_thread(self.notes.ask, question)
+        except Exception as exc:
+            LOGGER.exception("Background ask failed for %s", question)
+            await message.reply_text(f"Ask failed: {type(exc).__name__}: {exc}")
+            return
+        if not result.ok:
+            await message.reply_text(result.message)
+            return
+        await message.reply_text(_ask_reply(result))
+
+    async def handle_idea(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self._is_allowed(update):
+            return
+        message = update.effective_message
+        if not message:
+            return
+        if not self.ideas.llm_config.is_configured:
+            await message.reply_text("Idea generation needs LLM_API_KEY and LLM_MODEL.")
+            return
+        topic = " ".join(context.args).strip() if context.args else ""
+        ack = f'Generating idea about "{_shorten(topic, 60)}"...' if topic else "Generating idea..."
+        await message.reply_text(ack)
+        asyncio.create_task(self._idea_task(topic or None, message))
+
+    async def _idea_task(self, topic, message) -> None:
+        try:
+            result = await asyncio.to_thread(self.ideas.generate_idea, topic)
+        except Exception as exc:
+            LOGGER.exception("Background generate_idea failed for topic %s", topic)
+            await message.reply_text(f"Idea generation failed: {type(exc).__name__}: {exc}")
+            return
+        if not result.ok or not result.record:
+            await message.reply_text(result.message)
+            return
+        await message.reply_text(_idea_reply(result.record), reply_markup=_rating_keyboard(result.record.idea_id))
+
+    async def handle_rating(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        del context
+        query = update.callback_query
+        if not query:
+            return
+        await query.answer()
+        user = update.effective_user
+        if not user or user.id not in self.settings.telegram_allowed_user_ids:
+            return
+        idea_id, rating = _parse_rating_callback(query.data)
+        if not idea_id or rating is None:
+            return
+        try:
+            record = await asyncio.to_thread(self.ideas.record_rating, idea_id, rating)
+        except Exception as exc:
+            LOGGER.exception("Rating failed for idea %s", idea_id)
+            await query.edit_message_text(f"Rating failed: {type(exc).__name__}: {exc}")
+            return
+        if not record:
+            await query.edit_message_text("Idea not found.")
+            return
+        await query.edit_message_text(f"Rated {_stars(rating)}: {record.title}")
+
+    async def handle_ideas(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        del context
+        if not await self._is_allowed(update):
+            return
+        message = update.effective_message
+        if not message:
+            return
+        text, keyboard = self._page_view("ideas", 0)
+        await message.reply_text(text or "No ideas yet. Use /idea to generate one.", reply_markup=keyboard)
+
+    async def handle_page(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        del context
+        query = update.callback_query
+        if not query:
+            return
+        await query.answer()
+        user = update.effective_user
+        if not user or user.id not in self.settings.telegram_allowed_user_ids:
+            return
+        kind, offset, tag = _parse_page_callback(query.data)
+        if not kind:
+            return
+        text, keyboard = self._page_view(kind, offset, tag=tag)
+        if not text:
+            return
+        await query.edit_message_text(text, reply_markup=keyboard)
+
+    def _page_view(self, kind: str, offset: int, tag: str | None = None):
+        offset = max(0, offset)
+        if kind == "recent":
+            rows = self.database.list_recent_notes(PAGE_SIZE + 1, offset)
+            page, more = rows[:PAGE_SIZE], len(rows) > PAGE_SIZE
+            text = _recent_reply(page) if page else None
+        elif kind == "ideas":
+            rows = self.database.list_recent_ideas(PAGE_SIZE + 1, offset)
+            page, more = rows[:PAGE_SIZE], len(rows) > PAGE_SIZE
+            text = _ideas_list_reply(page) if page else None
+        elif kind == "tags":
+            counts = self.database.list_tags_with_counts()
+            page, more = counts[offset:offset + PAGE_SIZE], len(counts) > offset + PAGE_SIZE
+            text = _tags_list_reply(page) if page else None
+        elif kind == "tagnotes" and tag:
+            rows = self.database.list_notes_by_tag(tag, PAGE_SIZE + 1, offset)
+            page, more = rows[:PAGE_SIZE], len(rows) > PAGE_SIZE
+            text = _tags_notes_reply(tag, page) if page else None
+        else:
+            return None, None
+        return text, _page_keyboard(kind, offset, more, tag)
+
     def _saved_reply(self, record) -> str:
         if record.llm_status == "generated":
             tags = " ".join(f"#{tag}" for tag in tags_for_record(record))
@@ -263,7 +407,16 @@ class PrismBot:
         if not await self._is_allowed(update):
             return
         if update.effective_message:
-            await update.effective_message.reply_text("Send a URL to save and archive it in PRISM.")
+            await update.effective_message.reply_text(
+                "Send a URL to save and archive it in PRISM.\n\n" + _HELP_TEXT
+            )
+
+    async def handle_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        del context
+        if not await self._is_allowed(update):
+            return
+        if update.effective_message:
+            await update.effective_message.reply_text(_HELP_TEXT)
 
     async def _is_allowed(self, update: Update) -> bool:
         user = update.effective_user
@@ -384,6 +537,90 @@ def _related_reply(results) -> str:
     return "\n\n".join(lines)
 
 
+_HELP_TEXT = "\n".join(
+    ["PRISM commands:", "(send a URL) — save, archive, summarize, and index a link"]
+    + [f"/{name} — {desc}" for name, desc in COMMANDS]
+)
+
+
+def _ask_reply(result) -> str:
+    parts = [result.answer]
+    if result.sources:
+        lines = [f"- {item.title} (/more {item.note_id})" for item in result.sources]
+        parts.append("Sources:\n" + "\n".join(lines))
+    reply = "\n\n".join(parts)
+    if len(reply) > 4000:
+        reply = reply[:4000].rstrip() + "..."
+    return reply
+
+
+def _idea_reply(record) -> str:
+    tags = _json_array(record.tags_json)
+    tags_line = "\nTags: " + " ".join(f"#{t}" for t in tags) if tags else ""
+    return f"Idea: {record.title}\n{record.summary}{tags_line}\nRate it below."
+
+
+def _ideas_list_reply(records) -> str:
+    lines = ["Recent ideas:"]
+    for r in records:
+        rating = _stars(r.rating) if r.rating is not None else "unrated"
+        lines.append(f"{r.title}\n{rating}, {r.created_at[:10]}")
+    return "\n\n".join(lines)
+
+
+def _rating_keyboard(idea_id: str) -> InlineKeyboardMarkup:
+    buttons = [
+        InlineKeyboardButton(f"★{n}", callback_data=f"idearate:{idea_id}:{n}")
+        for n in range(1, 6)
+    ]
+    return InlineKeyboardMarkup([buttons])
+
+
+def _stars(rating: int) -> str:
+    return "★" * rating
+
+
+def _parse_rating_callback(data: str | None) -> tuple[str | None, int | None]:
+    if not data:
+        return None, None
+    parts = data.split(":")
+    if len(parts) != 3 or parts[0] != "idearate":
+        return None, None
+    idea_id = parts[1].strip()
+    try:
+        rating = int(parts[2])
+    except ValueError:
+        return None, None
+    if not idea_id or not 1 <= rating <= 5:
+        return None, None
+    return idea_id, rating
+
+
+def _page_keyboard(kind: str, offset: int, has_more: bool, tag: str | None) -> InlineKeyboardMarkup | None:
+    suffix = f":{tag}" if tag else ""
+    buttons = []
+    if offset > 0:
+        buttons.append(InlineKeyboardButton("◀ Prev", callback_data=f"pg:{kind}:{max(0, offset - PAGE_SIZE)}{suffix}"))
+    if has_more:
+        buttons.append(InlineKeyboardButton("Next ▶", callback_data=f"pg:{kind}:{offset + PAGE_SIZE}{suffix}"))
+    return InlineKeyboardMarkup([buttons]) if buttons else None
+
+
+def _parse_page_callback(data: str | None) -> tuple[str | None, int, str | None]:
+    if not data:
+        return None, 0, None
+    parts = data.split(":", 3)
+    if len(parts) < 3 or parts[0] != "pg":
+        return None, 0, None
+    kind = parts[1]
+    try:
+        offset = max(0, int(parts[2]))
+    except ValueError:
+        return None, 0, None
+    tag = parts[3] if len(parts) == 4 and parts[3] else None
+    return kind, offset, tag
+
+
 def _shorten(text: str, limit: int) -> str:
     clean = " ".join(text.split())
     if len(clean) <= limit:
@@ -391,10 +628,15 @@ def _shorten(text: str, limit: int) -> str:
     return clean[:limit].rstrip() + "..."
 
 
+async def _post_init(application: Application) -> None:
+    await application.bot.set_my_commands([BotCommand(name, desc) for name, desc in COMMANDS])
+
+
 def build_application(settings: Settings) -> Application:
     bot = PrismBot(settings)
-    application = Application.builder().token(settings.telegram_bot_token).build()
+    application = Application.builder().token(settings.telegram_bot_token).post_init(_post_init).build()
     application.add_handler(CommandHandler("start", bot.handle_start))
+    application.add_handler(CommandHandler("help", bot.handle_help))
     application.add_handler(CommandHandler("more", bot.handle_more))
     application.add_handler(CommandHandler("reprocess", bot.handle_reprocess))
     application.add_handler(CommandHandler("related", bot.handle_related))
@@ -402,6 +644,11 @@ def build_application(settings: Settings) -> Application:
     application.add_handler(CommandHandler("recent", bot.handle_recent))
     application.add_handler(CommandHandler("tags", bot.handle_tags))
     application.add_handler(CommandHandler("find", bot.handle_find))
+    application.add_handler(CommandHandler("ask", bot.handle_ask))
+    application.add_handler(CommandHandler("idea", bot.handle_idea))
+    application.add_handler(CommandHandler("ideas", bot.handle_ideas))
+    application.add_handler(CallbackQueryHandler(bot.handle_rating, pattern="^idearate:"))
+    application.add_handler(CallbackQueryHandler(bot.handle_page, pattern="^pg:"))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot.handle_message))
     return application
 

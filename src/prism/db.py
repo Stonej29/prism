@@ -53,6 +53,24 @@ class NoteRecord:
     related_notes_json: str | None = None
 
 
+@dataclass(frozen=True)
+class IdeaRecord:
+    idea_id: str
+    created_at: str
+    title: str
+    summary: str
+    topic: str | None = None
+    note_path: str | None = None
+    llm_status: str = "skipped"
+    llm_error: str | None = None
+    llm_model: str | None = None
+    structured_json: str | None = None
+    tags_json: str | None = None
+    source_note_ids_json: str | None = None
+    rating: int | None = None
+    rated_at: str | None = None
+
+
 class PrismDatabase:
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -211,11 +229,11 @@ class PrismDatabase:
                 """).fetchall()
         return [_row_to_record(row) for row in rows]
 
-    def list_recent_notes(self, limit: int) -> list[NoteRecord]:
+    def list_recent_notes(self, limit: int, offset: int = 0) -> list[NoteRecord]:
         with self.connect() as conn:
             rows = conn.execute(
-                f"SELECT {_NOTE_COLUMNS} FROM notes ORDER BY date_saved DESC LIMIT ?",
-                (limit,),
+                f"SELECT {_NOTE_COLUMNS} FROM notes ORDER BY date_saved DESC LIMIT ? OFFSET ?",
+                (limit, offset),
             ).fetchall()
         return [_row_to_record(row) for row in rows]
 
@@ -259,13 +277,13 @@ class PrismDatabase:
             embedding_skipped=row["embedding_skipped"] or 0,
         )
 
-    def list_notes_by_tag(self, tag: str, limit: int) -> list[NoteRecord]:
+    def list_notes_by_tag(self, tag: str, limit: int, offset: int = 0) -> list[NoteRecord]:
         with self.connect() as conn:
             rows = conn.execute(
                 f"""SELECT {_NOTE_COLUMNS} FROM notes
                     WHERE llm_status = 'generated' AND tags_json LIKE ?
-                    ORDER BY date_saved DESC LIMIT ?""",
-                (f'%"{tag}"%', limit),
+                    ORDER BY date_saved DESC LIMIT ? OFFSET ?""",
+                (f'%"{tag}"%', limit, offset),
             ).fetchall()
         records = [_row_to_record(row) for row in rows]
         return [r for r in records if tag in _parse_tags_json(r.tags_json)]
@@ -311,6 +329,72 @@ class PrismDatabase:
             row = conn.execute("SELECT 1 FROM notes WHERE note_id = ?", (note_id,)).fetchone()
         return row is not None
 
+    def insert_idea(self, record: IdeaRecord) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO ideas (
+                    idea_id, created_at, title, summary, topic, note_path, llm_status, llm_error,
+                    llm_model, structured_json, tags_json, source_note_ids_json, rating, rated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record.idea_id,
+                    record.created_at,
+                    record.title,
+                    record.summary,
+                    record.topic,
+                    record.note_path,
+                    record.llm_status,
+                    record.llm_error,
+                    record.llm_model,
+                    record.structured_json,
+                    record.tags_json,
+                    record.source_note_ids_json,
+                    record.rating,
+                    record.rated_at,
+                ),
+            )
+
+    def find_by_idea_id(self, idea_id: str) -> IdeaRecord | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                f"SELECT {_IDEA_COLUMNS} FROM ideas WHERE idea_id = ?",
+                (idea_id,),
+            ).fetchone()
+        return _row_to_idea(row) if row else None
+
+    def update_idea_rating(self, idea_id: str, rating: int, rated_at: str) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                "UPDATE ideas SET rating = ?, rated_at = ? WHERE idea_id = ?",
+                (rating, rated_at, idea_id),
+            )
+
+    def list_recent_ideas(self, limit: int, offset: int = 0) -> list[IdeaRecord]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"SELECT {_IDEA_COLUMNS} FROM ideas ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                (limit, offset),
+            ).fetchall()
+        return [_row_to_idea(row) for row in rows]
+
+    def list_rated_ideas(self, limit: int) -> list[IdeaRecord]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"""SELECT {_IDEA_COLUMNS} FROM ideas
+                    WHERE rating IS NOT NULL
+                    ORDER BY rating DESC, rated_at DESC LIMIT ?""",
+                (limit,),
+            ).fetchall()
+        return [_row_to_idea(row) for row in rows]
+
+    def idea_id_exists(self, idea_id: str) -> bool:
+        with self.connect() as conn:
+            row = conn.execute("SELECT 1 FROM ideas WHERE idea_id = ?", (idea_id,)).fetchone()
+        return row is not None
+
     def _initialize(self) -> None:
         with self.connect() as conn:
             conn.execute(
@@ -335,6 +419,17 @@ class PrismDatabase:
                 WHERE content_hash IS NOT NULL AND content_hash != ''
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS ideas (
+                    idea_id TEXT PRIMARY KEY,
+                    created_at TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    summary TEXT NOT NULL
+                )
+                """
+            )
+            _add_missing_idea_columns(conn)
 
 
 _NOTE_COLUMNS = """
@@ -371,11 +466,37 @@ _ADDED_COLUMNS = {
 }
 
 
+_IDEA_COLUMNS = """
+    idea_id, created_at, title, summary, topic, note_path, llm_status, llm_error,
+    llm_model, structured_json, tags_json, source_note_ids_json, rating, rated_at
+"""
+
+_IDEA_ADDED_COLUMNS = {
+    "topic": "TEXT",
+    "note_path": "TEXT",
+    "llm_status": "TEXT NOT NULL DEFAULT 'skipped'",
+    "llm_error": "TEXT",
+    "llm_model": "TEXT",
+    "structured_json": "TEXT",
+    "tags_json": "TEXT",
+    "source_note_ids_json": "TEXT",
+    "rating": "INTEGER",
+    "rated_at": "TEXT",
+}
+
+
 def _add_missing_columns(conn: sqlite3.Connection) -> None:
     existing = {row["name"] for row in conn.execute("PRAGMA table_info(notes)")}
     for column, definition in _ADDED_COLUMNS.items():
         if column not in existing:
             conn.execute(f"ALTER TABLE notes ADD COLUMN {column} {definition}")
+
+
+def _add_missing_idea_columns(conn: sqlite3.Connection) -> None:
+    existing = {row["name"] for row in conn.execute("PRAGMA table_info(ideas)")}
+    for column, definition in _IDEA_ADDED_COLUMNS.items():
+        if column not in existing:
+            conn.execute(f"ALTER TABLE ideas ADD COLUMN {column} {definition}")
 
 
 def _row_to_record(row: sqlite3.Row) -> NoteRecord:
@@ -410,6 +531,25 @@ def _row_to_record(row: sqlite3.Row) -> NoteRecord:
         embedding_dimensions=row["embedding_dimensions"],
         embedding_text_hash=row["embedding_text_hash"],
         related_notes_json=row["related_notes_json"],
+    )
+
+
+def _row_to_idea(row: sqlite3.Row) -> IdeaRecord:
+    return IdeaRecord(
+        idea_id=row["idea_id"],
+        created_at=row["created_at"],
+        title=row["title"],
+        summary=row["summary"],
+        topic=row["topic"],
+        note_path=row["note_path"],
+        llm_status=row["llm_status"],
+        llm_error=row["llm_error"],
+        llm_model=row["llm_model"],
+        structured_json=row["structured_json"],
+        tags_json=row["tags_json"],
+        source_note_ids_json=row["source_note_ids_json"],
+        rating=row["rating"],
+        rated_at=row["rated_at"],
     )
 
 

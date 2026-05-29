@@ -131,15 +131,17 @@ class Phase5DatabaseTests(unittest.TestCase):
 
 TELEGRAM_AVAILABLE = importlib.util.find_spec("telegram") is not None
 if TELEGRAM_AVAILABLE:
-    from prism.bot import PrismBot
+    from prism.bot import PAGE_SIZE, PrismBot
 
 
 class _Message:
     def __init__(self) -> None:
         self.replies: list[str] = []
+        self.markups: list[object] = []
 
-    async def reply_text(self, text: str) -> None:
+    async def reply_text(self, text: str, reply_markup=None) -> None:
         self.replies.append(text)
+        self.markups.append(reply_markup)
 
 
 def _update():
@@ -152,6 +154,29 @@ def _context(args):
 
 @unittest.skipUnless(TELEGRAM_AVAILABLE, "python-telegram-bot is not installed")
 class Phase5BotTests(unittest.TestCase):
+    def test_handle_help_lists_commands(self) -> None:
+        bot = PrismBot.__new__(PrismBot)
+        bot._is_allowed = AsyncMock(return_value=True)
+        update = _update()
+
+        asyncio.run(bot.handle_help(update, _context([])))
+
+        reply = update.effective_message.replies[-1]
+        self.assertIn("/ask", reply)
+        self.assertIn("/idea", reply)
+        self.assertIn("/help", reply)
+
+    def test_handle_start_includes_help(self) -> None:
+        bot = PrismBot.__new__(PrismBot)
+        bot._is_allowed = AsyncMock(return_value=True)
+        update = _update()
+
+        asyncio.run(bot.handle_start(update, _context([])))
+
+        reply = update.effective_message.replies[-1]
+        self.assertIn("Send a URL", reply)
+        self.assertIn("/ask", reply)
+
     def test_handle_message_known_url_replies_immediately(self) -> None:
         bot = PrismBot.__new__(PrismBot)
         bot._is_allowed = AsyncMock(return_value=True)
@@ -206,7 +231,7 @@ class Phase5BotTests(unittest.TestCase):
 
         self.assertEqual(update.effective_message.replies[-1], "Reprocessing abc123...")
 
-    def test_recent_default_limit_5(self) -> None:
+    def test_recent_first_page_queries_with_offset(self) -> None:
         bot = PrismBot.__new__(PrismBot)
         bot._is_allowed = AsyncMock(return_value=True)
         bot.database = Mock()
@@ -215,29 +240,22 @@ class Phase5BotTests(unittest.TestCase):
 
         asyncio.run(bot.handle_recent(update, _context([])))
 
-        bot.database.list_recent_notes.assert_called_once_with(5)
+        bot.database.list_recent_notes.assert_called_once_with(PAGE_SIZE + 1, 0)
+        self.assertIsNone(update.effective_message.markups[-1])  # one page, no nav
 
-    def test_recent_custom_limit_parsed(self) -> None:
+    def test_recent_next_button_when_more(self) -> None:
         bot = PrismBot.__new__(PrismBot)
         bot._is_allowed = AsyncMock(return_value=True)
         bot.database = Mock()
-        bot.database.list_recent_notes.return_value = [note()]
+        bot.database.list_recent_notes.return_value = [note(note_id=f"id{i}") for i in range(PAGE_SIZE + 1)]
         update = _update()
 
-        asyncio.run(bot.handle_recent(update, _context(["3"])))
+        asyncio.run(bot.handle_recent(update, _context([])))
 
-        bot.database.list_recent_notes.assert_called_once_with(3)
-
-    def test_recent_limit_clamped_to_10(self) -> None:
-        bot = PrismBot.__new__(PrismBot)
-        bot._is_allowed = AsyncMock(return_value=True)
-        bot.database = Mock()
-        bot.database.list_recent_notes.return_value = [note()]
-        update = _update()
-
-        asyncio.run(bot.handle_recent(update, _context(["50"])))
-
-        bot.database.list_recent_notes.assert_called_once_with(10)
+        markup = update.effective_message.markups[-1]
+        labels = [b.text for row in markup.inline_keyboard for b in row]
+        self.assertTrue(any("Next" in label for label in labels))
+        self.assertFalse(any("Prev" in label for label in labels))
 
     def test_recent_formats_reply(self) -> None:
         bot = PrismBot.__new__(PrismBot)
@@ -288,7 +306,41 @@ class Phase5BotTests(unittest.TestCase):
 
         asyncio.run(bot.handle_tags(update, _context(["#robotics"])))
 
-        bot.database.list_notes_by_tag.assert_called_once_with("robotics", limit=10)
+        bot.database.list_notes_by_tag.assert_called_once_with("robotics", PAGE_SIZE + 1, 0)
+
+    def test_handle_page_next_edits_message(self) -> None:
+        bot = PrismBot.__new__(PrismBot)
+        bot.settings = Mock(telegram_allowed_user_ids={1})
+        bot.database = Mock()
+        bot.database.list_recent_notes.return_value = [note()]
+        query = Mock()
+        query.data = "pg:recent:5"
+        query.answer = AsyncMock()
+        query.edit_message_text = AsyncMock()
+        update = Mock(callback_query=query, effective_user=Mock(id=1))
+
+        asyncio.run(bot.handle_page(update, Mock()))
+
+        bot.database.list_recent_notes.assert_called_once_with(PAGE_SIZE + 1, 5)
+        query.edit_message_text.assert_awaited_once()
+        markup = query.edit_message_text.call_args.kwargs["reply_markup"]
+        labels = [b.text for row in markup.inline_keyboard for b in row]
+        self.assertTrue(any("Prev" in label for label in labels))
+
+    def test_handle_page_unauthorized(self) -> None:
+        bot = PrismBot.__new__(PrismBot)
+        bot.settings = Mock(telegram_allowed_user_ids={1})
+        bot.database = Mock()
+        query = Mock()
+        query.data = "pg:recent:5"
+        query.answer = AsyncMock()
+        query.edit_message_text = AsyncMock()
+        update = Mock(callback_query=query, effective_user=Mock(id=2))
+
+        asyncio.run(bot.handle_page(update, Mock()))
+
+        query.edit_message_text.assert_not_called()
+        bot.database.list_recent_notes.assert_not_called()
 
     def test_find_no_args_shows_usage(self) -> None:
         bot = PrismBot.__new__(PrismBot)
@@ -402,6 +454,7 @@ class Phase5BotTests(unittest.TestCase):
 class Phase5BackgroundTaskTests(unittest.TestCase):
     def test_save_url_task_success(self) -> None:
         bot = PrismBot.__new__(PrismBot)
+        bot.notes = Mock()
         message = _Message()
         saved = note(llm_status="generated", summary="Great summary.")
         result = SaveResult(record=saved, created=True)
@@ -413,6 +466,7 @@ class Phase5BackgroundTaskTests(unittest.TestCase):
 
     def test_save_url_task_content_hash_dup(self) -> None:
         bot = PrismBot.__new__(PrismBot)
+        bot.notes = Mock()
         message = _Message()
         result = SaveResult(record=note(), created=False, duplicate_reason="content_hash")
 
@@ -423,6 +477,7 @@ class Phase5BackgroundTaskTests(unittest.TestCase):
 
     def test_save_url_task_source_url_dup(self) -> None:
         bot = PrismBot.__new__(PrismBot)
+        bot.notes = Mock()
         message = _Message()
         result = SaveResult(record=note(), created=False, duplicate_reason="source_url")
 
@@ -433,6 +488,7 @@ class Phase5BackgroundTaskTests(unittest.TestCase):
 
     def test_save_url_task_exception(self) -> None:
         bot = PrismBot.__new__(PrismBot)
+        bot.notes = Mock()
         message = _Message()
 
         with patch("prism.bot.asyncio.to_thread", new=AsyncMock(side_effect=RuntimeError("timeout"))):
@@ -443,6 +499,7 @@ class Phase5BackgroundTaskTests(unittest.TestCase):
 
     def test_reprocess_task_success(self) -> None:
         bot = PrismBot.__new__(PrismBot)
+        bot.notes = Mock()
         message = _Message()
         saved = note(llm_status="generated", summary="Great summary.")
         result = ReprocessResult(record=saved, ok=True, message="ok")
@@ -454,6 +511,7 @@ class Phase5BackgroundTaskTests(unittest.TestCase):
 
     def test_reprocess_task_failure(self) -> None:
         bot = PrismBot.__new__(PrismBot)
+        bot.notes = Mock()
         message = _Message()
         result = ReprocessResult(record=note(), ok=False, message="LLM failed: bad json")
 
@@ -464,6 +522,7 @@ class Phase5BackgroundTaskTests(unittest.TestCase):
 
     def test_reprocess_task_not_found(self) -> None:
         bot = PrismBot.__new__(PrismBot)
+        bot.notes = Mock()
         message = _Message()
         result = ReprocessResult(record=None, ok=False, message="No note found for xyz.")
 
@@ -474,6 +533,7 @@ class Phase5BackgroundTaskTests(unittest.TestCase):
 
     def test_reprocess_task_exception(self) -> None:
         bot = PrismBot.__new__(PrismBot)
+        bot.notes = Mock()
         message = _Message()
 
         with patch("prism.bot.asyncio.to_thread", new=AsyncMock(side_effect=RuntimeError("db error"))):

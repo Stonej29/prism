@@ -14,7 +14,7 @@ import yaml
 from prism.db import NoteRecord, PrismDatabase
 from prism.fetch import FetchResult, extract_website_text, fetch_source
 from prism.index import NoteIndexer, RelatedCandidate, canonical_index_text
-from prism.llm import LLMClient, LLMConfig, build_llm_context
+from prism.llm import LLMClient, LLMConfig, build_ask_context, build_llm_context
 
 URL_RE = re.compile(r"https?://[^\s<>()]+", re.IGNORECASE)
 PREVIEW_LIMIT = 1500
@@ -39,6 +39,14 @@ class SaveResult:
 @dataclass(frozen=True)
 class ReprocessResult:
     record: NoteRecord | None
+    ok: bool
+    message: str
+
+
+@dataclass(frozen=True)
+class AskResult:
+    answer: str
+    sources: list[RelatedCandidate]
     ok: bool
     message: str
 
@@ -142,6 +150,51 @@ class NoteService:
         if updated.llm_status == "generated":
             return ReprocessResult(record=updated, ok=True, message=f"Reprocessed: {updated.title}")
         return ReprocessResult(record=updated, ok=False, message=f"LLM {updated.llm_status}: {updated.llm_error or 'not generated'}")
+
+    def ask(self, question: str, limit: int = 6) -> AskResult:
+        question = question.strip()
+        if not question:
+            return AskResult(answer="", sources=[], ok=False, message="Ask a question.")
+        if not self.indexer or not self.indexer.is_configured:
+            return AskResult(answer="", sources=[], ok=False, message="Semantic search is not configured.")
+        if not self.llm_config.is_configured:
+            return AskResult(answer="", sources=[], ok=False, message="/ask needs LLM_API_KEY and LLM_MODEL.")
+
+        try:
+            candidates = self.indexer.search_text(question, limit=limit)
+        except Exception as exc:
+            return AskResult(answer="", sources=[], ok=False, message=f"Search failed: {type(exc).__name__}: {exc}")
+
+        if not candidates:
+            if self.indexer.index_is_empty():
+                return AskResult(answer="", sources=[], ok=False, message="The semantic index is empty. Run: PYTHONPATH=src python -m prism.index rebuild")
+            return AskResult(answer="", sources=[], ok=False, message="I have nothing saved about that.")
+
+        context = build_ask_context(question=question, notes=[self._ask_note_context(c) for c in candidates])
+        try:
+            answer = LLMClient(self.llm_config).answer_question(context)
+        except Exception as exc:
+            return AskResult(answer="", sources=candidates, ok=False, message=f"Answer failed: {type(exc).__name__}: {exc}")
+        if not answer:
+            return AskResult(answer="", sources=candidates, ok=False, message="The model returned an empty answer.")
+        return AskResult(answer=answer, sources=candidates, ok=True, message="")
+
+    def _ask_note_context(self, candidate: RelatedCandidate) -> dict[str, Any]:
+        record = self.database.find_by_note_id(candidate.note_id)
+        structured = structured_summary(record) if record else {}
+        quick = _string_field(structured, "quick_summary") or (record.summary if record else candidate.summary)
+        detailed = _string_field(structured, "detailed_summary")
+        claims = structured.get("key_claims")
+        key_claims = [str(c).strip() for c in claims if str(c).strip()] if isinstance(claims, list) else []
+        return {
+            "id": candidate.note_id,
+            "title": record.title if record else candidate.title,
+            "quick_summary": quick,
+            "detailed_summary": detailed,
+            "key_claims": key_claims[:5],
+            "tags": tags_for_record(record) if record else candidate.tags,
+            "source_url": record.source_url if record else candidate.source_url,
+        }
 
     def _apply_llm(self, record: NoteRecord, extracted_text: str, metadata: dict[str, Any], force: bool = False) -> NoteRecord:
         if record.fetch_status != "fetched":
