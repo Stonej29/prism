@@ -1,0 +1,16 @@
+.env
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# Local private data and generated runtime state.
+runtime/
+*.sqlite
+*.sqlite3
+*.db
+*.lance
+*.log
+archives/
+logs/

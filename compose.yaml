@@ -1,0 +1,9 @@
+services:
+  prism:
+    build: .
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - ./runtime:/data
+    restart: unless-stopped
