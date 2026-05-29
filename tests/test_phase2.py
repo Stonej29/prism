@@ -113,14 +113,39 @@ class FetcherIntegrationTests(unittest.TestCase):
             self.assertTrue((Path(tmp) / "pdf123" / "extracted.txt").exists())
 
     def test_github_fetch_archives_readme(self) -> None:
-        payload = b'{"encoding":"base64","content":"IyBUaXRsZVxuQm9keQ==","name":"README.md","path":"README.md","html_url":"https://github.com/o/r/blob/main/README.md"}'
+        repo_meta = b'{"description":"Python client","stargazers_count":42,"license":{"spdx_id":"MIT"},"pushed_at":"2024-03-15T10:00:00Z","language":"Python","topics":["api","client"]}'
+        readme = b'{"encoding":"base64","content":"IyBUaXRsZVxuQm9keQ==","name":"README.md","path":"README.md","html_url":"https://github.com/o/r/blob/main/README.md"}'
         with tempfile.TemporaryDirectory() as tmp:
-            with patch("prism.fetch._http_get_bytes", return_value=(payload, "https://api.github.com/repos/o/r/readme", "application/json")):
+            with patch("prism.fetch._http_get_bytes", side_effect=[
+                (repo_meta, "https://api.github.com/repos/o/r", "application/json"),
+                (readme, "https://api.github.com/repos/o/r/readme", "application/json"),
+            ]):
                 from prism.fetch import fetch_source
                 result = fetch_source("https://github.com/o/r", Path(tmp), "gh123")
 
             self.assertEqual(result.source_kind, "github")
             self.assertEqual(result.title, "o/r")
+            self.assertEqual(result.summary, "Python client")
+            self.assertIn("Stars: 42", result.extracted_text)
+            self.assertIn("License: MIT", result.extracted_text)
+            self.assertIn("Language: Python", result.extracted_text)
+            self.assertIn("Last updated: 2024-03-15", result.extracted_text)
+            self.assertIn("Topics: api, client", result.extracted_text)
+            self.assertIn("# Title", result.extracted_text)
+            self.assertTrue((Path(tmp) / "gh123" / "readme.md").exists())
+
+    def test_github_fetch_degrades_if_repo_metadata_fails(self) -> None:
+        readme = b'{"encoding":"base64","content":"IyBUaXRsZVxuQm9keQ==","name":"README.md","path":"README.md","html_url":"https://github.com/o/r/blob/main/README.md"}'
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("prism.fetch._http_get_bytes", side_effect=[
+                OSError("connection refused"),
+                (readme, "https://api.github.com/repos/o/r/readme", "application/json"),
+            ]):
+                from prism.fetch import fetch_source
+                result = fetch_source("https://github.com/o/r", Path(tmp), "gh123")
+
+            self.assertEqual(result.source_kind, "github")
+            self.assertIsNone(result.summary)
             self.assertIn("# Title", result.extracted_text)
             self.assertTrue((Path(tmp) / "gh123" / "readme.md").exists())
 

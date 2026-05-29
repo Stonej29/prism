@@ -167,6 +167,9 @@ def _fetch_github_repo(source_url: str, archive_dir: Path, fetched_at: str) -> F
     if not owner_repo:
         raise ValueError("GitHub URL is not a repository URL")
     owner, repo = owner_repo
+
+    repo_meta = _fetch_github_repo_metadata(owner, repo)
+
     api_url = f"https://api.github.com/repos/{owner}/{repo}/readme"
     data_bytes, resolved_url, content_type = _http_get_bytes(api_url, headers={"Accept": "application/vnd.github+json"})
     data = json.loads(data_bytes.decode("utf-8"))
@@ -178,8 +181,11 @@ def _fetch_github_repo(source_url: str, archive_dir: Path, fetched_at: str) -> F
         raise ValueError("GitHub README response did not include readable content")
 
     readme_text = readme_bytes.decode("utf-8", errors="replace")
-    readme_path = archive_dir / "readme.md"
-    _write_text(readme_path, readme_text)
+    _write_text(archive_dir / "readme.md", readme_text)
+
+    header = _github_metadata_header(owner, repo, repo_meta)
+    extracted_text = f"{header}\n\n{readme_text}" if repo_meta else readme_text
+
     metadata = {
         "source_url": source_url,
         "resolved_url": resolved_url,
@@ -189,24 +195,65 @@ def _fetch_github_repo(source_url: str, archive_dir: Path, fetched_at: str) -> F
         "readme_name": data.get("name"),
         "readme_path": data.get("path"),
         "html_url": data.get("html_url"),
+        **{f"repo_{k}": v for k, v in repo_meta.items()},
     }
-    _write_text(archive_dir / "extracted.txt", readme_text)
+    _write_text(archive_dir / "extracted.txt", extracted_text)
     _write_json(archive_dir / "metadata.json", metadata)
     return FetchResult(
         source_url=source_url,
         resolved_url=f"https://github.com/{owner}/{repo}",
         source_kind="github",
         title=f"{owner}/{repo}",
-        summary=None,
-        extracted_text=readme_text,
+        summary=repo_meta.get("description"),
+        extracted_text=extracted_text,
         local_archive=str(archive_dir),
         pdf_path=None,
-        content_hash=content_hash(readme_text, fallback_bytes=readme_bytes),
+        content_hash=content_hash(extracted_text, fallback_bytes=readme_bytes),
         fetch_status="fetched",
         fetch_error=None,
         fetched_at=fetched_at,
         metadata=metadata,
     )
+
+
+def _fetch_github_repo_metadata(owner: str, repo: str) -> dict[str, Any]:
+    try:
+        api_url = f"https://api.github.com/repos/{owner}/{repo}"
+        data_bytes, _, _ = _http_get_bytes(api_url, headers={"Accept": "application/vnd.github+json"})
+        data = json.loads(data_bytes.decode("utf-8"))
+        result: dict[str, Any] = {}
+        if isinstance(data.get("description"), str) and data["description"]:
+            result["description"] = data["description"]
+        if isinstance(data.get("stargazers_count"), int):
+            result["stars"] = data["stargazers_count"]
+        if isinstance(data.get("license"), dict) and data["license"].get("spdx_id"):
+            result["license"] = data["license"]["spdx_id"]
+        if isinstance(data.get("pushed_at"), str):
+            result["last_pushed"] = data["pushed_at"][:10]
+        if isinstance(data.get("language"), str) and data["language"]:
+            result["language"] = data["language"]
+        if isinstance(data.get("topics"), list):
+            result["topics"] = [t for t in data["topics"] if isinstance(t, str)]
+        return result
+    except Exception:
+        return {}
+
+
+def _github_metadata_header(owner: str, repo: str, meta: dict[str, Any]) -> str:
+    lines = [f"Repository: {owner}/{repo}"]
+    if meta.get("description"):
+        lines.append(f"Description: {meta['description']}")
+    if meta.get("stars") is not None:
+        lines.append(f"Stars: {meta['stars']}")
+    if meta.get("language"):
+        lines.append(f"Language: {meta['language']}")
+    if meta.get("license"):
+        lines.append(f"License: {meta['license']}")
+    if meta.get("last_pushed"):
+        lines.append(f"Last updated: {meta['last_pushed']}")
+    if meta.get("topics"):
+        lines.append(f"Topics: {', '.join(meta['topics'])}")
+    return "\n".join(lines)
 
 
 def _fetch_website(source_url: str, archive_dir: Path, fetched_at: str) -> FetchResult:
