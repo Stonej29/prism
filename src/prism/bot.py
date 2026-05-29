@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import secrets
 
 from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
@@ -32,6 +33,7 @@ from prism.notes import (
 LOGGER = logging.getLogger(__name__)
 
 PAGE_SIZE = 5
+MAX_SEMANTIC_RESULTS = 20
 
 # Commands registered with Telegram's command menu, and the source for /help.
 COMMANDS = [
@@ -66,6 +68,7 @@ class PrismBot:
             indexer,
         )
         self.ideas = IdeaService(settings.vault_path, self.database, llm_config, indexer)
+        self._semantic_pages: dict[str, tuple[str, list]] = {}
 
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         del context
@@ -131,9 +134,9 @@ class PrismBot:
             return
 
         args = list(context.args) if context.args else []
-        limit = 5
+        max_results = MAX_SEMANTIC_RESULTS
         if args and args[-1].isdigit():
-            limit = max(1, min(20, int(args.pop())))
+            max_results = max(1, min(MAX_SEMANTIC_RESULTS, int(args.pop())))
         query = " ".join(args).strip()
         if not query:
             await message.reply_text("Usage: /related <query-or-note_id> [n]")
@@ -147,9 +150,9 @@ class PrismBot:
         try:
             record = self.database.find_by_note_id(query.lower()) if len(query.split()) == 1 else None
             if record:
-                results = indexer.search_related(record, limit=limit)
+                results = indexer.search_related(record, limit=max_results)
             else:
-                results = indexer.search_text(query, limit=limit)
+                results = indexer.search_text(query, limit=max_results)
         except Exception as exc:
             await message.reply_text(f"Related search failed: {type(exc).__name__}: {exc}")
             return
@@ -161,7 +164,13 @@ class PrismBot:
                 await message.reply_text("No related notes found.")
             return
 
-        await message.reply_text(_related_reply(results))
+        title = f'Related to "{_shorten(query, 50)}":'
+        token = self._store_semantic_page(title, results)
+        text, keyboard = _semantic_page_view(token, title, results, 0)
+        if keyboard:
+            await message.reply_text(text, reply_markup=keyboard)
+        else:
+            await message.reply_text(text)
 
     async def handle_reprocess(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._is_allowed(update):
@@ -251,7 +260,7 @@ class PrismBot:
 
     async def _find_task(self, query: str, message) -> None:
         try:
-            results = await asyncio.to_thread(self.notes.indexer.search_text, query, limit=5)
+            results = await asyncio.to_thread(self.notes.indexer.search_text, query, limit=MAX_SEMANTIC_RESULTS)
         except Exception as exc:
             await message.reply_text(f"Search failed: {type(exc).__name__}: {exc}")
             return
@@ -261,7 +270,13 @@ class PrismBot:
             else:
                 await message.reply_text("No results found.")
             return
-        await message.reply_text(_related_reply(results))
+        title = f'Search results for "{_shorten(query, 50)}":'
+        token = self._store_semantic_page(title, results)
+        text, keyboard = _semantic_page_view(token, title, results, 0)
+        if keyboard:
+            await message.reply_text(text, reply_markup=keyboard)
+        else:
+            await message.reply_text(text)
 
     async def handle_ask(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._is_allowed(update):
@@ -285,7 +300,7 @@ class PrismBot:
 
     async def _ask_task(self, question: str, message) -> None:
         try:
-            result = await asyncio.to_thread(self.notes.ask, question)
+            result = await asyncio.to_thread(self.notes.ask, question, limit=MAX_SEMANTIC_RESULTS)
         except Exception as exc:
             LOGGER.exception("Background ask failed for %s", question)
             await message.reply_text(f"Ask failed: {type(exc).__name__}: {exc}")
@@ -293,7 +308,12 @@ class PrismBot:
         if not result.ok:
             await message.reply_text(result.message)
             return
-        await message.reply_text(_ask_reply(result))
+        token = self._store_semantic_page("Sources:", result.sources) if result.sources else None
+        reply, keyboard = _ask_reply(result, token=token, offset=0)
+        if keyboard:
+            await message.reply_text(reply, reply_markup=keyboard)
+        else:
+            await message.reply_text(reply)
 
     async def handle_idea(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._is_allowed(update):
@@ -370,6 +390,40 @@ class PrismBot:
         if not text:
             return
         await query.edit_message_text(text, reply_markup=keyboard)
+
+    async def handle_semantic_page(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        del context
+        query = update.callback_query
+        if not query:
+            return
+        await query.answer()
+        user = update.effective_user
+        if not user or user.id not in self.settings.telegram_allowed_user_ids:
+            return
+        token, offset = _parse_semantic_page_callback(query.data)
+        if not token:
+            return
+        cached = self._semantic_cache().get(token)
+        if not cached:
+            await query.edit_message_text("Those search results expired. Run the command again.")
+            return
+        title, results = cached
+        text, keyboard = _semantic_page_view(token, title, results, offset)
+        await query.edit_message_text(text, reply_markup=keyboard)
+
+    def _semantic_cache(self) -> dict[str, tuple[str, list]]:
+        if not hasattr(self, "_semantic_pages"):
+            self._semantic_pages = {}
+        return self._semantic_pages
+
+    def _store_semantic_page(self, title: str, results: list) -> str:
+        cache = self._semantic_cache()
+        token = secrets.token_urlsafe(6)[:8]
+        cache[token] = (title, results)
+        if len(cache) > 100:
+            for old_token in list(cache)[:50]:
+                cache.pop(old_token, None)
+        return token
 
     def _page_view(self, kind: str, offset: int, tag: str | None = None):
         offset = max(0, offset)
@@ -529,8 +583,8 @@ def _tags_notes_reply(tag: str, records) -> str:
     return "\n\n".join(lines)
 
 
-def _related_reply(results) -> str:
-    lines = ["Related notes:"]
+def _related_reply(results, title: str = "Related notes:") -> str:
+    lines = [title]
     for item in results:
         summary = _shorten(item.summary, 180)
         lines.append(f"{item.title} ({item.score:.3f})\n{summary}\n/more {item.note_id}")
@@ -543,15 +597,20 @@ _HELP_TEXT = "\n".join(
 )
 
 
-def _ask_reply(result) -> str:
+def _ask_reply(result, token: str | None = None, offset: int = 0) -> tuple[str, InlineKeyboardMarkup | None]:
     parts = [result.answer]
+    keyboard = None
     if result.sources:
-        lines = [f"- {item.title} (/more {item.note_id})" for item in result.sources]
+        page = result.sources[offset:offset + PAGE_SIZE]
+        more = len(result.sources) > offset + PAGE_SIZE
+        lines = [f"- {item.title} (/more {item.note_id})" for item in page]
         parts.append("Sources:\n" + "\n".join(lines))
+        if token:
+            keyboard = _semantic_page_keyboard(token, offset, more)
     reply = "\n\n".join(parts)
     if len(reply) > 4000:
         reply = reply[:4000].rstrip() + "..."
-    return reply
+    return reply, keyboard
 
 
 def _idea_reply(record) -> str:
@@ -566,6 +625,35 @@ def _ideas_list_reply(records) -> str:
         rating = _stars(r.rating) if r.rating is not None else "unrated"
         lines.append(f"{r.title}\n{rating}, {r.created_at[:10]}")
     return "\n\n".join(lines)
+
+
+def _semantic_page_view(token: str, title: str, results: list, offset: int) -> tuple[str, InlineKeyboardMarkup | None]:
+    offset = max(0, offset)
+    page = results[offset:offset + PAGE_SIZE]
+    more = len(results) > offset + PAGE_SIZE
+    return _related_reply(page, title=title), _semantic_page_keyboard(token, offset, more)
+
+
+def _semantic_page_keyboard(token: str, offset: int, has_more: bool) -> InlineKeyboardMarkup | None:
+    buttons = []
+    if offset > 0:
+        buttons.append(InlineKeyboardButton("◀ Prev", callback_data=f"sp:{token}:{max(0, offset - PAGE_SIZE)}"))
+    if has_more:
+        buttons.append(InlineKeyboardButton("Next ▶", callback_data=f"sp:{token}:{offset + PAGE_SIZE}"))
+    return InlineKeyboardMarkup([buttons]) if buttons else None
+
+
+def _parse_semantic_page_callback(data: str | None) -> tuple[str | None, int]:
+    if not data:
+        return None, 0
+    parts = data.split(":", 2)
+    if len(parts) != 3 or parts[0] != "sp":
+        return None, 0
+    try:
+        offset = max(0, int(parts[2]))
+    except ValueError:
+        return None, 0
+    return parts[1] or None, offset
 
 
 def _rating_keyboard(idea_id: str) -> InlineKeyboardMarkup:
@@ -649,6 +737,7 @@ def build_application(settings: Settings) -> Application:
     application.add_handler(CommandHandler("ideas", bot.handle_ideas))
     application.add_handler(CallbackQueryHandler(bot.handle_rating, pattern="^idearate:"))
     application.add_handler(CallbackQueryHandler(bot.handle_page, pattern="^pg:"))
+    application.add_handler(CallbackQueryHandler(bot.handle_semantic_page, pattern="^sp:"))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot.handle_message))
     return application
 

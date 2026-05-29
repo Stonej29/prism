@@ -288,6 +288,37 @@ class PrismDatabase:
         records = [_row_to_record(row) for row in rows]
         return [r for r in records if tag in _parse_tags_json(r.tags_json)]
 
+    def search_notes_keyword(self, query: str, limit: int) -> list[NoteRecord]:
+        terms = _keyword_terms(query)
+        if not terms or limit <= 0:
+            return []
+        where = " AND ".join(
+            """(
+                lower(title) LIKE ?
+                OR lower(summary) LIKE ?
+                OR lower(source_url) LIKE ?
+                OR lower(COALESCE(tags_json, '')) LIKE ?
+                OR lower(COALESCE(structured_summary_json, '')) LIKE ?
+            )"""
+            for _ in terms
+        )
+        params: list[str | int] = []
+        for term in terms:
+            pattern = f"%{term}%"
+            params.extend([pattern, pattern, pattern, pattern, pattern])
+        params.append(limit)
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"""SELECT {_NOTE_COLUMNS} FROM notes
+                    WHERE {where}
+                    ORDER BY
+                        CASE WHEN llm_status = 'generated' THEN 0 ELSE 1 END,
+                        date_saved DESC
+                    LIMIT ?""",
+                params,
+            ).fetchall()
+        return [_row_to_record(row) for row in rows]
+
     def update_embedding_metadata(
         self,
         note_id: str,
@@ -561,3 +592,12 @@ def _parse_tags_json(raw: str | None) -> list[str]:
         return data if isinstance(data, list) else []
     except json.JSONDecodeError:
         return []
+
+
+def _keyword_terms(query: str) -> list[str]:
+    terms: list[str] = []
+    for raw in query.lower().replace("_", " ").split():
+        term = "".join(ch for ch in raw if ch.isalnum() or ch == "-").strip("-")
+        if len(term) >= 3 and term not in terms:
+            terms.append(term)
+    return terms[:8]

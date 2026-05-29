@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
 from prism.db import NoteRecord, NoteStats, PrismDatabase
+from prism.index import RelatedCandidate
 from prism.notes import SaveResult, ReprocessResult
 
 
@@ -127,6 +128,17 @@ class Phase5DatabaseTests(unittest.TestCase):
             self.assertEqual(stats.embedding_indexed, 1)
             self.assertEqual(stats.embedding_failed, 1)
             self.assertEqual(stats.embedding_skipped, 1)
+
+
+    def test_search_notes_keyword_matches_structured_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = self._db(tmp)
+            db.insert_note(note(note_id="aaa111", source_url="https://a.com", title="Vision Policy", structured_summary_json=json.dumps({"detailed_summary": "VLA manipulation stack"})))
+            db.insert_note(note(note_id="bbb222", source_url="https://b.com", title="Other", tags_json=json.dumps(["planning"])))
+
+            records = db.search_notes_keyword("VLA manipulation", 5)
+
+            self.assertEqual([r.note_id for r in records], ["aaa111"])
 
 
 TELEGRAM_AVAILABLE = importlib.util.find_spec("telegram") is not None
@@ -447,7 +459,44 @@ class Phase5BotTests(unittest.TestCase):
 
         asyncio.run(bot.handle_related(update, _context(["robotics"])))
 
-        indexer.search_text.assert_called_once_with("robotics", limit=5)
+        indexer.search_text.assert_called_once_with("robotics", limit=20)
+
+    def test_find_task_paginates_semantic_results(self) -> None:
+        bot = PrismBot.__new__(PrismBot)
+        bot.notes = Mock()
+        bot.notes.indexer.search_text.return_value = [
+            RelatedCandidate(f"id{i}", f"Title {i}", "Summary", f"notes/{i}.md", "https://example.com", [], 0.9)
+            for i in range(PAGE_SIZE + 1)
+        ]
+        message = _Message()
+
+        asyncio.run(bot._find_task("robotics", message))
+
+        self.assertIn("Title 0", message.replies[-1])
+        self.assertNotIn(f"Title {PAGE_SIZE}", message.replies[-1])
+        self.assertIsNotNone(message.markups[-1])
+
+    def test_handle_semantic_page_edits_cached_results(self) -> None:
+        bot = PrismBot.__new__(PrismBot)
+        bot.settings = Mock(telegram_allowed_user_ids={1})
+        bot._semantic_pages = {
+            "tok": (
+                "Search results:",
+                [
+                    RelatedCandidate(f"id{i}", f"Title {i}", "Summary", f"notes/{i}.md", "https://example.com", [], 0.9)
+                    for i in range(PAGE_SIZE + 1)
+                ],
+            )
+        }
+        query = Mock(data=f"sp:tok:{PAGE_SIZE}")
+        query.answer = AsyncMock()
+        query.edit_message_text = AsyncMock()
+        update = Mock(callback_query=query, effective_user=Mock(id=1))
+
+        asyncio.run(bot.handle_semantic_page(update, Mock()))
+
+        edited = query.edit_message_text.call_args.args[0]
+        self.assertIn(f"Title {PAGE_SIZE}", edited)
 
 
 @unittest.skipUnless(TELEGRAM_AVAILABLE, "python-telegram-bot is not installed")

@@ -113,6 +113,23 @@ class AskServiceTests(unittest.TestCase):
             self.assertEqual(ctx["notes"][0]["detailed_summary"], "Detailed body.")
             self.assertEqual(ctx["notes"][0]["key_claims"], ["Claim one"])
 
+    def test_ask_merges_keyword_matches_after_semantic_results(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            indexer = Mock(is_configured=True)
+            indexer.search_text.return_value = [candidate("abc123", "Semantic Note", 0.9)]
+            service, db = self._service(tmp, indexer)
+            db.insert_note(note(note_id="abc123", source_url="https://example.com/a", title="Semantic Note"))
+            db.insert_note(note(note_id="def456", source_url="https://example.com/b", title="Keyword Note", summary="Mentions tactile manipulation."))
+
+            with patch("prism.notes.LLMClient") as MockClient:
+                MockClient.return_value.answer_question.return_value = "Answer text [abc123] [def456]"
+                result = service.ask("tactile manipulation")
+
+            self.assertTrue(result.ok)
+            self.assertEqual([source.note_id for source in result.sources], ["abc123", "def456"])
+            ctx = MockClient.return_value.answer_question.call_args.args[0]
+            self.assertEqual([item["id"] for item in ctx["notes"]], ["abc123", "def456"])
+
     def test_ask_no_results(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             indexer = Mock(is_configured=True)

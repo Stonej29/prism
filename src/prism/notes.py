@@ -161,9 +161,15 @@ class NoteService:
             return AskResult(answer="", sources=[], ok=False, message="/ask needs LLM_API_KEY and LLM_MODEL.")
 
         try:
-            candidates = self.indexer.search_text(question, limit=limit)
+            semantic_candidates = self.indexer.search_text(question, limit=limit)
         except Exception as exc:
             return AskResult(answer="", sources=[], ok=False, message=f"Search failed: {type(exc).__name__}: {exc}")
+
+        keyword_candidates = [
+            _candidate_from_record(record, score=0.55)
+            for record in self.database.search_notes_keyword(question, limit=limit)
+        ]
+        candidates = _merge_candidates(semantic_candidates, keyword_candidates, limit=limit)
 
         if not candidates:
             if self.indexer.index_is_empty():
@@ -425,6 +431,32 @@ def scores_for_record(record: NoteRecord) -> dict[str, float | int]:
 def more_summary_for_record(record: NoteRecord) -> str:
     structured = structured_summary(record)
     return _string_field(structured, "detailed_summary") or record.summary
+
+
+def _candidate_from_record(record: NoteRecord, score: float) -> RelatedCandidate:
+    return RelatedCandidate(
+        note_id=record.note_id,
+        title=record.title,
+        summary=record.summary,
+        note_path=record.note_path,
+        source_url=record.source_url,
+        tags=tags_for_record(record),
+        score=score,
+    )
+
+
+def _merge_candidates(*groups: list[RelatedCandidate], limit: int) -> list[RelatedCandidate]:
+    merged: list[RelatedCandidate] = []
+    seen: set[str] = set()
+    for group in groups:
+        for candidate in group:
+            if candidate.note_id in seen:
+                continue
+            merged.append(candidate)
+            seen.add(candidate.note_id)
+            if len(merged) >= limit:
+                return merged
+    return merged
 
 
 def normalize_structured_summary(data: dict[str, Any], related_candidates: list[RelatedCandidate] | None = None) -> dict[str, Any]:
