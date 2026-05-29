@@ -4,7 +4,7 @@ Last updated: 2026-05-29
 
 ## Current State
 
-PRISM is a Docker Compose Telegram bot that saves links into an Obsidian-compatible vault, archives source material, extracts text, deduplicates captures, optionally generates structured LLM notes, builds a LanceDB semantic index for related-note search and Obsidian backlinks, exposes retrieval/browse commands from Telegram, and can synthesize and rate new project ideas from the saved knowledge base.
+PRISM is a Docker Compose Telegram bot that saves links into an Obsidian-compatible vault, archives source material, extracts text, deduplicates captures, optionally generates structured LLM notes, builds a LanceDB semantic index for related-note search and Obsidian backlinks, exposes retrieval/browse and maintenance commands from Telegram, and can synthesize and rate new project ideas from the saved knowledge base.
 
 ## Scope vs `overview.md`
 
@@ -66,6 +66,9 @@ The build plan (overview.md §24, Phases 1–6) is fully implemented, and the fu
 - Slow `save_url` and `reprocess` work runs in background asyncio tasks so Telegram acks immediately.
 - `/recent` browses recent notes and `/tags [tag]` browses tag counts or notes for a tag, both paginated with inline ◀/▶ buttons (`/ideas` too).
 - `/find <query>` runs background semantic search; `/status` reports note/LLM/embedding counts and index state.
+- `/retry_failed [n]` retries failed LLM generation or embedding/indexing work in a background task.
+- `/delete <id>` deletes a note or generated idea after an inline yes/no confirmation.
+- `/wipe_all` requires a random confirmation code before deleting saved notes, generated ideas, archives, and the semantic index cache.
 - `/help` lists all commands, and the command list is registered with Telegram's command menu via `set_my_commands`; both are generated from a single `COMMANDS` table in `bot.py`.
 
 ### Phase 6: Idea Generation and Ratings
@@ -94,7 +97,7 @@ python -m compileall src tests
 PYTHONPATH=src python -m unittest discover -s tests
 ```
 
-Current unit suite: 118 tests, all passing with `python-telegram-bot` installed. Bot-handler tests are skipped in host Python environments where `python-telegram-bot` is not installed; the Docker image installs it.
+Current unit suite: 138 tests, all passing with `python-telegram-bot` installed. Bot-handler tests are skipped in host Python environments where `python-telegram-bot` is not installed; the Docker image installs it.
 
 Docker build has also been verified:
 
@@ -125,10 +128,10 @@ Manual checks still recommended for Phase 4:
 
 Phases 1–6 and the full MVP scope are now implemented. Suggested follow-ups (all post-MVP / overview.md §23 future features):
 
-1. Pagination for semantic-result commands (`/related`, `/find`, `/ask` sources) — the DB-backed browse commands (`/recent`, `/ideas`, `/tags`) are already paginated.
-2. Optional keyword search alongside semantic retrieval in `/ask` (overview.md §16 step 4).
-3. Add optional local embedding/LLM backend support if direct API costs or reliability become an issue.
-4. Scheduled daily/weekly ideas.
+1. Add note-editing commands beyond deletion, such as rename, retag, and reviewed/useful status markers.
+2. Add optional local embedding/LLM backend support if direct API costs or reliability become an issue.
+3. Scheduled daily/weekly ideas.
+4. Browser-rendered fetching for JavaScript-heavy pages.
 
 ## Useful Commands
 

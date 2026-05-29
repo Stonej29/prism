@@ -9,9 +9,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
-from prism.db import NoteRecord, NoteStats, PrismDatabase
+from prism.db import IdeaRecord, NoteRecord, NoteStats, PrismDatabase
 from prism.index import RelatedCandidate
-from prism.notes import SaveResult, ReprocessResult
+from prism.notes import DeleteResult, NoteService, RetryFailedResult, SaveResult, ReprocessResult, WipeResult
 
 
 def note(**overrides) -> NoteRecord:
@@ -139,6 +139,103 @@ class Phase5DatabaseTests(unittest.TestCase):
             records = db.search_notes_keyword("VLA manipulation", 5)
 
             self.assertEqual([r.note_id for r in records], ["aaa111"])
+
+    def test_list_failed_notes_returns_failed_llm_or_embedding(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = self._db(tmp)
+            db.insert_note(note(note_id="aaa111", source_url="https://a.com", llm_status="failed"))
+            db.insert_note(note(note_id="bbb222", source_url="https://b.com", embedding_status="failed"))
+            db.insert_note(note(note_id="ccc333", source_url="https://c.com"))
+
+            records = db.list_failed_notes(10)
+
+            self.assertEqual([r.note_id for r in records], ["aaa111", "bbb222"])
+
+    def test_delete_note_removes_row(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = self._db(tmp)
+            db.insert_note(note())
+
+            self.assertTrue(db.delete_note("abc123"))
+            self.assertIsNone(db.find_by_note_id("abc123"))
+            self.assertFalse(db.delete_note("abc123"))
+
+    def test_delete_all_removes_notes_and_ideas(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = self._db(tmp)
+            db.insert_note(note())
+            db.insert_idea(IdeaRecord(
+                idea_id="idea01",
+                created_at="2026-01-01T00:00:00Z",
+                title="Idea",
+                summary="Summary",
+            ))
+
+            counts = db.delete_all()
+
+            self.assertEqual(counts, (1, 1))
+            self.assertEqual(db.list_recent_notes(5), [])
+            self.assertEqual(db.list_recent_ideas(5), [])
+
+
+class Phase5MaintenanceServiceTests(unittest.TestCase):
+    def test_delete_note_removes_file_archive_index_and_row(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = PrismDatabase(root / "prism.sqlite3")
+            vault = root / "vault"
+            archive = root / "archives"
+            note_file = vault / "notes" / "a.md"
+            archive_dir = archive / "abc123"
+            note_file.parent.mkdir(parents=True)
+            archive_dir.mkdir(parents=True)
+            note_file.write_text("note", encoding="utf-8")
+            (archive_dir / "extracted.txt").write_text("text", encoding="utf-8")
+            db.insert_note(note(local_archive=str(archive_dir)))
+            indexer = Mock()
+            service = NoteService(vault, db, archive, indexer=indexer)
+
+            result = service.delete_note("abc123")
+
+            self.assertTrue(result.ok)
+            self.assertFalse(note_file.exists())
+            self.assertFalse(archive_dir.exists())
+            self.assertIsNone(db.find_by_note_id("abc123"))
+            indexer.delete_record.assert_called_once_with("abc123")
+
+    def test_wipe_all_keeps_profile_but_clears_saved_data(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = PrismDatabase(root / "prism.sqlite3")
+            vault = root / "vault"
+            archive = root / "archives"
+            db.insert_note(note())
+            db.insert_idea(IdeaRecord(
+                idea_id="idea01",
+                created_at="2026-01-01T00:00:00Z",
+                title="Idea",
+                summary="Summary",
+            ))
+            (vault / "notes").mkdir(parents=True)
+            (vault / "notes" / "a.md").write_text("note", encoding="utf-8")
+            (vault / "generated-ideas").mkdir(parents=True)
+            (vault / "generated-ideas" / "idea.md").write_text("idea", encoding="utf-8")
+            (archive / "abc123").mkdir(parents=True)
+            indexer = Mock(lancedb_path=root / "lancedb")
+            indexer.lancedb_path.mkdir()
+            (indexer.lancedb_path / "cache").write_text("x", encoding="utf-8")
+            service = NoteService(vault, db, archive, indexer=indexer)
+
+            result = service.wipe_all()
+
+            self.assertEqual((result.notes, result.ideas), (1, 1))
+            self.assertTrue((vault / "profile" / "personal.md").exists())
+            self.assertEqual(list((vault / "notes").iterdir()), [])
+            self.assertEqual(list((vault / "generated-ideas").iterdir()), [])
+            self.assertEqual(list(archive.iterdir()), [])
+            self.assertEqual(list(indexer.lancedb_path.iterdir()), [])
+            self.assertEqual(db.list_recent_notes(5), [])
+            self.assertEqual(db.list_recent_ideas(5), [])
 
 
 TELEGRAM_AVAILABLE = importlib.util.find_spec("telegram") is not None
@@ -526,6 +623,90 @@ class Phase5BotTests(unittest.TestCase):
         edited = query.edit_message_text.call_args.args[0]
         self.assertIn(f"Title {PAGE_SIZE}", edited)
 
+    def test_handle_retry_failed_acks_and_spawns_task(self) -> None:
+        bot = PrismBot.__new__(PrismBot)
+        bot._is_allowed = AsyncMock(return_value=True)
+        update = _update()
+
+        with patch("prism.bot.asyncio.create_task") as mock_task:
+            asyncio.run(bot.handle_retry_failed(update, _context(["10"])))
+            mock_task.assert_called_once()
+
+        self.assertEqual(update.effective_message.replies[-1], "Retrying up to 10 failed notes...")
+
+    def test_handle_delete_note_prompts_with_buttons(self) -> None:
+        bot = PrismBot.__new__(PrismBot)
+        bot._is_allowed = AsyncMock(return_value=True)
+        bot.database = Mock()
+        bot.database.find_by_note_id.return_value = note()
+        bot.database.find_by_idea_id.return_value = None
+        update = _update()
+
+        asyncio.run(bot.handle_delete(update, _context(["abc123"])))
+
+        self.assertIn("Delete note", update.effective_message.replies[-1])
+        markup = update.effective_message.markups[-1]
+        callbacks = [b.callback_data for row in markup.inline_keyboard for b in row]
+        self.assertIn("delete:note:abc123:yes", callbacks)
+        self.assertIn("delete:note:abc123:no", callbacks)
+
+    def test_handle_delete_callback_confirms_note_delete(self) -> None:
+        bot = PrismBot.__new__(PrismBot)
+        bot.settings = Mock(telegram_allowed_user_ids={1})
+        bot.notes = Mock()
+        bot.notes.delete_note.return_value = DeleteResult(ok=True, message="Deleted note abc123: Robotics Note")
+        query = Mock(data="delete:note:abc123:yes")
+        query.answer = AsyncMock()
+        query.edit_message_text = AsyncMock()
+        update = Mock(callback_query=query, effective_user=Mock(id=1))
+
+        asyncio.run(bot.handle_delete_callback(update, Mock()))
+
+        bot.notes.delete_note.assert_called_once_with("abc123")
+        query.edit_message_text.assert_awaited_once()
+        self.assertIn("Deleted note", query.edit_message_text.call_args.args[0])
+
+    def test_handle_delete_callback_cancel(self) -> None:
+        bot = PrismBot.__new__(PrismBot)
+        bot.settings = Mock(telegram_allowed_user_ids={1})
+        bot.notes = Mock()
+        query = Mock(data="delete:note:abc123:no")
+        query.answer = AsyncMock()
+        query.edit_message_text = AsyncMock()
+        update = Mock(callback_query=query, effective_user=Mock(id=1))
+
+        asyncio.run(bot.handle_delete_callback(update, Mock()))
+
+        bot.notes.delete_note.assert_not_called()
+        query.edit_message_text.assert_awaited_once_with("Delete cancelled.")
+
+    def test_handle_wipe_all_requires_random_code(self) -> None:
+        bot = PrismBot.__new__(PrismBot)
+        bot._is_allowed = AsyncMock(return_value=True)
+        bot._wipe_codes = {}
+        update = _update()
+        update.effective_user = Mock(id=1)
+
+        with patch("prism.bot.secrets.token_hex", return_value="a1b2c3"):
+            asyncio.run(bot.handle_wipe_all(update, _context([])))
+
+        self.assertEqual(bot._wipe_codes[1], "A1B2C3")
+        self.assertIn("/wipe_all A1B2C3", update.effective_message.replies[-1])
+
+    def test_handle_wipe_all_with_matching_code_wipes(self) -> None:
+        bot = PrismBot.__new__(PrismBot)
+        bot._is_allowed = AsyncMock(return_value=True)
+        bot._wipe_codes = {1: "ABC123"}
+        bot.notes = Mock()
+        bot.notes.wipe_all.return_value = WipeResult(notes=2, ideas=1)
+        update = _update()
+        update.effective_user = Mock(id=1)
+
+        asyncio.run(bot.handle_wipe_all(update, _context(["abc123"])))
+
+        bot.notes.wipe_all.assert_called_once()
+        self.assertEqual(update.effective_message.replies[-1], "Wiped 2 notes and 1 ideas.")
+
 
 @unittest.skipUnless(TELEGRAM_AVAILABLE, "python-telegram-bot is not installed")
 class Phase5BackgroundTaskTests(unittest.TestCase):
@@ -617,6 +798,18 @@ class Phase5BackgroundTaskTests(unittest.TestCase):
             asyncio.run(bot._reprocess_task("abc123", message))
 
         self.assertIn("Reprocess failed", message.replies[-1])
+
+    def test_retry_failed_task_reports_summary(self) -> None:
+        bot = PrismBot.__new__(PrismBot)
+        bot.notes = Mock()
+        message = _Message()
+        result = RetryFailedResult(total=2, retried=2, repaired=1, failed=1, skipped=0, messages=["abc123: bad json"])
+
+        with patch("prism.bot.asyncio.to_thread", new=AsyncMock(return_value=result)):
+            asyncio.run(bot._retry_failed_task(25, message))
+
+        self.assertIn("Retry complete", message.replies[-1])
+        self.assertIn("repaired 1", message.replies[-1])
 
 
 if __name__ == "__main__":

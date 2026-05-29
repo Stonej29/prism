@@ -365,7 +365,14 @@ def _extract_html(html: str, resolved_url: str) -> tuple[str | None, str, dict[s
         extracted = fallback.text
     if fallback.description and "description" not in metadata:
         metadata["description"] = fallback.description
-    return title, extracted.strip(), metadata
+    return title, _normalize_extracted_text(extracted), metadata
+
+
+def _normalize_extracted_text(text: str) -> str:
+    text = re.sub(r"(?<!\n)\n(?!\n)", " ", text.strip())
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r" *\n *", "\n", text)
+    return text.strip()
 
 
 def extract_website_text(html: str, resolved_url: str, archive_dir: Path | None = None) -> tuple[str | None, str, dict[str, Any]]:

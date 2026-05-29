@@ -49,6 +49,9 @@ COMMANDS = [
     ("idea", "Generate a project idea, then rate it"),
     ("ideas", "Browse generated ideas with ratings"),
     ("reprocess", "Re-run LLM generation for a note"),
+    ("retry_failed", "Retry failed LLM and embedding work"),
+    ("delete", "Delete a note or idea after confirmation"),
+    ("wipe_all", "Wipe all saved notes, ideas, archives, and index cache"),
     ("status", "Show note, LLM, and index counts"),
 ]
 
@@ -71,6 +74,7 @@ class PrismBot:
         )
         self.ideas = IdeaService(settings.vault_path, self.database, llm_config, indexer)
         self._semantic_pages: dict[str, tuple[str, list]] = {}
+        self._wipe_codes: dict[int, str] = {}
 
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         del context
@@ -213,6 +217,110 @@ class PrismBot:
             await message.reply_text(self._saved_reply(result.record).replace("<b>Saved:</b>", "<b>Reprocessed:</b>", 1), parse_mode=HTML_PARSE_MODE)
             return
         await message.reply_text(result.message)
+
+    async def handle_retry_failed(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self._is_allowed(update):
+            return
+        message = update.effective_message
+        if not message:
+            return
+        limit = 25
+        if context.args and context.args[0].isdigit():
+            limit = max(1, min(100, int(context.args[0])))
+        await message.reply_text(f"Retrying up to {limit} failed notes...")
+        asyncio.create_task(self._retry_failed_task(limit, message))
+
+    async def _retry_failed_task(self, limit: int, message) -> None:
+        try:
+            result = await asyncio.to_thread(self.notes.retry_failed, limit)
+        except Exception as exc:
+            LOGGER.exception("Background retry_failed failed")
+            await message.reply_text(f"Retry failed: {type(exc).__name__}: {exc}")
+            return
+        await message.reply_text(_retry_failed_reply(result), parse_mode=HTML_PARSE_MODE)
+
+    async def handle_delete(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self._is_allowed(update):
+            return
+        message = update.effective_message
+        if not message:
+            return
+        if not context.args:
+            await message.reply_text("Usage: /delete <note-or-idea-id>")
+            return
+        item_id = context.args[0].strip().lower()
+        record = self.database.find_by_note_id(item_id)
+        if record:
+            await message.reply_text(
+                f"Delete note <b>{_h(record.title)}</b> ({_cmd('more', record.note_id)})?",
+                reply_markup=_delete_keyboard("note", record.note_id),
+                parse_mode=HTML_PARSE_MODE,
+            )
+            return
+        idea = self.database.find_by_idea_id(item_id)
+        if idea:
+            await message.reply_text(
+                f"Delete idea <b>{_h(idea.title)}</b> ({_h(idea.idea_id)})?",
+                reply_markup=_delete_keyboard("idea", idea.idea_id),
+                parse_mode=HTML_PARSE_MODE,
+            )
+            return
+        await message.reply_text(f"No note or idea found for {item_id}.")
+
+    async def handle_delete_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        del context
+        query = update.callback_query
+        if not query:
+            return
+        await query.answer()
+        user = update.effective_user
+        if not user or user.id not in self.settings.telegram_allowed_user_ids:
+            return
+        item_type, item_id, confirmed = _parse_delete_callback(query.data)
+        if not item_type or not item_id:
+            return
+        if not confirmed:
+            await query.edit_message_text("Delete cancelled.")
+            return
+        if item_type == "note":
+            result = await asyncio.to_thread(self.notes.delete_note, item_id)
+            await query.edit_message_text(_h(result.message), parse_mode=HTML_PARSE_MODE)
+            return
+        if item_type == "idea":
+            record = await asyncio.to_thread(self.ideas.delete_idea, item_id)
+            if record:
+                await query.edit_message_text(f"Deleted idea {_h(record.idea_id)}: {_h(record.title)}", parse_mode=HTML_PARSE_MODE)
+            else:
+                await query.edit_message_text(f"No idea found for {_h(item_id)}.", parse_mode=HTML_PARSE_MODE)
+
+    async def handle_wipe_all(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self._is_allowed(update):
+            return
+        message = update.effective_message
+        user = update.effective_user
+        if not message or not user:
+            return
+        if not context.args:
+            code = secrets.token_hex(3).upper()
+            if not hasattr(self, "_wipe_codes"):
+                self._wipe_codes = {}
+            self._wipe_codes[user.id] = code
+            await message.reply_text(
+                "This will delete all saved notes, generated ideas, archives, and the semantic index cache. "
+                f"To confirm, send <code>/wipe_all {code}</code>.",
+                parse_mode=HTML_PARSE_MODE,
+            )
+            return
+        code = context.args[0].strip().upper()
+        if not hasattr(self, "_wipe_codes"):
+            self._wipe_codes = {}
+        expected = self._wipe_codes.get(user.id)
+        if not expected or code != expected:
+            await message.reply_text("Confirmation code did not match. Run /wipe_all to generate a new code.")
+            return
+        self._wipe_codes.pop(user.id, None)
+        result = await asyncio.to_thread(self.notes.wipe_all)
+        await message.reply_text(f"Wiped {result.notes} notes and {result.ideas} ideas.")
 
     async def handle_recent(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         del context
@@ -568,6 +676,19 @@ def _status_reply(stats, indexer) -> str:
     return "\n".join(lines)
 
 
+def _retry_failed_reply(result) -> str:
+    if result.total == 0:
+        return "No failed notes found."
+    lines = [
+        "<b>Retry complete:</b>",
+        f"Checked {result.total}, retried {result.retried}, repaired {result.repaired}, failed {result.failed}, skipped {result.skipped}.",
+    ]
+    if result.messages:
+        lines.append("<b>Details:</b>")
+        lines.extend(f"- {_h(message)}" for message in result.messages)
+    return "\n".join(lines)
+
+
 def _recent_reply(records) -> str:
     lines = ["<b>Recent notes:</b>"]
     for r in records:
@@ -689,6 +810,30 @@ def _rating_keyboard(idea_id: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([buttons])
 
 
+def _delete_keyboard(item_type: str, item_id: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("Yes, delete", callback_data=f"delete:{item_type}:{item_id}:yes"),
+            InlineKeyboardButton("Cancel", callback_data=f"delete:{item_type}:{item_id}:no"),
+        ]
+    ])
+
+
+def _parse_delete_callback(data: str | None) -> tuple[str | None, str | None, bool]:
+    if not data:
+        return None, None, False
+    parts = data.split(":")
+    if len(parts) != 4 or parts[0] != "delete":
+        return None, None, False
+    item_type = parts[1]
+    if item_type not in {"note", "idea"}:
+        return None, None, False
+    item_id = parts[2].strip().lower()
+    if not item_id:
+        return None, None, False
+    return item_type, item_id, parts[3] == "yes"
+
+
 def _stars(rating: int) -> str:
     return "★" * rating
 
@@ -752,6 +897,9 @@ def build_application(settings: Settings) -> Application:
     application.add_handler(CommandHandler("help", bot.handle_help))
     application.add_handler(CommandHandler("more", bot.handle_more))
     application.add_handler(CommandHandler("reprocess", bot.handle_reprocess))
+    application.add_handler(CommandHandler("retry_failed", bot.handle_retry_failed))
+    application.add_handler(CommandHandler("delete", bot.handle_delete))
+    application.add_handler(CommandHandler("wipe_all", bot.handle_wipe_all))
     application.add_handler(CommandHandler("related", bot.handle_related))
     application.add_handler(CommandHandler("status", bot.handle_status))
     application.add_handler(CommandHandler("recent", bot.handle_recent))
@@ -761,6 +909,7 @@ def build_application(settings: Settings) -> Application:
     application.add_handler(CommandHandler("idea", bot.handle_idea))
     application.add_handler(CommandHandler("ideas", bot.handle_ideas))
     application.add_handler(CallbackQueryHandler(bot.handle_rating, pattern="^idearate:"))
+    application.add_handler(CallbackQueryHandler(bot.handle_delete_callback, pattern="^delete:"))
     application.add_handler(CallbackQueryHandler(bot.handle_page, pattern="^pg:"))
     application.add_handler(CallbackQueryHandler(bot.handle_semantic_page, pattern="^sp:"))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot.handle_message))

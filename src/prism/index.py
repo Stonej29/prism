@@ -110,6 +110,19 @@ class NoteIndexer:
         except Exception:
             return False
 
+    def delete_record(self, note_id: str) -> None:
+        table = self._open_table()
+        if table is None:
+            return
+        escaped = note_id.replace("'", "''")
+        table.delete(f"note_id = '{escaped}'")
+
+    def clear(self) -> None:
+        table = self._open_table()
+        if table is None:
+            return
+        table.delete("note_id IS NOT NULL")
+
     def _upsert(self, record: NoteRecord, vector: list[float], model: str, text_hash: str, embedded_at: str) -> None:
         db = self._connect()
         row = {

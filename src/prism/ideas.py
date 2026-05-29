@@ -130,6 +130,22 @@ class IdeaService:
                 pass
         return updated
 
+    def delete_idea(self, idea_id: str) -> IdeaRecord | None:
+        record = self.database.find_by_idea_id(idea_id.strip().lower())
+        if not record:
+            return None
+        if record.note_path:
+            path = self.vault_path / record.note_path
+            try:
+                resolved = path.resolve()
+                base = self.vault_path.resolve()
+                if resolved != base and base in resolved.parents and resolved.exists():
+                    resolved.unlink()
+            except OSError:
+                pass
+        self.database.delete_idea(record.idea_id)
+        return record
+
     def _gather_knowledge(self, topic: str | None) -> list[RelatedCandidate]:
         if topic and self.indexer and self.indexer.is_configured:
             try:

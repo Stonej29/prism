@@ -219,6 +219,33 @@ class PrismDatabase:
                 ),
             )
 
+    def list_failed_notes(self, limit: int = 25) -> list[NoteRecord]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"""SELECT {_NOTE_COLUMNS} FROM notes
+                    WHERE llm_status = 'failed' OR embedding_status = 'failed'
+                    ORDER BY date_saved ASC LIMIT ?""",
+                (limit,),
+            ).fetchall()
+        return [_row_to_record(row) for row in rows]
+
+    def delete_note(self, note_id: str) -> bool:
+        with self.connect() as conn:
+            cursor = conn.execute("DELETE FROM notes WHERE note_id = ?", (note_id,))
+        return cursor.rowcount > 0
+
+    def delete_idea(self, idea_id: str) -> bool:
+        with self.connect() as conn:
+            cursor = conn.execute("DELETE FROM ideas WHERE idea_id = ?", (idea_id,))
+        return cursor.rowcount > 0
+
+    def delete_all(self) -> tuple[int, int]:
+        with self.connect() as conn:
+            note_count = conn.execute("SELECT COUNT(*) FROM notes").fetchone()[0] or 0
+            idea_count = conn.execute("SELECT COUNT(*) FROM ideas").fetchone()[0] or 0
+            conn.execute("DELETE FROM notes")
+            conn.execute("DELETE FROM ideas")
+        return int(note_count), int(idea_count)
 
     def list_notes_for_reindexing(self) -> list[NoteRecord]:
         with self.connect() as conn:

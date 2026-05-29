@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import secrets
+import shutil
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -49,6 +50,29 @@ class AskResult:
     sources: list[RelatedCandidate]
     ok: bool
     message: str
+
+
+@dataclass(frozen=True)
+class DeleteResult:
+    ok: bool
+    message: str
+    title: str | None = None
+
+
+@dataclass(frozen=True)
+class RetryFailedResult:
+    total: int
+    retried: int
+    repaired: int
+    failed: int
+    skipped: int
+    messages: list[str]
+
+
+@dataclass(frozen=True)
+class WipeResult:
+    notes: int
+    ideas: int
 
 
 class NoteService:
@@ -150,6 +174,67 @@ class NoteService:
         if updated.llm_status == "generated":
             return ReprocessResult(record=updated, ok=True, message=f"Reprocessed: {updated.title}")
         return ReprocessResult(record=updated, ok=False, message=f"LLM {updated.llm_status}: {updated.llm_error or 'not generated'}")
+
+    def retry_failed(self, limit: int = 25) -> RetryFailedResult:
+        records = self.database.list_failed_notes(limit)
+        retried = repaired = failed = skipped = 0
+        messages: list[str] = []
+        for record in records:
+            if record.llm_status == "failed":
+                retried += 1
+                result = self.reprocess(record.note_id)
+                if result.ok:
+                    repaired += 1
+                else:
+                    failed += 1
+                    messages.append(f"{record.note_id}: {result.message}")
+                continue
+            if record.embedding_status == "failed":
+                retried += 1
+                updated = self._index_after_persist(record)
+                if updated.embedding_status == "indexed":
+                    repaired += 1
+                elif updated.embedding_status == "skipped":
+                    skipped += 1
+                    messages.append(f"{record.note_id}: embedding skipped")
+                else:
+                    failed += 1
+                    messages.append(f"{record.note_id}: {updated.embedding_error or 'embedding failed'}")
+        return RetryFailedResult(
+            total=len(records),
+            retried=retried,
+            repaired=repaired,
+            failed=failed,
+            skipped=skipped,
+            messages=messages[:5],
+        )
+
+    def delete_note(self, note_id: str) -> DeleteResult:
+        record = self.database.find_by_note_id(note_id.strip().lower())
+        if not record:
+            return DeleteResult(ok=False, message=f"No note found for {note_id}.")
+        _remove_path(self.vault_path / record.note_path, root=self.vault_path)
+        if record.local_archive:
+            _remove_path(Path(record.local_archive), root=self.archive_path)
+        if self.indexer:
+            try:
+                self.indexer.delete_record(record.note_id)
+            except Exception:
+                pass
+        self.database.delete_note(record.note_id)
+        return DeleteResult(ok=True, message=f"Deleted note {record.note_id}: {record.title}", title=record.title)
+
+    def wipe_all(self) -> WipeResult:
+        note_count, idea_count = self.database.delete_all()
+        _clear_directory(self.notes_path)
+        _clear_directory(self.vault_path / "generated-ideas")
+        _clear_directory(self.archive_path)
+        if self.indexer:
+            try:
+                _clear_directory(self.indexer.lancedb_path)
+            except Exception:
+                pass
+        return WipeResult(notes=note_count, ideas=idea_count)
 
     def ask(self, question: str, limit: int = 6) -> AskResult:
         question = question.strip()
@@ -291,6 +376,32 @@ class NoteService:
             if not candidate.exists():
                 return candidate
             counter += 1
+
+
+def _remove_path(path: Path, *, root: Path) -> None:
+    try:
+        target = path.resolve()
+        base = root.resolve()
+        if target != base and base not in target.parents:
+            return
+        if target.is_dir():
+            shutil.rmtree(target)
+        elif target.exists():
+            target.unlink()
+    except OSError:
+        pass
+
+
+def _clear_directory(path: Path) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+    for child in path.iterdir():
+        try:
+            if child.is_dir():
+                shutil.rmtree(child)
+            else:
+                child.unlink()
+        except OSError:
+            pass
 
 
 def ensure_profile(profile_path: Path) -> None:
