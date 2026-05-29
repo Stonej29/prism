@@ -75,6 +75,13 @@ class WipeResult:
     ideas: int
 
 
+@dataclass(frozen=True)
+class ProfileResult:
+    ok: bool
+    message: str
+    profile: str | None = None
+
+
 class NoteService:
     def __init__(
         self,
@@ -235,6 +242,31 @@ class NoteService:
             except Exception:
                 pass
         return WipeResult(notes=note_count, ideas=idea_count)
+
+    def reset_profile(self, user_input: str) -> ProfileResult:
+        return self._rewrite_profile(user_input, mode="reset")
+
+    def update_profile(self, user_input: str) -> ProfileResult:
+        return self._rewrite_profile(user_input, mode="update")
+
+    def _rewrite_profile(self, user_input: str, *, mode: str) -> ProfileResult:
+        user_input = user_input.strip()
+        if not user_input:
+            return ProfileResult(ok=False, message="Add profile text after the command.")
+        if not self.llm_config.is_configured:
+            return ProfileResult(ok=False, message="Profile updates need LLM_API_KEY and LLM_MODEL.")
+        ensure_profile(self.profile_path)
+        current = self.profile_path.read_text(encoding="utf-8") if mode == "update" else None
+        try:
+            profile = LLMClient(self.llm_config).rewrite_profile(
+                current_profile=current,
+                user_input=user_input,
+                mode=mode,
+            )
+        except Exception as exc:
+            return ProfileResult(ok=False, message=f"Profile {mode} failed: {type(exc).__name__}: {exc}")
+        self.profile_path.write_text(profile, encoding="utf-8")
+        return ProfileResult(ok=True, message=f"Profile {mode} complete.", profile=profile)
 
     def ask(self, question: str, limit: int = 6) -> AskResult:
         question = question.strip()

@@ -43,6 +43,8 @@ PDFs, and general websites. See `CLAUDE.md` for the full architecture and design
 | `/retry_failed [n]` | Retry failed LLM generation or embedding/indexing for up to `n` notes |
 | `/delete <id>` | Delete a note or generated idea after an inline yes/no confirmation |
 | `/wipe_all` | Generate a random confirmation code for wiping all saved notes, ideas, archives, and index cache |
+| `/reset_me <text>` | Replace `profile/personal.md` from the supplied profile facts/preferences |
+| `/update_me <text>` | Merge new facts/preferences into `profile/personal.md` |
 | `/idea [topic]` | Generate a project idea from your notes (semantic search on a topic, else recent notes) |
 | `/ideas` | Browse generated ideas with their ratings (◀/▶ paged) |
 | *(★1–★5 buttons)* | Rate the idea under each `/idea` reply (1–5) |

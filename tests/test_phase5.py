@@ -237,6 +237,40 @@ class Phase5MaintenanceServiceTests(unittest.TestCase):
             self.assertEqual(db.list_recent_notes(5), [])
             self.assertEqual(db.list_recent_ideas(5), [])
 
+    def test_reset_profile_writes_llm_markdown(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = PrismDatabase(root / "prism.sqlite3")
+            service = NoteService(root / "vault", db, root / "archives")
+            service.llm_config = Mock(is_configured=True)
+
+            with patch("prism.notes.LLMClient") as MockClient:
+                MockClient.return_value.rewrite_profile.return_value = "# Personal Profile\n\nUpdated."
+                result = service.reset_profile("I like robotics.")
+
+            self.assertTrue(result.ok)
+            self.assertIn("Updated", service.profile_path.read_text(encoding="utf-8"))
+            MockClient.return_value.rewrite_profile.assert_called_once()
+            self.assertEqual(MockClient.return_value.rewrite_profile.call_args.kwargs["mode"], "reset")
+
+    def test_update_profile_passes_current_profile(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = PrismDatabase(root / "prism.sqlite3")
+            service = NoteService(root / "vault", db, root / "archives")
+            service.llm_config = Mock(is_configured=True)
+            service.profile_path.write_text("# Personal Profile\n\nOld.", encoding="utf-8")
+
+            with patch("prism.notes.LLMClient") as MockClient:
+                MockClient.return_value.rewrite_profile.return_value = "# Personal Profile\n\nOld and new."
+                result = service.update_profile("Add new fact.")
+
+            self.assertTrue(result.ok)
+            kwargs = MockClient.return_value.rewrite_profile.call_args.kwargs
+            self.assertEqual(kwargs["mode"], "update")
+            self.assertIn("Old", kwargs["current_profile"])
+
+
 
 TELEGRAM_AVAILABLE = importlib.util.find_spec("telegram") is not None
 if TELEGRAM_AVAILABLE:
@@ -707,6 +741,27 @@ class Phase5BotTests(unittest.TestCase):
         bot.notes.wipe_all.assert_called_once()
         self.assertEqual(update.effective_message.replies[-1], "Wiped 2 notes and 1 ideas.")
 
+    def test_handle_reset_me_acks_and_spawns_task(self) -> None:
+        bot = PrismBot.__new__(PrismBot)
+        bot._is_allowed = AsyncMock(return_value=True)
+        update = _update()
+
+        with patch("prism.bot.asyncio.create_task") as mock_task:
+            asyncio.run(bot.handle_reset_me(update, _context(["I", "like", "robots"])))
+            mock_task.assert_called_once()
+
+        self.assertEqual(update.effective_message.replies[-1], "Resetting personal profile...")
+
+    def test_handle_update_me_no_args_shows_usage(self) -> None:
+        bot = PrismBot.__new__(PrismBot)
+        bot._is_allowed = AsyncMock(return_value=True)
+        update = _update()
+
+        asyncio.run(bot.handle_update_me(update, _context([])))
+
+        self.assertIn("Usage: /update_me", update.effective_message.replies[-1])
+
+
 
 @unittest.skipUnless(TELEGRAM_AVAILABLE, "python-telegram-bot is not installed")
 class Phase5BackgroundTaskTests(unittest.TestCase):
@@ -810,6 +865,18 @@ class Phase5BackgroundTaskTests(unittest.TestCase):
 
         self.assertIn("Retry complete", message.replies[-1])
         self.assertIn("repaired 1", message.replies[-1])
+
+    def test_profile_task_success_shows_preview(self) -> None:
+        bot = PrismBot.__new__(PrismBot)
+        bot.notes = Mock()
+        bot.notes.update_profile.return_value = Mock(ok=True, message="Profile update complete.", profile="# Personal Profile\n\nNew.")
+        message = _Message()
+
+        asyncio.run(bot._profile_task("update", "new", message))
+
+        self.assertIn("Profile update complete", message.replies[-1])
+        self.assertIn("Personal Profile", message.replies[-1])
+
 
 
 if __name__ == "__main__":

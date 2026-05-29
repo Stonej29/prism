@@ -69,6 +69,7 @@ The build plan (overview.md §24, Phases 1–6) is fully implemented, and the fu
 - `/retry_failed [n]` retries failed LLM generation or embedding/indexing work in a background task.
 - `/delete <id>` deletes a note or generated idea after an inline yes/no confirmation.
 - `/wipe_all` requires a random confirmation code before deleting saved notes, generated ideas, archives, and the semantic index cache.
+- `/reset_me <text>` and `/update_me <text>` rewrite or extend the personal profile through the configured LLM.
 - `/help` lists all commands, and the command list is registered with Telegram's command menu via `set_my_commands`; both are generated from a single `COMMANDS` table in `bot.py`.
 
 ### Phase 6: Idea Generation and Ratings

@@ -52,6 +52,8 @@ COMMANDS = [
     ("retry_failed", "Retry failed LLM and embedding work"),
     ("delete", "Delete a note or idea after confirmation"),
     ("wipe_all", "Wipe all saved notes, ideas, archives, and index cache"),
+    ("reset_me", "Replace the personal profile from text"),
+    ("update_me", "Merge new text into the personal profile"),
     ("status", "Show note, LLM, and index counts"),
 ]
 
@@ -321,6 +323,48 @@ class PrismBot:
         self._wipe_codes.pop(user.id, None)
         result = await asyncio.to_thread(self.notes.wipe_all)
         await message.reply_text(f"Wiped {result.notes} notes and {result.ideas} ideas.")
+
+    async def handle_reset_me(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self._is_allowed(update):
+            return
+        message = update.effective_message
+        if not message:
+            return
+        user_text = " ".join(context.args).strip() if context.args else ""
+        if not user_text:
+            await message.reply_text("Usage: /reset_me <profile facts/preferences>")
+            return
+        await message.reply_text("Resetting personal profile...")
+        asyncio.create_task(self._profile_task("reset", user_text, message))
+
+    async def handle_update_me(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self._is_allowed(update):
+            return
+        message = update.effective_message
+        if not message:
+            return
+        user_text = " ".join(context.args).strip() if context.args else ""
+        if not user_text:
+            await message.reply_text("Usage: /update_me <new profile facts/preferences>")
+            return
+        await message.reply_text("Updating personal profile...")
+        asyncio.create_task(self._profile_task("update", user_text, message))
+
+    async def _profile_task(self, mode: str, user_text: str, message) -> None:
+        try:
+            if mode == "reset":
+                result = await asyncio.to_thread(self.notes.reset_profile, user_text)
+            else:
+                result = await asyncio.to_thread(self.notes.update_profile, user_text)
+        except Exception as exc:
+            LOGGER.exception("Background profile %s failed", mode)
+            await message.reply_text(f"Profile {mode} failed: {type(exc).__name__}: {exc}")
+            return
+        if not result.ok:
+            await message.reply_text(result.message)
+            return
+        preview = _shorten(result.profile or "", 700)
+        await message.reply_text(f"<b>{_h(result.message)}</b>\n\n{_h(preview)}", parse_mode=HTML_PARSE_MODE)
 
     async def handle_recent(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         del context
@@ -900,6 +944,8 @@ def build_application(settings: Settings) -> Application:
     application.add_handler(CommandHandler("retry_failed", bot.handle_retry_failed))
     application.add_handler(CommandHandler("delete", bot.handle_delete))
     application.add_handler(CommandHandler("wipe_all", bot.handle_wipe_all))
+    application.add_handler(CommandHandler("reset_me", bot.handle_reset_me))
+    application.add_handler(CommandHandler("update_me", bot.handle_update_me))
     application.add_handler(CommandHandler("related", bot.handle_related))
     application.add_handler(CommandHandler("status", bot.handle_status))
     application.add_handler(CommandHandler("recent", bot.handle_recent))

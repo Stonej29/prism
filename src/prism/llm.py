@@ -80,6 +80,29 @@ class LLMClient:
         data = self._post(payload)
         return _assistant_content(data).strip()
 
+    def rewrite_profile(self, *, current_profile: str | None, user_input: str, mode: str) -> str:
+        if not self.config.is_configured:
+            raise RuntimeError("LLM_API_KEY and LLM_MODEL are required")
+        if mode not in {"reset", "update"}:
+            raise ValueError("mode must be reset or update")
+        payload: dict[str, Any] = {
+            "model": self.config.model,
+            "temperature": 0.2,
+            "max_tokens": 1600,
+            "messages": [
+                {"role": "system", "content": _profile_system_prompt(mode)},
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {"current_profile": current_profile or "", "user_input": user_input},
+                        ensure_ascii=True,
+                    ),
+                },
+            ],
+        }
+        data = self._post(payload)
+        return _clean_markdown_profile(_assistant_content(data))
+
     def _post(self, payload: dict[str, Any]) -> dict[str, Any]:
         assert self.config.api_key is not None
         url = self.config.base_url.rstrip("/") + "/chat/completions"
@@ -232,6 +255,34 @@ def _idea_system_prompt() -> str:
         "Be specific and technical, ground the idea in the provided notes, and favor things "
         "the user could actually build."
     )
+
+
+def _profile_system_prompt(mode: str) -> str:
+    base = (
+        "You maintain PRISM's personal profile file at profile/personal.md. "
+        "Return only Markdown, with no code fence and no commentary. "
+        "Use this exact structure: # Personal Profile, then short sections for Context, "
+        "Interests, Preferences, Constraints, and Current Direction. "
+        "Keep it concise, concrete, and useful for steering research-note summaries and idea generation. "
+        "Preserve specific facts, tools, projects, locations, and preferences. Do not invent details."
+    )
+    if mode == "reset":
+        return base + " Replace the profile completely using only the user's new input."
+    return base + " Update the existing profile by integrating the user's new input without losing still-relevant existing facts."
+
+
+def _clean_markdown_profile(content: str) -> str:
+    text = content.strip()
+    if text.startswith("```"):
+        lines = text.splitlines()
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip().startswith("```"):
+            lines = lines[:-1]
+        text = "\n".join(lines).strip()
+    if not text.startswith("#"):
+        text = "# Personal Profile\n\n" + text
+    return text.rstrip() + "\n"
 
 
 def _ask_system_prompt() -> str:
