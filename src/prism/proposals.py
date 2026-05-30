@@ -91,12 +91,10 @@ class ProposalService:
             payload = proposal_payload(record)
             remove_id = str(payload.get("remove") or "").strip().lower()
             keep_id = str(payload.get("keep") or "").strip().lower()
-            if not remove_id:
-                return f"Approved {record.proposal_id} (merge): nothing to remove."
-            result = self.notes.delete_note(remove_id)
-            if result.ok:
-                return f"Merged: removed duplicate {remove_id}, kept {keep_id or 'canonical'}."
-            return f"Approved {record.proposal_id} but delete of {remove_id} failed: {result.message}"
+            if not remove_id or not keep_id:
+                return f"Approved {record.proposal_id} (merge): payload missing keep/remove."
+            result = self.notes.merge_notes(keep_id, remove_id)
+            return result.message
         return f"Approved {record.proposal_id} ({record.kind})."
 
 

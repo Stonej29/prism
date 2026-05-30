@@ -65,6 +65,23 @@ class LLMClient:
         parsed = _parse_json_object(content)
         return LLMGeneration(data=parsed, model=str(data.get("model") or self.config.model))
 
+    def merge_notes(self, context: dict[str, Any], profile: str) -> LLMGeneration:
+        if not self.config.is_configured:
+            raise RuntimeError("LLM_API_KEY and LLM_MODEL are required")
+
+        payload = self._merge_payload(context, profile, use_response_format=True)
+        try:
+            data = self._post(payload)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 400:
+                data = self._post(self._merge_payload(context, profile, use_response_format=False))
+            else:
+                raise
+
+        content = _assistant_content(data)
+        parsed = _parse_json_object(content)
+        return LLMGeneration(data=parsed, model=str(data.get("model") or self.config.model))
+
     def answer_question(self, context: dict[str, Any]) -> str:
         if not self.config.is_configured:
             raise RuntimeError("LLM_API_KEY and LLM_MODEL are required")
@@ -129,6 +146,20 @@ class LLMClient:
             payload["response_format"] = {"type": "json_object"}
         return payload
 
+    def _merge_payload(self, context: dict[str, Any], profile: str, use_response_format: bool) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "model": self.config.model,
+            "temperature": 0.2,
+            "max_tokens": 4500,
+            "messages": [
+                {"role": "system", "content": _merge_system_prompt()},
+                {"role": "user", "content": json.dumps({"profile": profile, "sources": context}, ensure_ascii=True)},
+            ],
+        }
+        if use_response_format:
+            payload["response_format"] = {"type": "json_object"}
+        return payload
+
     def _idea_payload(self, context: dict[str, Any], profile: str, use_response_format: bool) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "model": self.config.model,
@@ -155,6 +186,10 @@ def build_idea_context(
         "knowledge": knowledge,
         "past_rated_ideas": past_ideas,
     }
+
+
+def build_merge_context(*, notes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return notes
 
 
 def build_ask_context(*, question: str, notes: list[dict[str, Any]]) -> dict[str, Any]:
@@ -254,6 +289,19 @@ def _idea_system_prompt() -> str:
         "ideas and avoid those that rated poorly. "
         "Be specific and technical, ground the idea in the provided notes, and favor things "
         "the user could actually build."
+    )
+
+
+def _merge_system_prompt() -> str:
+    return (
+        "You merge two near-duplicate research notes (in sources) into ONE consolidated note. "
+        "Combine and de-duplicate their content, preserving every distinct claim, limitation, and "
+        "technical detail from BOTH sources — never drop information that appears in only one. "
+        "Return only a valid JSON object with these fields: title, quick_summary, detailed_summary, "
+        "key_claims, limitations, technical_details, why_it_matters, personal_relevance, project_ideas, "
+        "tags, relevance, novelty, credibility, actionability, interest, overall, confidence. "
+        "Scores are numeric 1-10. Use direct language and preserve uncertainty. "
+        "The title should describe the unified topic of both sources."
     )
 
 

@@ -1,15 +1,17 @@
 from __future__ import annotations
 
+import dataclasses
 import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from prism.db import NoteRecord, PrismDatabase, ProposalRecord
 from prism.embedding import EmbeddingConfig
 from prism.index import NoteIndexer
-from prism.llm import LLMConfig
-from prism.notes import NoteService, related_notes_for_record
+from prism.llm import LLMConfig, LLMGeneration
+from prism.notes import NoteService, related_notes_for_record, tags_for_record
 from prism.proposals import KIND_MERGE, ProposalService
 from prism.services import Services
 from prism.worker.traversal import build_canonical_tag_map, run_graph_traversal
@@ -200,6 +202,68 @@ class TraversalTests(unittest.TestCase):
             self.assertEqual(second.duplicates_proposed, 0)
             self.assertEqual(second.links_added, 0)
             self.assertEqual(db.count_proposals("pending"), 1)
+
+
+def _related(*ids: str) -> str:
+    return json.dumps([{"id": i, "title": f"Note {i}", "reason": "r", "path": f"notes/{i}.md"} for i in ids])
+
+
+class MergeNotesTests(unittest.TestCase):
+    def _notes(self, tmp: str, *, configured: bool = False) -> tuple[PrismDatabase, NoteService]:
+        db = PrismDatabase(Path(tmp) / "prism.sqlite3")
+        llm = LLMConfig("https://e", "key", "model") if configured else LLMConfig("https://e", None, None)
+        notes = NoteService(
+            Path(tmp) / "vault", db, Path(tmp) / "archives",
+            llm, NoteIndexer(Path(tmp) / "lancedb", EmbeddingConfig("https://e", None, None)),
+        )
+        return db, notes
+
+    def test_structural_merge_unions_and_repoints(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db, notes = self._notes(tmp)  # LLM unconfigured -> structural merge
+            db.insert_note(dataclasses.replace(make_note("aaa", overall=8, tags=("rag",)), related_notes_json=_related("ccc")))
+            db.insert_note(dataclasses.replace(make_note("bbb", overall=5, tags=("agents",)), related_notes_json=_related("ddd")))
+            db.insert_note(dataclasses.replace(make_note("xxx"), related_notes_json=_related("bbb")))  # backlink to the duplicate
+
+            result = notes.merge_notes("aaa", "bbb")
+            self.assertTrue(result.ok)
+            self.assertFalse(result.synthesized)
+
+            keep = db.find_by_note_id("aaa")
+            self.assertEqual(set(tags_for_record(keep)), {"rag", "agents"})           # tags unioned
+            self.assertEqual({r["id"] for r in related_notes_for_record(keep)}, {"ccc", "ddd"})  # links unioned
+            self.assertIsNone(db.find_by_note_id("bbb"))                                # duplicate gone
+            # backlink in xxx re-pointed bbb -> aaa
+            self.assertEqual({r["id"] for r in related_notes_for_record(db.find_by_note_id("xxx"))}, {"aaa"})
+
+    def test_llm_merge_synthesizes_content(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db, notes = self._notes(tmp, configured=True)
+            db.insert_note(make_note("aaa", overall=8, tags=("rag",)))
+            db.insert_note(make_note("bbb", overall=5, tags=("agents",)))
+
+            fake = LLMGeneration(
+                data={"title": "Unified Topic", "quick_summary": "combined pitch", "detailed_summary": "d", "overall": 9},
+                model="merge-model",
+            )
+            with patch("prism.notes.LLMClient.merge_notes", lambda self, ctx, profile: fake):
+                result = notes.merge_notes("aaa", "bbb")
+
+            self.assertTrue(result.ok)
+            self.assertTrue(result.synthesized)
+            keep = db.find_by_note_id("aaa")
+            self.assertEqual(keep.title, "Unified Topic")
+            self.assertEqual(keep.summary, "combined pitch")
+            self.assertEqual(keep.llm_status, "generated")
+            self.assertEqual(set(tags_for_record(keep)), {"rag", "agents"})  # tags still unioned, not from LLM
+            self.assertIsNone(db.find_by_note_id("bbb"))
+
+    def test_merge_missing_duplicate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db, notes = self._notes(tmp)
+            db.insert_note(make_note("aaa"))
+            result = notes.merge_notes("aaa", "zzz")
+            self.assertFalse(result.ok)
 
 
 class TagNormalizationTests(unittest.TestCase):

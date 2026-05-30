@@ -15,7 +15,7 @@ import yaml
 from prism.db import NoteRecord, PrismDatabase
 from prism.fetch import FetchResult, extract_website_text, fetch_source, fetch_upload
 from prism.index import NoteIndexer, RelatedCandidate, canonical_index_text
-from prism.llm import LLMClient, LLMConfig, build_ask_context, build_llm_context
+from prism.llm import LLMClient, LLMConfig, build_ask_context, build_llm_context, build_merge_context
 
 URL_RE = re.compile(r"https?://[^\s<>()]+", re.IGNORECASE)
 PREVIEW_LIMIT = 1500
@@ -77,6 +77,14 @@ class RetryFailedResult:
 class WipeResult:
     notes: int
     ideas: int
+
+
+@dataclass(frozen=True)
+class MergeResult:
+    record: NoteRecord | None
+    ok: bool
+    message: str
+    synthesized: bool = False
 
 
 @dataclass(frozen=True)
@@ -263,19 +271,122 @@ class NoteService:
         """
         updated = replace(record, tags_json=json.dumps(new_tags, ensure_ascii=True))
         self.database.update_note(updated)
-        extracted = ""
-        if updated.local_archive:
-            extracted_path = Path(updated.local_archive) / "extracted.txt"
-            if extracted_path.exists():
+        self._render_to_disk(updated)
+        return updated
+
+    def merge_notes(self, keep_id: str, remove_id: str) -> MergeResult:
+        """Consolidate two near-duplicate notes into the `keep` note, then delete `remove`.
+
+        When the LLM is configured the kept note's content is regenerated as a
+        synthesis of both sources (losing nothing from either); otherwise it
+        degrades to a structural merge. Either way: tags and related-links are
+        unioned, inbound backlinks are re-pointed remove→keep (no dangling refs),
+        the kept note is re-embedded, and the duplicate is removed.
+        """
+        keep = self.database.find_by_note_id(keep_id.strip().lower())
+        remove = self.database.find_by_note_id(remove_id.strip().lower())
+        if not keep:
+            return MergeResult(record=None, ok=False, message=f"Keep note {keep_id} not found.")
+        if not remove:
+            return MergeResult(record=keep, ok=False, message=f"Duplicate note {remove_id} not found (nothing to merge).")
+
+        merged_tags = _dedup_preserve(tags_for_record(keep) + tags_for_record(remove))
+        merged_related = _merge_related(keep, remove)
+        metadata = _json_object(keep.metadata_json)
+        merged_from = metadata.get("merged_from") if isinstance(metadata.get("merged_from"), list) else []
+        metadata["merged_from"] = _dedup_preserve([*merged_from, remove.source_url])
+
+        updated = keep
+        synthesized = False
+        if self.llm_config.is_configured:
+            try:
+                context = build_merge_context(notes=[self._merge_note_context(keep), self._merge_note_context(remove)])
+                generation = LLMClient(self.llm_config).merge_notes(context, self.profile_path.read_text(encoding="utf-8"))
+                structured = normalize_structured_summary(generation.data, [])
+                structured["related_notes"] = merged_related
+                structured["tags"] = merged_tags
+                generated_at = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+                updated = replace(
+                    keep,
+                    title=clean_title(_string_field(structured, "title")) or keep.title,
+                    summary=_string_field(structured, "quick_summary") or keep.summary,
+                    llm_status="generated",
+                    llm_error=None,
+                    llm_generated_at=generated_at,
+                    llm_model=generation.model,
+                    structured_summary_json=json.dumps(structured, ensure_ascii=True, sort_keys=True),
+                    scores_json=json.dumps(_scores(structured), ensure_ascii=True, sort_keys=True),
+                )
+                synthesized = True
+            except Exception:
+                updated = keep  # fall back to structural merge below
+
+        updated = replace(
+            updated,
+            tags_json=json.dumps(merged_tags, ensure_ascii=True),
+            related_notes_json=json.dumps(merged_related, ensure_ascii=True, sort_keys=True),
+            metadata_json=json.dumps(metadata, ensure_ascii=True, sort_keys=True),
+        )
+        self.database.update_note(updated)
+        self._render_to_disk(updated)
+        self._repoint_backlinks(remove.note_id, updated)
+        self._index_after_persist(updated)
+        self.delete_note(remove.note_id)
+
+        how = "synthesized a merged note" if synthesized else "merged (structural; LLM unavailable)"
+        return MergeResult(record=updated, ok=True, message=f"Merged {remove.note_id} into {updated.note_id}: {how}.", synthesized=synthesized)
+
+    def _merge_note_context(self, record: NoteRecord) -> dict[str, Any]:
+        structured = structured_summary(record)
+        return {
+            "id": record.note_id,
+            "title": record.title,
+            "source_url": record.source_url,
+            "quick_summary": _string_field(structured, "quick_summary") or record.summary,
+            "detailed_summary": _string_field(structured, "detailed_summary"),
+            "key_claims": structured.get("key_claims") if isinstance(structured.get("key_claims"), list) else [],
+            "tags": tags_for_record(record),
+            "extracted_text": self._read_extracted(record)[:20000],
+        }
+
+    def _repoint_backlinks(self, old_id: str, target: NoteRecord) -> None:
+        """Rewrite every other note's related-links that point at old_id to target instead."""
+        for record in self.database.list_notes_for_reindexing():
+            if record.note_id in {old_id, target.note_id}:
+                continue
+            related = related_notes_for_record(record)
+            if not any(item["id"] == old_id for item in related):
+                continue
+            rewritten: list[dict[str, str]] = []
+            seen: set[str] = set()
+            for item in related:
+                rid = item["id"]
+                if rid == old_id:
+                    item = {"id": target.note_id, "title": target.title, "reason": item.get("reason", "Related context."), "path": target.note_path}
+                    rid = target.note_id
+                if rid in seen:
+                    continue
+                seen.add(rid)
+                rewritten.append(item)
+            updated = replace(record, related_notes_json=json.dumps(rewritten, ensure_ascii=True, sort_keys=True))
+            self.database.update_note(updated)
+            self._render_to_disk(updated)
+
+    def _read_extracted(self, record: NoteRecord) -> str:
+        if record.local_archive:
+            path = Path(record.local_archive) / "extracted.txt"
+            if path.exists():
                 try:
-                    extracted = extracted_path.read_text(encoding="utf-8")
+                    return path.read_text(encoding="utf-8")
                 except OSError:
-                    extracted = ""
+                    return ""
+        return ""
+
+    def _render_to_disk(self, record: NoteRecord) -> None:
         try:
-            (self.vault_path / updated.note_path).write_text(render_note(updated, extracted), encoding="utf-8")
+            (self.vault_path / record.note_path).write_text(render_note(record, self._read_extracted(record)), encoding="utf-8")
         except OSError:
             pass
-        return updated
 
     def wipe_all(self) -> WipeResult:
         note_count, idea_count = self.database.delete_all()
@@ -692,6 +803,29 @@ def related_notes_for_record(record: NoteRecord) -> list[dict[str, str]]:
         if note_id:
             normalized.append({"id": note_id, "title": title, "reason": reason, "path": path})
     return normalized
+
+
+def _dedup_preserve(items: list[str]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for item in items:
+        if item and item not in seen:
+            seen.add(item)
+            out.append(item)
+    return out
+
+
+def _merge_related(keep: NoteRecord, remove: NoteRecord) -> list[dict[str, str]]:
+    """Union both notes' related-links, dropping references to the two merged notes."""
+    merged: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for item in related_notes_for_record(keep) + related_notes_for_record(remove):
+        rid = item["id"]
+        if rid in seen or rid in {keep.note_id, remove.note_id}:
+            continue
+        seen.add(rid)
+        merged.append(item)
+    return merged
 
 
 def _truncate(text: str, limit: int) -> str:
