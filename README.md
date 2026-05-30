@@ -1,8 +1,8 @@
 # PRISM
 
-**Personal Research Interlinked System** — a self-hosted Telegram bot that turns links into a structured, searchable knowledge base.
+**Personal Research Interlinked System** — a self-hosted research memory (a Telegram bot plus a web UI) that turns links into a structured, searchable knowledge base.
 
-Send a URL and PRISM fetches it, archives the source, generates a rich LLM summary, embeds it into a semantic index, and saves an Obsidian-compatible Markdown note with tags, evaluation scores, and backlinks to related notes. Over time it becomes a personal research memory you can browse, search, and ask questions against — and generate new project ideas from.
+Send a URL and PRISM fetches it, archives the source, generates a rich LLM summary, embeds it into a semantic index, and saves an Obsidian-compatible Markdown note with tags, evaluation scores, and backlinks to related notes. Over time it becomes a personal research memory you can browse, search, and ask questions against — and generate new project ideas from. Drive it from Telegram, or from a graph-based [web interface](#web-interface).
 
 Supported source types: arXiv papers, GitHub repos, PDFs, and general websites.
 
@@ -95,9 +95,42 @@ Open Telegram, find your bot, and send a link.
 | `/update_me <text>` | Merge new facts into your personal profile |
 | `/help` | List all commands |
 
+## Web interface
+
+PRISM also ships a self-hosted **web UI** — a dark, three-pane "Atlas" workspace that runs alongside the bot and shares the same vault, database, and index:
+
+- **Left** — a VSCode-style file explorer of the vault and archive (open PDFs, READMEs, and `personal.md` in an in-app viewer), plus source/tag filters and a name filter.
+- **Center** — an interactive, force-directed **graph** of your notes and their links; click a node to open it, or use a note's **related** button to highlight its neighbors.
+- **Right** — the full note (summary, key claims, scores, backlinks, tags, metadata) in collapsible sections. Both side panels fold and are drag-resizable.
+- **Top bar** — `/ask` and `/find` (toggle the icon), a `+` to save a URL, and a 💡 lightbulb that generates an idea in the background.
+
+It exposes the same actions as the bot: save URLs, ask, find, generate and rate ideas, reprocess, edit tags, and delete.
+
+Run it as a second container (shares `runtime/`; the bot is untouched):
+
+```sh
+docker compose build prism-web
+docker compose up -d prism-web      # serves http://localhost:8000
+```
+
+It binds `0.0.0.0:8000`, so it's reachable from other devices on your network at `http://<host-ip>:8000`. There is **no authentication** — keep it on a trusted LAN/VPN (e.g. Tailscale), not the public internet.
+
+**Local development** — FastAPI with autoreload plus the Vite dev server proxying `/api`:
+
+```sh
+# Terminal 1 — API (shares runtime/ with the bot)
+PYTHONPATH=src SQLITE_PATH=runtime/prism.sqlite3 LANCEDB_PATH=runtime/lancedb \
+  VAULT_PATH=runtime/research-vault ARCHIVE_PATH=runtime/archives \
+  PRISM_WEB_RELOAD=1 python -m prism.web
+# Terminal 2 — frontend
+cd frontend && npm install && npm run dev
+```
+
+The web service ignores the Telegram env vars; optional knobs: `PRISM_WEB_HOST`, `PRISM_WEB_PORT`, `PRISM_WEB_RELOAD`, `PRISM_WEB_STATIC`.
+
 ## Stack
 
-Python · `python-telegram-bot` · Obsidian-compatible Markdown vault · SQLite · LanceDB · OpenAI-compatible LLM and embedding APIs. Requires Python ≥ 3.12; runs via Docker Compose.
+Python · `python-telegram-bot` · FastAPI · React + Vite (TypeScript) · Obsidian-compatible Markdown vault · SQLite · LanceDB · OpenAI-compatible LLM and embedding APIs. Requires Python ≥ 3.12 (and Node ≥ 18 to build the web UI); runs via Docker Compose.
 
 ## Runtime data
 
@@ -140,7 +173,7 @@ See `CLAUDE.md` for the full architecture, data flow, and design decisions.
 ## Planned
 
 - [ ] Terminal interface
-- [ ] Web interface
+- [x] Web interface
 - [ ] Browser extension / iOS Shortcut for frictionless link sharing
 - [ ] Scheduled idea generation (daily/weekly)
 - [ ] Note editing commands (rename, retag, review status)
