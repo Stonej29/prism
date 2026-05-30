@@ -14,7 +14,7 @@ feeds:
   # as its own note — one tech per note — instead of the digest post itself.
   - type: digest
     url: https://aisearch.substack.com/feed
-    posts: 3          # expand the newest 3 posts each run
+    posts: 4          # expand the newest N posts each run (overlap + dedup avoids misses)
     # input_source tags how these notes entered PRISM (default: ai_search).
     input_source: ai_search
 

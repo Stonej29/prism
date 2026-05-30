@@ -5,7 +5,7 @@ import { FileTree } from "./FileTree";
 import type { OpenFile } from "./FileViewer";
 import { ResizeHandle } from "./ResizeHandle";
 
-const KNOWN_SOURCES = ["paper", "github", "pdf", "website"];
+const KNOWN_SOURCES = ["paper", "github", "huggingface", "youtube", "pdf", "website"];
 
 function Mono({ children, c = P.mid }: { children: React.ReactNode; c?: string }) {
   return <span style={{ fontFamily: P.mono, fontSize: 11, color: c }}>{children}</span>;

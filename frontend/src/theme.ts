@@ -12,6 +12,8 @@ export const P = {
   accentDim: "rgba(110,168,254,0.14)",
   arxiv: "#f0776a",
   github: "#a78bfa",
+  huggingface: "#f5c542",
+  youtube: "#e5484d",
   pdf: "#4ec9a8",
   web: "#5cb8e6",
   unknown: "#6b7280",
@@ -23,6 +25,8 @@ export const P = {
 export const SRC: Record<string, { color: string; label: string }> = {
   paper: { color: P.arxiv, label: "arXiv" },
   github: { color: P.github, label: "GitHub" },
+  huggingface: { color: P.huggingface, label: "HF" },
+  youtube: { color: P.youtube, label: "YouTube" },
   pdf: { color: P.pdf, label: "PDF" },
   website: { color: P.web, label: "Web" },
   unknown: { color: P.unknown, label: "Other" },
