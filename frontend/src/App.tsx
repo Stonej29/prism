@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "./api";
 import { P, srcLabel } from "./theme";
-import type { AskResult, GraphPayload, Idea, NoteDetail, Stats, TagCount, TreeNode } from "./types";
+import type { AskResult, GraphPayload, Idea, NoteDetail, Proposal, Stats, TagCount, TreeNode } from "./types";
 import { TopBar } from "./components/TopBar";
 import { TreePane } from "./components/TreePane";
 import { GraphPane } from "./components/GraphPane";
 import { NotePane } from "./components/NotePane";
 import { AskOverlay } from "./components/AskOverlay";
+import { ProposalsOverlay } from "./components/ProposalsOverlay";
 import { IdeaView } from "./components/IdeaView";
 import { FileViewer, type OpenFile } from "./components/FileViewer";
 import type { IdeaStatus } from "./components/Lightbulb";
@@ -22,6 +23,14 @@ interface IdeaJob {
   idea: Idea | null;
   open: boolean;
   topic: string;
+}
+interface ProposalsState {
+  open: boolean;
+  items: Proposal[];
+  pending: number;
+  loading: boolean;
+  busyId: string | null;
+  runningJob: "ingest" | "traverse" | null;
 }
 
 const LEFT_CLOSED_W = 32;
@@ -53,6 +62,7 @@ export default function App() {
   const [ideaJob, setIdeaJob] = useState<IdeaJob>({ status: "idle", idea: null, open: false, topic: "" });
   const [openFile, setOpenFile] = useState<OpenFile | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [proposals, setProposals] = useState<ProposalsState>({ open: false, items: [], pending: 0, loading: false, busyId: null, runningJob: null });
 
   const noteKind = useMemo(() => {
     const m: Record<string, string> = {};
@@ -61,11 +71,12 @@ export default function App() {
   }, [graph]);
 
   const refreshData = useCallback(async () => {
-    const [g, t, s, tr] = await Promise.all([api.graph(), api.tags(), api.stats(), api.tree()]);
+    const [g, t, s, tr, pr] = await Promise.all([api.graph(), api.tags(), api.stats(), api.tree(), api.proposals()]);
     setGraph(g);
     setTags(t.items);
     setStats(s);
     setTree(tr);
+    setProposals((p) => ({ ...p, items: pr.items, pending: pr.pending }));
   }, []);
 
   useEffect(() => {
@@ -246,11 +257,64 @@ export default function App() {
     }
   };
 
+  const openProposals = async () => {
+    setProposals((p) => ({ ...p, open: true, loading: true }));
+    try {
+      const pr = await api.proposals();
+      setProposals((p) => ({ ...p, items: pr.items, pending: pr.pending, loading: false }));
+    } catch (e) {
+      setToast(String(e));
+      setProposals((p) => ({ ...p, loading: false }));
+    }
+  };
+
+  const resolveProposal = async (id: string, action: "approve" | "reject") => {
+    setProposals((p) => ({ ...p, busyId: id }));
+    try {
+      const res = action === "approve" ? await api.approveProposal(id) : await api.rejectProposal(id);
+      setToast(res.message);
+      const pr = await api.proposals();
+      setProposals((p) => ({ ...p, items: pr.items, pending: pr.pending, busyId: null }));
+      if (action === "approve") await refreshData(); // a merge may have deleted a note
+    } catch (e) {
+      setToast(String(e));
+      setProposals((p) => ({ ...p, busyId: null }));
+    }
+  };
+
+  const runIngest = async () => {
+    setProposals((p) => ({ ...p, runningJob: "ingest" }));
+    try {
+      const s = await api.runIngest();
+      setToast(`Ingest: ${s.created} new, ${s.duplicates} dup, ${s.failed} failed (${s.feeds} feed${s.feeds === 1 ? "" : "s"})`);
+      await refreshData();
+    } catch (e) {
+      setToast(String(e));
+    } finally {
+      setProposals((p) => ({ ...p, runningJob: null }));
+    }
+  };
+
+  const runTraverse = async () => {
+    setProposals((p) => ({ ...p, runningJob: "traverse" }));
+    try {
+      const s = await api.runTraverse();
+      setToast(`Maintenance: links +${s.links_added}/-${s.links_removed}, ${s.tags_merged} tags merged, ${s.duplicates_proposed} new merge proposal(s)`);
+      const pr = await api.proposals();
+      setProposals((p) => ({ ...p, items: pr.items, pending: pr.pending, runningJob: null }));
+      await refreshData();
+    } catch (e) {
+      setToast(String(e));
+      setProposals((p) => ({ ...p, runningJob: null }));
+    }
+  };
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         setAsk((a) => ({ ...a, open: false }));
         setIdeaJob((j) => ({ ...j, open: false }));
+        setProposals((p) => ({ ...p, open: false }));
         setOpenFile(null);
       }
     };
@@ -264,10 +328,12 @@ export default function App() {
         busy={busy || ask.loading}
         saving={saving}
         ideaStatus={ideaJob.status}
+        pendingProposals={proposals.pending}
         onAsk={onAsk}
         onFind={onFind}
         onSave={onSave}
         onLightbulb={onLightbulb}
+        onProposals={openProposals}
       />
       <div style={{ flex: 1, display: "flex", minHeight: 0, position: "relative" }}>
         <TreePane
@@ -334,6 +400,19 @@ export default function App() {
             onClose={() => setIdeaJob((j) => ({ ...j, open: false }))}
             onRate={onRate}
             onRegenerate={generateIdea}
+          />
+        )}
+        {proposals.open && (
+          <ProposalsOverlay
+            proposals={proposals.items}
+            loading={proposals.loading}
+            busyId={proposals.busyId}
+            runningJob={proposals.runningJob}
+            onClose={() => setProposals((p) => ({ ...p, open: false }))}
+            onApprove={(id) => resolveProposal(id, "approve")}
+            onReject={(id) => resolveProposal(id, "reject")}
+            onRunIngest={runIngest}
+            onRunTraverse={runTraverse}
           />
         )}
         {openFile && <FileViewer file={openFile} onClose={() => setOpenFile(null)} />}

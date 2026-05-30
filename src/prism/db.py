@@ -72,6 +72,17 @@ class IdeaRecord:
     rated_at: str | None = None
 
 
+@dataclass(frozen=True)
+class ProposalRecord:
+    proposal_id: str
+    created_at: str
+    kind: str
+    status: str = "pending"
+    note_ids_json: str | None = None
+    payload_json: str | None = None
+    resolved_at: str | None = None
+
+
 class PrismDatabase:
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -248,6 +259,7 @@ class PrismDatabase:
             idea_count = conn.execute("SELECT COUNT(*) FROM ideas").fetchone()[0] or 0
             conn.execute("DELETE FROM notes")
             conn.execute("DELETE FROM ideas")
+            conn.execute("DELETE FROM proposals")
         return int(note_count), int(idea_count)
 
     def list_notes_for_reindexing(self) -> list[NoteRecord]:
@@ -466,6 +478,78 @@ class PrismDatabase:
             row = conn.execute("SELECT 1 FROM ideas WHERE idea_id = ?", (idea_id,)).fetchone()
         return row is not None
 
+    def insert_proposal(self, record: ProposalRecord) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                f"INSERT INTO proposals ({_PROPOSAL_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    record.proposal_id,
+                    record.created_at,
+                    record.kind,
+                    record.status,
+                    record.note_ids_json,
+                    record.payload_json,
+                    record.resolved_at,
+                ),
+            )
+
+    def find_by_proposal_id(self, proposal_id: str) -> ProposalRecord | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                f"SELECT {_PROPOSAL_COLUMNS} FROM proposals WHERE proposal_id = ?",
+                (proposal_id,),
+            ).fetchone()
+        return _row_to_proposal(row) if row else None
+
+    def list_proposals(self, status: str | None = None, limit: int = 50, offset: int = 0) -> list[ProposalRecord]:
+        with self.connect() as conn:
+            if status:
+                rows = conn.execute(
+                    f"""SELECT {_PROPOSAL_COLUMNS} FROM proposals WHERE status = ?
+                        ORDER BY created_at DESC LIMIT ? OFFSET ?""",
+                    (status, limit, offset),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    f"""SELECT {_PROPOSAL_COLUMNS} FROM proposals
+                        ORDER BY created_at DESC LIMIT ? OFFSET ?""",
+                    (limit, offset),
+                ).fetchall()
+        return [_row_to_proposal(row) for row in rows]
+
+    def update_proposal_status(self, proposal_id: str, status: str, resolved_at: str | None) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                "UPDATE proposals SET status = ?, resolved_at = ? WHERE proposal_id = ?",
+                (status, resolved_at, proposal_id),
+            )
+
+    def count_proposals(self, status: str | None = None) -> int:
+        with self.connect() as conn:
+            if status:
+                row = conn.execute("SELECT COUNT(*) FROM proposals WHERE status = ?", (status,)).fetchone()
+            else:
+                row = conn.execute("SELECT COUNT(*) FROM proposals").fetchone()
+        return int(row[0] or 0)
+
+    def pending_proposal_exists(self, kind: str, note_ids_json: str) -> bool:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM proposals WHERE kind = ? AND note_ids_json = ? AND status = 'pending'",
+                (kind, note_ids_json),
+            ).fetchone()
+        return row is not None
+
+    def delete_proposal(self, proposal_id: str) -> bool:
+        with self.connect() as conn:
+            cursor = conn.execute("DELETE FROM proposals WHERE proposal_id = ?", (proposal_id,))
+        return cursor.rowcount > 0
+
+    def proposal_id_exists(self, proposal_id: str) -> bool:
+        with self.connect() as conn:
+            row = conn.execute("SELECT 1 FROM proposals WHERE proposal_id = ?", (proposal_id,)).fetchone()
+        return row is not None
+
     def _initialize(self) -> None:
         with self.connect() as conn:
             conn.execute(
@@ -501,6 +585,17 @@ class PrismDatabase:
                 """
             )
             _add_missing_idea_columns(conn)
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS proposals (
+                    proposal_id TEXT PRIMARY KEY,
+                    created_at TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending'
+                )
+                """
+            )
+            _add_missing_proposal_columns(conn)
 
 
 _NOTE_COLUMNS = """
@@ -569,6 +664,35 @@ def _add_missing_idea_columns(conn: sqlite3.Connection) -> None:
     for column, definition in _IDEA_ADDED_COLUMNS.items():
         if column not in existing:
             conn.execute(f"ALTER TABLE ideas ADD COLUMN {column} {definition}")
+
+
+_PROPOSAL_COLUMNS = "proposal_id, created_at, kind, status, note_ids_json, payload_json, resolved_at"
+
+_PROPOSAL_ADDED_COLUMNS = {
+    "status": "TEXT NOT NULL DEFAULT 'pending'",
+    "note_ids_json": "TEXT",
+    "payload_json": "TEXT",
+    "resolved_at": "TEXT",
+}
+
+
+def _add_missing_proposal_columns(conn: sqlite3.Connection) -> None:
+    existing = {row["name"] for row in conn.execute("PRAGMA table_info(proposals)")}
+    for column, definition in _PROPOSAL_ADDED_COLUMNS.items():
+        if column not in existing:
+            conn.execute(f"ALTER TABLE proposals ADD COLUMN {column} {definition}")
+
+
+def _row_to_proposal(row: sqlite3.Row) -> ProposalRecord:
+    return ProposalRecord(
+        proposal_id=row["proposal_id"],
+        created_at=row["created_at"],
+        kind=row["kind"],
+        status=row["status"],
+        note_ids_json=row["note_ids_json"],
+        payload_json=row["payload_json"],
+        resolved_at=row["resolved_at"],
+    )
 
 
 def _row_to_record(row: sqlite3.Row) -> NoteRecord:

@@ -19,11 +19,15 @@ dependencies = [
   "uvicorn[standard]>=0.30,<0.35",
   "pydantic>=2.7,<3",
   "youtube-transcript-api>=0.6.2,<2",
+  "APScheduler>=3.10,<4",
+  "feedparser>=6.0,<7",
+  "tzdata>=2024.1",
 ]
 
 [project.scripts]
 prism-bot = "prism.bot:main"
 prism-web = "prism.web.__main__:main"
+prism-worker = "prism.worker.__main__:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

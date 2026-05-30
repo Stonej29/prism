@@ -8,7 +8,7 @@ from __future__ import annotations
 import dataclasses
 from typing import Any
 
-from prism.db import IdeaRecord, NoteRecord, NoteStats
+from prism.db import IdeaRecord, NoteRecord, NoteStats, ProposalRecord
 from prism.index import RelatedCandidate
 from prism.notes import (
     _json_array,
@@ -18,6 +18,7 @@ from prism.notes import (
     structured_summary,
     tags_for_record,
 )
+from prism.proposals import describe_proposal, proposal_note_ids, proposal_payload
 
 
 def note_summary_dto(record: NoteRecord) -> dict[str, Any]:
@@ -93,3 +94,16 @@ def candidate_dto(candidate: RelatedCandidate) -> dict[str, Any]:
 
 def stats_dto(stats: NoteStats) -> dict[str, Any]:
     return dataclasses.asdict(stats)
+
+
+def proposal_to_dto(record: ProposalRecord) -> dict[str, Any]:
+    return {
+        "id": record.proposal_id,
+        "kind": record.kind,
+        "status": record.status,
+        "created_at": record.created_at,
+        "resolved_at": record.resolved_at,
+        "note_ids": proposal_note_ids(record),
+        "payload": proposal_payload(record),
+        "description": describe_proposal(record),
+    }

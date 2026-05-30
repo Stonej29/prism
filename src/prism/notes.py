@@ -253,6 +253,30 @@ class NoteService:
         self.database.delete_note(record.note_id)
         return DeleteResult(ok=True, message=f"Deleted note {record.note_id}: {record.title}", title=record.title)
 
+    def apply_tags(self, record: NoteRecord, new_tags: list[str]) -> NoteRecord:
+        """Set a note's tags in SQLite and rewrite its Markdown frontmatter in place.
+
+        Used by the worker's tag-normalization pass and reusable elsewhere. The
+        Markdown body is preserved by re-rendering with the archived extracted
+        text. The semantic index is left as-is (tags feed embeddings but a plural
+        merge barely changes them; rebuildable via `python -m prism.index rebuild`).
+        """
+        updated = replace(record, tags_json=json.dumps(new_tags, ensure_ascii=True))
+        self.database.update_note(updated)
+        extracted = ""
+        if updated.local_archive:
+            extracted_path = Path(updated.local_archive) / "extracted.txt"
+            if extracted_path.exists():
+                try:
+                    extracted = extracted_path.read_text(encoding="utf-8")
+                except OSError:
+                    extracted = ""
+        try:
+            (self.vault_path / updated.note_path).write_text(render_note(updated, extracted), encoding="utf-8")
+        except OSError:
+            pass
+        return updated
+
     def wipe_all(self) -> WipeResult:
         note_count, idea_count = self.database.delete_all()
         _clear_directory(self.notes_path)

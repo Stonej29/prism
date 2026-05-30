@@ -12,7 +12,7 @@ from pathlib import Path
 from fastapi import APIRouter, FastAPI
 from fastapi.staticfiles import StaticFiles
 
-from prism.web.routes import files, graph, ideas, notes, search, stats, tags, tree
+from prism.web.routes import files, graph, ideas, maintenance, notes, proposals, search, stats, tags, tree
 
 
 def _static_dir() -> Path | None:
@@ -32,7 +32,7 @@ def create_app() -> FastAPI:
     app = FastAPI(title="PRISM", version="0.1.0")
 
     api = APIRouter(prefix="/api")
-    for module in (notes, graph, tags, stats, search, ideas, tree, files):
+    for module in (notes, graph, tags, stats, search, ideas, proposals, maintenance, tree, files):
         api.include_router(module.router)
     app.include_router(api)
 

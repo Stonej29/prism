@@ -47,6 +47,26 @@ Build the frontend bundle (type-checked):
 cd frontend && npm run build   # outputs frontend/dist, served by FastAPI in prod
 ```
 
+Run the background worker (scheduled feed ingestion + graph maintenance) via Docker:
+```sh
+docker compose build prism-worker
+sudo docker compose up -d prism-worker
+```
+
+Run a worker job once (manual / debugging):
+```sh
+PYTHONPATH=src SQLITE_PATH=runtime/prism.sqlite3 LANCEDB_PATH=runtime/lancedb \
+  VAULT_PATH=runtime/research-vault ARCHIVE_PATH=runtime/archives \
+  PRISM_FEEDS_PATH=runtime/feeds.yaml python -m prism.worker ingest   # pull feeds once
+# Or inside Docker:
+docker compose run --rm prism-worker python -m prism.worker ingest
+```
+
+Inspect graph-maintenance proposals:
+```sh
+sqlite3 runtime/prism.sqlite3 "select proposal_id,kind,status,note_ids_json from proposals order by created_at desc limit 10;"
+```
+
 Rebuild the LanceDB semantic index from SQLite:
 ```sh
 PYTHONPATH=src SQLITE_PATH=runtime/prism.sqlite3 LANCEDB_PATH=runtime/lancedb python -m prism.index rebuild
@@ -76,11 +96,16 @@ PRISM is a Telegram bot that saves URLs into an Obsidian-compatible Markdown vau
 
 4. **NoteService** (`notes.py`) — orchestrates the above steps, writes the Markdown note to `vault/notes/`, and persists metadata to SQLite.
 
-5. **Database** (`db.py`) — SQLite tables `notes` (all note metadata) and `ideas` (generated ideas + ratings). Both schemas evolve by `ALTER TABLE ADD COLUMN` via `_add_missing_columns()` / `_add_missing_idea_columns()` at startup, so old databases are automatically migrated without data loss.
+5. **Database** (`db.py`) — SQLite tables `notes` (all note metadata), `ideas` (generated ideas + ratings), and `proposals` (graph-maintenance suggestions for human review). Schemas evolve by `ALTER TABLE ADD COLUMN` via `_add_missing_columns()` / `_add_missing_idea_columns()` / `_add_missing_proposal_columns()` at startup, so old databases are automatically migrated without data loss. Notes carry both `source_kind` (what the content is: paper/github/huggingface/youtube/pdf/website) and `input_source` (how it entered PRISM: telegram/web_ui/ai_search/scheduled).
 
 6. **Idea engine** (`ideas.py`) — `IdeaService` synthesizes a project idea from the saved knowledge base (semantic search on a topic, else recent generated notes) plus the personal profile and previously rated ideas. Writes an idea Markdown note to `vault/generated-ideas/`, persists an `IdeaRecord` to SQLite, and supports a human 1–5 rating loop that rewrites the note's `rating` frontmatter and feeds future idea prompts.
 
-7. **Bot** (`bot.py`) — wires the pipeline to Telegram handlers. Commands: `/start`, `/help`, `/more <id>`, `/reprocess <id>`, `/retry_failed [n]`, `/delete <id>`, `/wipe_all`, `/related <query-or-note_id>`, `/status`, `/recent`, `/tags [tag]`, `/find <query>`, `/ask <question>`, `/idea [topic]`, `/ideas`, `/reset_me <text>`, `/update_me <text>`. `/ask` answers questions grounded only in saved notes (semantic retrieval → LLM, no live web search). The command list is registered with Telegram's command menu via `set_my_commands` in `_post_init` (sourced from the `COMMANDS` list, which also generates `/help`). Inline-button callbacks are handled by `CallbackQueryHandler`s: idea ratings (`idearate:<idea_id>:<n>`) and list pagination (`pg:<kind>:<offset>[:<tag>]`). The DB-backed browse commands (`/recent`, `/ideas`, `/tags`) paginate `PAGE_SIZE` items per page with ◀/▶ buttons via `_page_view`, backed by `offset` params on the `list_*` DB methods.
+7. **Bot** (`bot.py`) — wires the pipeline to Telegram handlers. Commands: `/start`, `/help`, `/more <id>`, `/reprocess <id>`, `/retry_failed [n]`, `/delete <id>`, `/wipe_all`, `/related <query-or-note_id>`, `/status`, `/recent`, `/tags [tag]`, `/find <query>`, `/ask <question>`, `/idea [topic]`, `/ideas`, `/proposals`, `/ingest`, `/traverse`, `/reset_me <text>`, `/update_me <text>`. `/ingest` and `/traverse` trigger the worker's feed-ingestion and graph-maintenance jobs on demand from inside the bot process (reusing `run_feed_ingestion` / `run_graph_traversal`); the web UI exposes the same via `POST /api/maintenance/{ingest,traverse}` and buttons in the proposals panel. `/ask` answers questions grounded only in saved notes (semantic retrieval → LLM, no live web search). The command list is registered with Telegram's command menu via `set_my_commands` in `_post_init` (sourced from the `COMMANDS` list, which also generates `/help`). Inline-button callbacks are handled by `CallbackQueryHandler`s: idea ratings (`idearate:<idea_id>:<n>`) and list pagination (`pg:<kind>:<offset>[:<tag>]`). The DB-backed browse commands (`/recent`, `/ideas`, `/tags`) paginate `PAGE_SIZE` items per page with ◀/▶ buttons via `_page_view`, backed by `offset` params on the `list_*` DB methods.
+
+8. **Worker** (`worker/`) — a separate `prism-worker` process/container (APScheduler) sharing the same `runtime/` and the `prism.services.build_services` factory used by the bot and web app. Cron jobs are configured by `runtime/feeds.yaml` (`PRISM_FEEDS_PATH`), with schedules interpreted in `schedule.timezone` (default `Europe/Copenhagen`, DST-aware via `tzdata`):
+   - **Feed ingestion** (`worker/ingest.py` + `worker/feeds.py`) — RSS/Atom entries pushed through `NoteService.save_url(url, input_source="ai_search")`; dedup handled by the normal pipeline. Default daily 07:00.
+   - **Graph traversal** (`worker/traversal.py`, opt-in via `traversal_enabled`, default weekly Monday 05:00) — *additive auto-apply + proposals*. Auto (no approval): **recomputes** each note's automatic `related_notes` from semantic neighbours (cosine over `indexer.all_vectors()`) each run — links carry `origin:"auto"` so they are refreshed rather than accumulated, while LLM-chosen links from note creation are preserved; and **normalizes near-duplicate tags** corpus-wide (`build_canonical_tag_map` groups by a de-pluralized/separator-stripped key, e.g. `foundation-model`/`foundation-models`, rewriting via `NoteService.apply_tags`). Proposals only: near-duplicate **note merges** written to the `proposals` table.
+   - Proposals are reviewed/approved via `ProposalService` (`proposals.py`), surfaced in the bot (`/proposals` + `prop:approve|reject:<id>` callbacks) and the web UI (`/api/proposals`, Atlas review overlay). Run a job once with `python -m prism.worker ingest`.
 
 ### Data flow
 ```

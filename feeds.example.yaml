@@ -1,0 +1,23 @@
+# PRISM worker feed configuration.
+# Copy to runtime/feeds.yaml (the path in PRISM_FEEDS_PATH, default /data/feeds.yaml).
+# Edits take effect on the next worker restart. The worker starts fine with no
+# feeds configured.
+
+feeds:
+  - type: rss
+    url: https://aisearch.substack.com/feed
+    max: 10
+    # input_source tags how these notes entered PRISM (default: ai_search).
+    input_source: ai_search
+
+schedule:
+  # 5-field cron expressions, interpreted in `timezone` (DST-aware).
+  timezone: Europe/Copenhagen
+  ingestion: "0 7 * * *"   # daily 07:00 — pull feeds
+  traversal: "0 5 * * 1"   # weekly Monday 05:00 — graph maintenance
+
+# Graph traversal each run:
+#   * recomputes automatic related-note links (bounded; never piles up)
+#   * normalizes near-duplicate tags corpus-wide (e.g. foundation-model(s)) — auto
+#   * proposes near-duplicate note merges for review via /proposals (not auto-applied)
+traversal_enabled: true

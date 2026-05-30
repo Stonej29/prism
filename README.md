@@ -15,6 +15,7 @@ Every note also records an `input_source` — how it entered PRISM (`telegram`, 
 - **Connect** — semantic search links each note to related ones via Obsidian backlinks
 - **Search** — `/find`, `/related`, and `/ask` let you query your knowledge base
 - **Ideate** — `/idea` synthesizes project ideas from your notes; rate them 1–5 to steer future ones
+- **Automate** — an optional background worker pulls configured RSS/Atom feeds on a schedule and performs graph maintenance, proposing near-duplicate merges for you to approve via `/proposals` or the web UI
 
 Every step degrades gracefully: a fetch, LLM, or embedding failure produces a partial note rather than losing the capture.
 
@@ -80,6 +81,7 @@ Open Telegram, find your bot, and send a link.
 | Command | Description |
 | --- | --- |
 | *(send a URL)* | Save, archive, summarize, and index the link |
+| *(upload a PDF)* | Save and process a PDF document directly |
 | `/more <id>` | Structured detailed view of a note or idea |
 | `/ask <question>` | Answer a question grounded only in your saved notes |
 | `/find <query>` | Semantic search by free-text query |
@@ -88,6 +90,9 @@ Open Telegram, find your bot, and send a link.
 | `/tags [tag]` | Browse tag counts, or notes for a tag (◀/▶ paged) |
 | `/idea [topic]` | Generate a project idea from your notes |
 | `/ideas` | Browse generated ideas with their ratings (◀/▶ paged) |
+| `/proposals` | Review graph-maintenance proposals (inline approve/reject) |
+| `/ingest` | Pull configured feeds now (instead of waiting for the schedule) |
+| `/traverse` | Run graph maintenance now (refresh links, normalize tags, propose merges) |
 | `/status` | Note / LLM / embedding counts and index state |
 | `/reprocess <id>` | Re-run LLM generation from archived text |
 | `/retry_failed [n]` | Retry failed LLM or embedding work for up to `n` notes |
@@ -129,6 +134,25 @@ cd frontend && npm install && npm run dev
 ```
 
 The web service ignores the Telegram env vars; optional knobs: `PRISM_WEB_HOST`, `PRISM_WEB_PORT`, `PRISM_WEB_RELOAD`, `PRISM_WEB_STATIC`.
+
+## Background worker
+
+An optional third container, `prism-worker`, runs scheduled jobs against the same `runtime/`:
+
+- **Feed ingestion** (default daily 07:00) — pulls configured RSS/Atom feeds and saves new entries through the normal pipeline, tagged `input_source: ai_search`. Dedup keeps re-polling cheap.
+- **Graph maintenance** (default weekly, Monday 05:00) — applied automatically: refreshes each note's semantic related-links (recomputed each run, so they stay current instead of piling up) and normalizes near-duplicate tags corpus-wide (e.g. `foundation-model` / `foundation-models`). Near-duplicate *notes* are flagged as **merge proposals** for you to approve or reject via `/proposals` or the web UI — note deletions never happen without your approval.
+
+Schedules use the `timezone` in `feeds.yaml` (default `Europe/Copenhagen`, DST-aware). Both jobs can also be triggered on demand without the worker container — from Telegram (`/ingest`, `/traverse`) or the web UI (buttons in the proposals panel), or via `docker compose run --rm prism-worker python -m prism.worker ingest`.
+
+Configure feeds and schedules in `runtime/feeds.yaml` (copy `feeds.example.yaml`):
+
+```sh
+cp feeds.example.yaml runtime/feeds.yaml   # edit feeds + cron schedules
+docker compose build prism-worker
+docker compose up -d prism-worker
+# Run a job once, without waiting for the schedule:
+docker compose run --rm prism-worker python -m prism.worker ingest
+```
 
 ## Stack
 
@@ -176,6 +200,8 @@ See `CLAUDE.md` for the full architecture, data flow, and design decisions.
 
 - [ ] Terminal interface
 - [x] Web interface
+- [x] Direct PDF uploads, YouTube, and Hugging Face sources
+- [x] Scheduled feed ingestion + AI graph maintenance (background worker)
 - [ ] Browser extension / iOS Shortcut for frictionless link sharing
 - [ ] Scheduled idea generation (daily/weekly)
 - [ ] Note editing commands (rename, retag, review status)

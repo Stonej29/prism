@@ -8,18 +8,22 @@ export function TopBar({
   busy,
   saving,
   ideaStatus,
+  pendingProposals,
   onAsk,
   onFind,
   onSave,
   onLightbulb,
+  onProposals,
 }: {
   busy: boolean;
   saving: boolean;
   ideaStatus: IdeaStatus;
+  pendingProposals: number;
   onAsk: (q: string) => void;
   onFind: (q: string) => void;
   onSave: (url: string) => void;
   onLightbulb: () => void;
+  onProposals: () => void;
 }) {
   const [saveOpen, setSaveOpen] = useState(false);
   const [url, setUrl] = useState("");
@@ -68,6 +72,51 @@ export function TopBar({
       <Omnibar busy={busy} onAsk={onAsk} onFind={onFind} />
 
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <span
+          onClick={onProposals}
+          title="Review graph maintenance proposals"
+          style={{
+            position: "relative",
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            width: 30,
+            height: 30,
+            borderRadius: 7,
+            border: `1px solid ${pendingProposals > 0 ? P.accent : P.line}`,
+            background: pendingProposals > 0 ? P.accentDim : P.bg2,
+            color: pendingProposals > 0 ? P.accent : P.mid,
+            cursor: "pointer",
+            fontFamily: P.mono,
+            fontSize: 14,
+            lineHeight: 1,
+          }}
+        >
+          ⤬
+          {pendingProposals > 0 && (
+            <span
+              style={{
+                position: "absolute",
+                top: -6,
+                right: -6,
+                minWidth: 15,
+                height: 15,
+                padding: "0 3px",
+                borderRadius: 8,
+                background: P.accent,
+                color: P.bg0,
+                fontFamily: P.mono,
+                fontSize: 9,
+                fontWeight: 700,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              {pendingProposals}
+            </span>
+          )}
+        </span>
         <Lightbulb status={ideaStatus} onClick={onLightbulb} />
         <span
           onClick={() => !saving && setSaveOpen((o) => !o)}

@@ -128,3 +128,50 @@ export interface IdeaResult {
   message: string;
   idea: Idea | null;
 }
+
+export interface Proposal {
+  id: string;
+  kind: string;
+  status: string;
+  created_at: string;
+  resolved_at: string | null;
+  note_ids: string[];
+  payload: Record<string, unknown>;
+  description: string;
+}
+
+export interface ProposalList {
+  items: Proposal[];
+  pending: number;
+  limit: number;
+  offset: number;
+}
+
+export interface ProposalAction {
+  ok: boolean;
+  message: string;
+  proposal: Proposal | null;
+}
+
+export interface IngestSummary {
+  ok: boolean;
+  feeds_configured: number;
+  feeds: number;
+  seen: number;
+  created: number;
+  duplicates: number;
+  failed: number;
+  errors: string[];
+}
+
+export interface TraverseSummary {
+  ok: boolean;
+  notes: number;
+  links_added: number;
+  links_removed: number;
+  notes_relinked: number;
+  tags_merged: number;
+  notes_retagged: number;
+  duplicates_proposed: number;
+  pending_proposals: number;
+}

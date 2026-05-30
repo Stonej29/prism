@@ -30,6 +30,11 @@ from prism.notes import (
     structured_summary,
     tags_for_record,
 )
+from prism.proposals import ProposalService, describe_proposal
+from prism.services import Services
+from prism.worker.config import load_worker_config
+from prism.worker.ingest import run_feed_ingestion
+from prism.worker.traversal import run_graph_traversal
 
 LOGGER = logging.getLogger(__name__)
 HTML_PARSE_MODE = "HTML"
@@ -48,6 +53,9 @@ COMMANDS = [
     ("more", "Show the full detail of a note"),
     ("idea", "Generate a project idea, then rate it"),
     ("ideas", "Browse generated ideas with ratings"),
+    ("proposals", "Review graph maintenance proposals"),
+    ("ingest", "Pull configured feeds now"),
+    ("traverse", "Run graph maintenance now"),
     ("reprocess", "Re-run LLM generation for a note"),
     ("retry_failed", "Retry failed LLM and embedding work"),
     ("delete", "Delete a note or idea after confirmation"),
@@ -75,6 +83,7 @@ class PrismBot:
             indexer,
         )
         self.ideas = IdeaService(settings.vault_path, self.database, llm_config, indexer)
+        self.proposals = ProposalService(self.database, self.notes)
         self._semantic_pages: dict[str, tuple[str, list]] = {}
         self._wipe_codes: dict[int, str] = {}
 
@@ -564,6 +573,99 @@ class PrismBot:
         text, keyboard = self._page_view("ideas", 0)
         await message.reply_text(text or "No ideas yet. Use <code>/idea</code> to generate one.", reply_markup=keyboard, parse_mode=HTML_PARSE_MODE)
 
+    async def handle_proposals(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        del context
+        if not await self._is_allowed(update):
+            return
+        message = update.effective_message
+        if not message:
+            return
+        pending = self.proposals.list_pending(limit=10)
+        if not pending:
+            await message.reply_text("No pending proposals. The worker creates them during graph maintenance.")
+            return
+        await message.reply_text(f"<b>{len(pending)} pending proposal(s):</b>", parse_mode=HTML_PARSE_MODE)
+        for record in pending:
+            await message.reply_text(
+                f"<b>Proposal {_h(record.proposal_id)}</b> ({_h(record.kind)})\n{_h(describe_proposal(record))}",
+                reply_markup=_proposal_keyboard(record.proposal_id),
+                parse_mode=HTML_PARSE_MODE,
+            )
+
+    async def handle_proposal_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        del context
+        query = update.callback_query
+        if not query:
+            return
+        await query.answer()
+        user = update.effective_user
+        if not user or user.id not in self.settings.telegram_allowed_user_ids:
+            return
+        action, proposal_id = _parse_proposal_callback(query.data)
+        if not action or not proposal_id:
+            return
+        try:
+            if action == "approve":
+                result = await asyncio.to_thread(self.proposals.approve, proposal_id)
+            else:
+                result = await asyncio.to_thread(self.proposals.reject, proposal_id)
+        except Exception as exc:
+            LOGGER.exception("Proposal %s failed for %s", action, proposal_id)
+            await query.edit_message_text(f"Proposal {action} failed: {type(exc).__name__}: {exc}")
+            return
+        await query.edit_message_text(_h(result.message), parse_mode=HTML_PARSE_MODE)
+
+    async def handle_ingest(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        del context
+        if not await self._is_allowed(update):
+            return
+        message = update.effective_message
+        if not message:
+            return
+        config = load_worker_config()
+        if not config.feeds:
+            await message.reply_text("No feeds configured. Add them to feeds.yaml (PRISM_FEEDS_PATH).")
+            return
+        await message.reply_text(f"Pulling {len(config.feeds)} feed(s)...")
+        asyncio.create_task(self._ingest_task(config.feeds, message))
+
+    async def _ingest_task(self, feeds, message) -> None:
+        try:
+            summary = await asyncio.to_thread(run_feed_ingestion, self.notes, feeds)
+        except Exception as exc:
+            LOGGER.exception("Manual feed ingestion failed")
+            await message.reply_text(f"Feed ingestion failed: {type(exc).__name__}: {exc}")
+            return
+        await message.reply_text(_ingest_reply(summary), parse_mode=HTML_PARSE_MODE)
+
+    async def handle_traverse(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        del context
+        if not await self._is_allowed(update):
+            return
+        message = update.effective_message
+        if not message:
+            return
+        await message.reply_text("Running graph maintenance...")
+        asyncio.create_task(self._traverse_task(message))
+
+    async def _traverse_task(self, message) -> None:
+        try:
+            summary = await asyncio.to_thread(run_graph_traversal, self._services())
+        except Exception as exc:
+            LOGGER.exception("Manual graph traversal failed")
+            await message.reply_text(f"Graph maintenance failed: {type(exc).__name__}: {exc}")
+            return
+        await message.reply_text(_traverse_reply(summary, self.proposals.count_pending()), parse_mode=HTML_PARSE_MODE)
+
+    def _services(self) -> Services:
+        return Services(
+            settings=self.settings,
+            database=self.database,
+            indexer=self.notes.indexer,
+            notes=self.notes,
+            ideas=self.ideas,
+        )
+
     async def handle_page(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         del context
         query = update.callback_query
@@ -886,6 +988,49 @@ def _rating_keyboard(idea_id: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([buttons])
 
 
+def _ingest_reply(summary) -> str:
+    lines = [
+        "<b>Feed ingestion complete:</b>",
+        f"{summary.feeds} feed(s), {summary.seen} seen, {summary.created} new, {summary.duplicates} duplicates, {summary.failed} failed.",
+    ]
+    if summary.errors:
+        lines.append("<b>Errors:</b>")
+        lines.extend(f"- {_h(err)}" for err in summary.errors[:5])
+    return "\n".join(lines)
+
+
+def _traverse_reply(summary, pending: int) -> str:
+    return "\n".join([
+        "<b>Graph maintenance complete:</b>",
+        f"{summary.notes} notes scanned.",
+        f"Links: +{summary.links_added} / -{summary.links_removed} across {summary.notes_relinked} note(s).",
+        f"Tags: {summary.tags_merged} merged across {summary.notes_retagged} note(s).",
+        f"Duplicate merge proposals: {summary.duplicates_proposed} new ({pending} pending — {_cmd('proposals')}).",
+    ])
+
+
+def _proposal_keyboard(proposal_id: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("✓ Approve", callback_data=f"prop:approve:{proposal_id}"),
+            InlineKeyboardButton("✗ Reject", callback_data=f"prop:reject:{proposal_id}"),
+        ]
+    ])
+
+
+def _parse_proposal_callback(data: str | None) -> tuple[str | None, str | None]:
+    if not data:
+        return None, None
+    parts = data.split(":")
+    if len(parts) != 3 or parts[0] != "prop":
+        return None, None
+    action = parts[1]
+    if action not in {"approve", "reject"}:
+        return None, None
+    proposal_id = parts[2].strip().lower()
+    return (action, proposal_id) if proposal_id else (None, None)
+
+
 def _delete_keyboard(item_type: str, item_id: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [
@@ -986,7 +1131,11 @@ def build_application(settings: Settings) -> Application:
     application.add_handler(CommandHandler("ask", bot.handle_ask))
     application.add_handler(CommandHandler("idea", bot.handle_idea))
     application.add_handler(CommandHandler("ideas", bot.handle_ideas))
+    application.add_handler(CommandHandler("proposals", bot.handle_proposals))
+    application.add_handler(CommandHandler("ingest", bot.handle_ingest))
+    application.add_handler(CommandHandler("traverse", bot.handle_traverse))
     application.add_handler(CallbackQueryHandler(bot.handle_rating, pattern="^idearate:"))
+    application.add_handler(CallbackQueryHandler(bot.handle_proposal_callback, pattern="^prop:"))
     application.add_handler(CallbackQueryHandler(bot.handle_delete_callback, pattern="^delete:"))
     application.add_handler(CallbackQueryHandler(bot.handle_page, pattern="^pg:"))
     application.add_handler(CallbackQueryHandler(bot.handle_semantic_page, pattern="^sp:"))

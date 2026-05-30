@@ -5,9 +5,14 @@ import type {
   Idea,
   IdeaResult,
   NoteDetail,
+  IngestSummary,
   NoteSummary,
+  Proposal,
+  ProposalAction,
+  ProposalList,
   Stats,
   TagCount,
+  TraverseSummary,
   TreeNode,
 } from "./types";
 
@@ -97,4 +102,19 @@ export const api = {
     req<Idea>(`/ideas/${id}/rating`, { method: "POST", body: JSON.stringify({ rating }) }),
 
   deleteIdea: (id: string) => req<{ ok: boolean; title: string }>(`/ideas/${id}`, { method: "DELETE" }),
+
+  proposals: (status = "pending") =>
+    req<ProposalList>(`/proposals?status=${encodeURIComponent(status)}`),
+
+  approveProposal: (id: string) =>
+    req<ProposalAction>(`/proposals/${id}/approve`, { method: "POST" }),
+
+  rejectProposal: (id: string) =>
+    req<ProposalAction>(`/proposals/${id}/reject`, { method: "POST" }),
+
+  runIngest: () => req<IngestSummary>(`/maintenance/ingest`, { method: "POST" }),
+
+  runTraverse: () => req<TraverseSummary>(`/maintenance/traverse`, { method: "POST" }),
 };
+
+export type { Proposal };

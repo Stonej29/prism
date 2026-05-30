@@ -22,3 +22,14 @@ services:
     volumes:
       - ./runtime:/data:z
     restart: unless-stopped
+
+  prism-worker:
+    build: .
+    command: ["prism-worker"]
+    user: "${PRISM_UID:-1000}:${PRISM_GID:-1000}"
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - ./runtime:/data:z
+    restart: unless-stopped

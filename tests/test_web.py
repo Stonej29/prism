@@ -14,8 +14,9 @@ from prism.ideas import IdeaService
 from prism.index import NoteIndexer
 from prism.llm import LLMConfig
 from prism.notes import NoteService
+from prism.proposals import ProposalService
 from prism.web.app import create_app
-from prism.web.deps import get_db, get_ideas, get_indexer, get_notes, get_settings
+from prism.web.deps import get_db, get_ideas, get_indexer, get_notes, get_proposals, get_settings
 
 
 def make_note(note_id: str, *, source_kind="paper", tags=("graph",), related=(), title=None) -> NoteRecord:
@@ -80,6 +81,7 @@ class WebApiTest(unittest.TestCase):
         app.dependency_overrides[get_notes] = lambda: notes
         app.dependency_overrides[get_ideas] = lambda: ideas
         app.dependency_overrides[get_indexer] = lambda: indexer
+        app.dependency_overrides[get_proposals] = lambda: ProposalService(self.db, notes)
         app.dependency_overrides[get_settings] = lambda: _settings(vault)
         self.client = TestClient(app)
 
@@ -169,6 +171,70 @@ class WebApiTest(unittest.TestCase):
         self.assertEqual(rated["rating"], 4)
         self.assertEqual(self.client.get("/api/ideas/idea01").json()["rating"], 4)
         self.assertEqual(self.client.post("/api/ideas/missing/rating", json={"rating": 3}).status_code, 404)
+
+    def test_proposals_list_approve_reject(self) -> None:
+        import json as _json
+
+        from prism.db import ProposalRecord
+
+        self.db.insert_note(make_note("aaa111"))
+        self.db.insert_note(make_note("bbb222"))
+        self.db.insert_proposal(ProposalRecord(
+            proposal_id="prop01", created_at="2026-05-30T00:00:00Z", kind="merge",
+            note_ids_json=_json.dumps(["aaa111", "bbb222"]),
+            payload_json=_json.dumps({"keep": "aaa111", "remove": "bbb222", "similarity": 0.97}),
+        ))
+
+        listing = self.client.get("/api/proposals").json()
+        self.assertEqual(listing["pending"], 1)
+        self.assertEqual(listing["items"][0]["id"], "prop01")
+        self.assertIn("Merge", listing["items"][0]["description"])
+
+        approved = self.client.post("/api/proposals/prop01/approve").json()
+        self.assertTrue(approved["ok"])
+        self.assertEqual(approved["proposal"]["status"], "approved")
+        # Approving the merge removed the duplicate note.
+        self.assertEqual(self.client.get("/api/notes/bbb222").status_code, 404)
+        self.assertEqual(self.client.get("/api/proposals").json()["pending"], 0)
+
+        self.assertEqual(self.client.post("/api/proposals/missing/approve").status_code, 404)
+
+    def test_proposal_reject(self) -> None:
+        import json as _json
+
+        from prism.db import ProposalRecord
+
+        self.db.insert_note(make_note("aaa111"))
+        self.db.insert_note(make_note("bbb222"))
+        self.db.insert_proposal(ProposalRecord(
+            proposal_id="prop02", created_at="2026-05-30T00:00:00Z", kind="merge",
+            note_ids_json=_json.dumps(["aaa111", "bbb222"]),
+            payload_json=_json.dumps({"keep": "aaa111", "remove": "bbb222"}),
+        ))
+        rejected = self.client.post("/api/proposals/prop02/reject").json()
+        self.assertTrue(rejected["ok"])
+        self.assertEqual(rejected["proposal"]["status"], "rejected")
+        self.assertIsNotNone(self.client.get("/api/notes/bbb222").json())
+
+    def test_maintenance_ingest_no_feeds(self) -> None:
+        import os
+        from unittest.mock import patch
+
+        # Point at a path that doesn't exist so no feeds load.
+        with patch.dict(os.environ, {"PRISM_FEEDS_PATH": str(self.vault / "nope.yaml")}):
+            res = self.client.post("/api/maintenance/ingest").json()
+        self.assertTrue(res["ok"])
+        self.assertEqual(res["feeds_configured"], 0)
+        self.assertEqual(res["created"], 0)
+
+    def test_maintenance_traverse_normalizes_tags(self) -> None:
+        # Indexer unconfigured -> traversal does tag normalization only.
+        self.db.insert_note(make_note("aaa111", tags=["foundation-model"]))
+        self.db.insert_note(make_note("bbb222", tags=["foundation-models"]))
+        res = self.client.post("/api/maintenance/traverse").json()
+        self.assertTrue(res["ok"])
+        self.assertGreaterEqual(res["tags_merged"], 1)
+        self.assertGreaterEqual(res["notes_retagged"], 1)
 
     def test_ask_graceful_when_unconfigured(self) -> None:
         result = self.client.post("/api/ask", json={"question": "what is rag?"}).json()
