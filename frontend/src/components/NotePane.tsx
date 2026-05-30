@@ -1,12 +1,30 @@
 import { useState } from "react";
 import { P } from "../theme";
 import type { NoteDetail } from "../types";
-import { ScoreMeter } from "./ScoreMeter";
 import { SourceBadge } from "./SourceBadge";
 import { Spinner } from "./Spinner";
+import { ResizeHandle } from "./ResizeHandle";
 
-const PANEL = 392;
-const SCORE_ORDER = ["novelty", "relevance", "credibility", "actionability", "interest", "overall"];
+const SCORE_ABBR: Record<string, string> = {
+  novelty: "nov",
+  relevance: "rel",
+  credibility: "cre",
+  actionability: "act",
+  interest: "int",
+};
+
+function fmtScore(v: number): string {
+  return Number.isInteger(v) ? String(v) : v.toFixed(1);
+}
+
+function strField(s: Record<string, unknown>, k: string): string {
+  const v = s[k];
+  return typeof v === "string" ? v : "";
+}
+function listField(s: Record<string, unknown>, k: string): string[] {
+  const v = s[k];
+  return Array.isArray(v) ? v.map((x) => String(x)).filter(Boolean) : [];
+}
 
 function Label({ children }: { children: React.ReactNode }) {
   return (
@@ -16,14 +34,45 @@ function Label({ children }: { children: React.ReactNode }) {
   );
 }
 
-function strField(s: Record<string, unknown>, k: string): string {
-  const v = s[k];
-  return typeof v === "string" ? v : "";
+function Chevron({ open }: { open: boolean }) {
+  return (
+    <svg width="10" height="10" viewBox="0 0 10 10" style={{ transform: open ? "rotate(90deg)" : "none", transition: "transform 0.1s", flexShrink: 0 }}>
+      <path d="M3 2l4 3-4 3" fill="none" stroke={P.lo} strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
 }
 
-function listField(s: Record<string, unknown>, k: string): string[] {
-  const v = s[k];
-  return Array.isArray(v) ? v.map((x) => String(x)).filter(Boolean) : [];
+function Section({ title, defaultOpen, action, children }: { title: string; defaultOpen?: boolean; action?: React.ReactNode; children: React.ReactNode }) {
+  const [open, setOpen] = useState(defaultOpen ?? false);
+  return (
+    <div style={{ borderTop: `1px solid ${P.line}` }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "11px 0" }}>
+        <div onClick={() => setOpen((o) => !o)} style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", flex: 1 }}>
+          <Chevron open={open} />
+          <Label>{title}</Label>
+        </div>
+        {action}
+      </div>
+      {open && <div style={{ paddingBottom: 14 }}>{children}</div>}
+    </div>
+  );
+}
+
+function TextBlock({ children }: { children: string }) {
+  return <p style={{ fontFamily: P.sans, fontSize: 13.5, lineHeight: 1.6, color: P.mid, margin: 0 }}>{children}</p>;
+}
+
+function Bullets({ items }: { items: string[] }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      {items.map((c, i) => (
+        <div key={i} style={{ display: "flex", gap: 9 }}>
+          <span style={{ color: P.lo, lineHeight: 1.5 }}>•</span>
+          <span style={{ fontFamily: P.sans, fontSize: 12.5, lineHeight: 1.5, color: P.mid }}>{c}</span>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 export function NotePane({
@@ -32,7 +81,10 @@ export function NotePane({
   busy,
   open,
   onToggle,
+  width,
+  onResize,
   onSelectRelated,
+  onShowRelated,
   onReprocess,
   onDelete,
   onEditTags,
@@ -42,7 +94,10 @@ export function NotePane({
   busy: boolean;
   open: boolean;
   onToggle: () => void;
+  width: number;
+  onResize: (w: number) => void;
   onSelectRelated: (id: string) => void;
+  onShowRelated: (id: string) => void;
   onReprocess: (id: string) => void;
   onDelete: (id: string) => void;
   onEditTags: (id: string, tags: string[]) => void;
@@ -53,7 +108,8 @@ export function NotePane({
   const wrap = (children: React.ReactNode) => (
     <div
       style={{
-        width: PANEL,
+        position: "relative",
+        width,
         flexShrink: 0,
         borderLeft: `1px solid ${P.line}`,
         background: P.bg1,
@@ -62,6 +118,7 @@ export function NotePane({
         minHeight: 0,
       }}
     >
+      <ResizeHandle side="right" width={width} onResize={onResize} />
       <div style={{ display: "flex", alignItems: "center", height: 28, padding: "0 10px", flexShrink: 0 }}>
         <span onClick={onToggle} title="Collapse" style={{ cursor: "pointer", padding: 4 }}>
           <svg width="14" height="14" viewBox="0 0 14 14"><path d="M5 3l4 4-4 4" fill="none" stroke={P.lo} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
@@ -91,9 +148,18 @@ export function NotePane({
 
   const s = note.structured_summary;
   const summary = strField(s, "quick_summary") || note.summary;
-  const claims = listField(s, "key_claims").slice(0, 6);
+  const claims = listField(s, "key_claims");
   const captured = note.date_saved?.slice(0, 10) ?? "";
-  const scores = SCORE_ORDER.filter((k) => note.scores[k] != null);
+  const overall = note.scores.overall;
+  const restScores = ["novelty", "relevance", "credibility", "actionability", "interest"].filter((k) => note.scores[k] != null);
+  const overallColor = overall == null ? P.mid : overall >= 7.5 ? P.pdf : overall >= 5 ? P.accent : P.arxiv;
+
+  const detailed = strField(s, "detailed_summary");
+  const whyMatters = strField(s, "why_it_matters");
+  const personal = strField(s, "personal_relevance");
+  const technical = listField(s, "technical_details");
+  const limitations = listField(s, "limitations");
+  const projectIdeas = listField(s, "project_ideas");
 
   const startEdit = () => {
     setDraft(note.tags.join(", "));
@@ -107,93 +173,92 @@ export function NotePane({
 
   return wrap(
     <>
-      <div style={{ padding: "18px 20px 14px", borderBottom: `1px solid ${P.line}` }}>
+      <div style={{ padding: "8px 20px 16px", borderBottom: `1px solid ${P.line}` }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
           <SourceBadge kind={note.source_kind} />
           <a
             href={note.source_url}
             target="_blank"
             rel="noreferrer"
-            style={{ fontFamily: P.mono, fontSize: 11, color: P.mid, textDecoration: "none", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 160 }}
+            style={{ fontFamily: P.mono, fontSize: 11, color: P.mid, textDecoration: "none", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 140 }}
           >
             {note.source_url.replace(/^https?:\/\//, "")}
           </a>
-          <span style={{ marginLeft: "auto", fontFamily: P.mono, fontSize: 10, color: P.faint }}>captured {captured}</span>
+          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12 }}>
+            <span style={{ fontFamily: P.mono, fontSize: 10, color: P.faint }}>captured {captured}</span>
+            <span onClick={() => onShowRelated(note.id)} title="Highlight related notes in the graph" style={{ fontFamily: P.mono, fontSize: 11, color: P.accent, cursor: "pointer" }}>related</span>
+          </div>
         </div>
         <div style={{ fontFamily: P.sans, fontSize: 21, fontWeight: 600, lineHeight: 1.25, letterSpacing: -0.2, marginBottom: 14, color: P.hi }}>
           {note.title}
         </div>
-        <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
-          {scores.map((k) => (
-            <div key={k}>
-              <Label>{k}</Label>
-              <div style={{ marginTop: 4 }}>
-                <ScoreMeter value={note.scores[k]} w={56} />
+        {(overall != null || restScores.length > 0) && (
+          <div style={{ display: "flex", alignItems: "baseline", gap: 14, flexWrap: "wrap" }}>
+            {overall != null && (
+              <div style={{ display: "flex", alignItems: "baseline", gap: 7 }}>
+                <span style={{ fontFamily: P.mono, fontSize: 10, letterSpacing: 1, color: P.faint }}>OVERALL</span>
+                <span style={{ fontFamily: P.sans, fontSize: 18, fontWeight: 600, color: overallColor }}>{overall.toFixed(1)}</span>
               </div>
-            </div>
-          ))}
-        </div>
+            )}
+            {restScores.length > 0 && (
+              <span style={{ fontFamily: P.mono, fontSize: 11, color: P.mid }}>
+                {restScores.map((k) => `${SCORE_ABBR[k]} ${fmtScore(note.scores[k])}`).join("  ·  ")}
+              </span>
+            )}
+          </div>
+        )}
       </div>
 
-      <div style={{ flex: 1, overflowY: "auto", padding: "16px 20px", display: "flex", flexDirection: "column", gap: 18 }}>
-        <div>
-          <Label>Summary</Label>
-          <p style={{ fontFamily: P.sans, fontSize: 13.5, lineHeight: 1.6, color: P.mid, margin: "8px 0 0" }}>{summary}</p>
-        </div>
+      <div style={{ flex: 1, overflowY: "auto", padding: "0 20px 16px" }}>
+        {summary && <Section title="Summary" defaultOpen><TextBlock>{summary}</TextBlock></Section>}
+        {detailed && <Section title="Detailed summary" defaultOpen><TextBlock>{detailed}</TextBlock></Section>}
 
         {claims.length > 0 && (
-          <div>
-            <Label>Key claims</Label>
-            <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 7 }}>
+          <Section title="Key claims" defaultOpen>
+            <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
               {claims.map((c, i) => (
                 <div key={i} style={{ display: "flex", gap: 9 }}>
-                  <span style={{ fontFamily: P.mono, fontSize: 11, color: P.accent, lineHeight: 1.5 }}>
-                    {String(i + 1).padStart(2, "0")}
-                  </span>
+                  <span style={{ fontFamily: P.mono, fontSize: 11, color: P.accent, lineHeight: 1.5 }}>{String(i + 1).padStart(2, "0")}</span>
                   <span style={{ fontFamily: P.sans, fontSize: 12.5, lineHeight: 1.5, color: P.hi }}>{c}</span>
                 </div>
               ))}
             </div>
-          </div>
+          </Section>
         )}
 
+        {whyMatters && <Section title="Why it matters"><TextBlock>{whyMatters}</TextBlock></Section>}
+        {personal && <Section title="Personal relevance"><TextBlock>{personal}</TextBlock></Section>}
+        {technical.length > 0 && <Section title="Technical details"><Bullets items={technical} /></Section>}
+        {limitations.length > 0 && <Section title="Limitations"><Bullets items={limitations} /></Section>}
+        {projectIdeas.length > 0 && <Section title="Project ideas"><Bullets items={projectIdeas} /></Section>}
+
         {note.related_notes.length > 0 && (
-          <div>
-            <Label>Backlinks</Label>
-            <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 6 }}>
+          <Section title="Backlinks" defaultOpen>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               {note.related_notes.map((l) => (
                 <div
                   key={l.id}
                   onClick={() => onSelectRelated(l.id)}
                   title={l.reason}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 9,
-                    padding: "7px 9px",
-                    borderRadius: 7,
-                    background: P.bg2,
-                    border: `1px solid ${P.line}`,
-                    cursor: "pointer",
-                  }}
+                  style={{ display: "flex", alignItems: "center", gap: 9, padding: "7px 9px", borderRadius: 7, background: P.bg2, border: `1px solid ${P.line}`, cursor: "pointer" }}
                 >
-                  <span style={{ fontFamily: P.sans, fontSize: 12.5, color: P.hi, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {l.title}
-                  </span>
+                  <span style={{ fontFamily: P.sans, fontSize: 12.5, color: P.hi, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{l.title}</span>
                   <span style={{ fontFamily: P.mono, fontSize: 10, color: P.lo }}>→</span>
                 </div>
               ))}
             </div>
-          </div>
+          </Section>
         )}
 
-        <div>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-            <Label>Tags</Label>
+        <Section
+          title="Tags"
+          defaultOpen
+          action={
             <span onClick={editing ? saveEdit : startEdit} style={{ fontFamily: P.mono, fontSize: 10, color: P.accent, cursor: "pointer" }}>
               {editing ? "save" : "edit"}
             </span>
-          </div>
+          }
+        >
           {editing ? (
             <input
               value={draft}
@@ -206,14 +271,25 @@ export function NotePane({
           ) : (
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
               {note.tags.map((t) => (
-                <span key={t} style={{ fontFamily: P.mono, fontSize: 11, color: P.mid, padding: "3px 8px", borderRadius: 5, background: P.bg2, border: `1px solid ${P.line}` }}>
-                  {t}
-                </span>
+                <span key={t} style={{ fontFamily: P.mono, fontSize: 11, color: P.mid, padding: "3px 8px", borderRadius: 5, background: P.bg2, border: `1px solid ${P.line}` }}>{t}</span>
               ))}
               {note.tags.length === 0 && <span style={{ fontFamily: P.sans, fontSize: 12, color: P.faint }}>No tags.</span>}
             </div>
           )}
-        </div>
+        </Section>
+
+        <Section title="Source & metadata">
+          <div style={{ display: "flex", flexDirection: "column", gap: 5, fontFamily: P.mono, fontSize: 11, color: P.mid }}>
+            <Meta label="url" value={note.source_url} />
+            {note.resolved_url !== note.source_url && <Meta label="resolved" value={note.resolved_url} />}
+            <Meta label="saved" value={note.date_saved} />
+            {note.fetched_at && <Meta label="fetched" value={note.fetched_at} />}
+            <Meta label="kind" value={note.source_kind} />
+            {note.llm_model && <Meta label="model" value={note.llm_model} />}
+            <Meta label="status" value={`fetch:${note.fetch_status} · llm:${note.llm_status} · embed:${note.embedding_status}`} />
+            {note.embedding_dimensions != null && <Meta label="dims" value={String(note.embedding_dimensions)} />}
+          </div>
+        </Section>
       </div>
 
       <div style={{ padding: "12px 20px", borderTop: `1px solid ${P.line}`, display: "flex", alignItems: "center", gap: 10 }}>
@@ -229,5 +305,14 @@ export function NotePane({
         </span>
       </div>
     </>,
+  );
+}
+
+function Meta({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={{ display: "flex", gap: 8 }}>
+      <span style={{ color: P.faint, minWidth: 56 }}>{label}</span>
+      <span style={{ color: P.mid, wordBreak: "break-all" }}>{value}</span>
+    </div>
   );
 }

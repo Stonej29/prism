@@ -15,6 +15,8 @@ export function GraphPane({
   highlightIds,
   onSelect,
   onDeselect,
+  onClearHighlight,
+  leftPanelWidth,
 }: {
   graph: GraphPayload | null;
   sourceFilter: string | null;
@@ -23,6 +25,8 @@ export function GraphPane({
   highlightIds: Set<string> | null;
   onSelect: (id: string) => void;
   onDeselect: () => void;
+  onClearHighlight: () => void;
+  leftPanelWidth: number;
 }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 800, h: 600 });
@@ -53,6 +57,15 @@ export function GraphPane({
 
   const { sim, tick, simRef } = useGraphSimulation(nodes, edges, size.w, size.h, layout);
   void tick; // re-render trigger
+
+  // Keep nodes screen-stable when the LEFT panel folds (its width change moves the
+  // graph's left origin); compensate the pan so the graph doesn't appear to jump.
+  const prevLeftRef = useRef(leftPanelWidth);
+  useEffect(() => {
+    const delta = prevLeftRef.current - leftPanelWidth;
+    prevLeftRef.current = leftPanelWidth;
+    if (delta !== 0) setTransform((t) => ({ ...t, x: t.x + delta }));
+  }, [leftPanelWidth]);
 
   // ---- zoom (native non-passive wheel so only the graph zooms, never the page) ----
   useEffect(() => {
@@ -218,7 +231,8 @@ export function GraphPane({
       >
         <g transform={`translate(${transform.x},${transform.y}) scale(${transform.k})`}>
           {sim.links.map((l, i) => {
-            const dim = highlightIds && !(highlightIds.has(l.source.id) && highlightIds.has(l.target.id));
+            const active = !!highlightIds;
+            const on = active && highlightIds.has(l.source.id) && highlightIds.has(l.target.id);
             return (
               <line
                 key={i}
@@ -226,23 +240,24 @@ export function GraphPane({
                 y1={l.source.y}
                 x2={l.target.x}
                 y2={l.target.y}
-                stroke={P.line}
-                strokeWidth={1}
-                opacity={dim ? 0.25 : 0.7}
+                stroke={on ? P.hi : P.line}
+                strokeWidth={on ? 1.5 : 1}
+                opacity={active ? (on ? 0.95 : 0.05) : 0.7}
               />
             );
           })}
           {sim.nodes.map((n) => {
             const r = nodeRadius(n.overall);
             const selected = n.id === selectedId;
-            const dim = highlightIds && !highlightIds.has(n.id);
-            const showLabel = selected || hover === n.id;
+            const lit = !!highlightIds && highlightIds.has(n.id);
+            const dim = !!highlightIds && !lit;
+            const showLabel = selected || lit || hover === n.id;
             return (
               <g
                 key={n.id}
                 transform={`translate(${n.x},${n.y})`}
                 style={{ cursor: "pointer" }}
-                opacity={dim ? 0.3 : 1}
+                opacity={dim ? 0.12 : 1}
                 onPointerDown={(e) => onNodeDown(e, n)}
                 onClick={(e) => {
                   e.stopPropagation();
@@ -254,8 +269,8 @@ export function GraphPane({
                 <circle
                   r={r}
                   fill={srcColor(n.source_kind)}
-                  stroke={selected ? P.hi : P.bg0}
-                  strokeWidth={selected ? 2 : 1.5}
+                  stroke={selected ? P.hi : lit ? P.hi : P.bg0}
+                  strokeWidth={selected ? 2 : lit ? 1.8 : 1.5}
                 />
                 {showLabel && (
                   <text
@@ -312,22 +327,19 @@ export function GraphPane({
         ))}
       </div>
 
-      {/* count chip */}
-      <div
-        style={{
-          position: "absolute",
-          bottom: 16,
-          left: 16,
-          zIndex: 6,
-          background: `${P.bg1}dd`,
-          border: `1px solid ${P.line}`,
-          borderRadius: 8,
-          padding: "7px 12px",
-        }}
-      >
-        <Mono>
-          {sim.nodes.length} notes · {sim.links.length} links · {graph?.counts.clusters ?? 0} clusters
-        </Mono>
+      {/* count / highlight chip */}
+      <div style={{ position: "absolute", bottom: 16, left: 16, zIndex: 6, display: "flex", gap: 8 }}>
+        <div style={{ background: `${P.bg1}dd`, border: `1px solid ${P.line}`, borderRadius: 8, padding: "7px 12px" }}>
+          <Mono>
+            {sim.nodes.length} notes · {sim.links.length} links · {graph?.counts.clusters ?? 0} clusters
+          </Mono>
+        </div>
+        {highlightIds && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, background: P.accentDim, border: `1px solid ${P.accent}`, borderRadius: 8, padding: "7px 12px" }}>
+            <Mono c={P.accent}>≈ {highlightIds.size} highlighted</Mono>
+            <span onClick={onClearHighlight} style={{ fontFamily: P.mono, fontSize: 11, color: P.mid, cursor: "pointer" }}>clear</span>
+          </div>
+        )}
       </div>
     </div>
   );

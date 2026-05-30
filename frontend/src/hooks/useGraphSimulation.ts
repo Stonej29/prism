@@ -96,8 +96,11 @@ export function useGraphSimulation(
     return () => {
       sim.stop();
     };
+    // NOTE: width/height are intentionally omitted — a resize (e.g. folding a panel)
+    // must NOT re-run the layout. The effect captures the current size when it re-runs
+    // on a data/layout change, which is the only time we want to re-lay-out.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nodes, edges, width, height, layout]);
+  }, [nodes, edges, layout]);
 
   return { sim: stateRef.current, tick, simRef };
 }

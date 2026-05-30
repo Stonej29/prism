@@ -72,6 +72,7 @@ export interface TreeNode {
   children?: TreeNode[];
   note_id?: string | null;
   idea_id?: string | null;
+  root?: "vault" | "archive";
 }
 
 export interface Stats {

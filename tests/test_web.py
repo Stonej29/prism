@@ -187,6 +187,33 @@ class WebApiTest(unittest.TestCase):
         self.assertEqual(files["aaa111.md"]["note_id"], "aaa111")
         self.assertIsNone(files["orphan.md"]["note_id"])
 
+    def test_tree_includes_archive_root(self) -> None:
+        self.db.insert_note(make_note("aaa111", title="My Paper"))
+        arc = self.vault / "archives" / "aaa111"
+        arc.mkdir(parents=True, exist_ok=True)
+        (arc / "source.pdf").write_text("%PDF-1.4", encoding="utf-8")
+
+        tree = self.client.get("/api/tree").json()
+        archive = next(c for c in tree["children"] if c["name"] == "Archive")
+        folder = archive["children"][0]
+        self.assertEqual(folder["name"], "My Paper")  # labeled by note title
+        self.assertEqual(folder["path"], "aaa111")
+        pdf = folder["children"][0]
+        self.assertEqual(pdf["name"], "source.pdf")
+        self.assertEqual(pdf["root"], "archive")
+
+    def test_file_serves_and_blocks_traversal(self) -> None:
+        (self.vault / "notes").mkdir(parents=True, exist_ok=True)
+        (self.vault / "notes" / "aaa111.md").write_text("# hello", encoding="utf-8")
+
+        ok = self.client.get("/api/file", params={"root": "vault", "path": "notes/aaa111.md"})
+        self.assertEqual(ok.status_code, 200)
+        self.assertEqual(ok.text, "# hello")
+
+        self.assertEqual(self.client.get("/api/file", params={"root": "vault", "path": "../secrets"}).status_code, 400)
+        self.assertEqual(self.client.get("/api/file", params={"root": "vault", "path": "notes/missing.md"}).status_code, 404)
+        self.assertEqual(self.client.get("/api/file", params={"root": "nope", "path": "x"}).status_code, 400)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -2,8 +2,9 @@ import { useState } from "react";
 import { P, srcColor, srcLabel } from "../theme";
 import type { GraphPayload, Stats, TagCount, TreeNode } from "../types";
 import { FileTree } from "./FileTree";
+import type { OpenFile } from "./FileViewer";
+import { ResizeHandle } from "./ResizeHandle";
 
-const RAIL = 264;
 const KNOWN_SOURCES = ["paper", "github", "pdf", "website"];
 
 function Mono({ children, c = P.mid }: { children: React.ReactNode; c?: string }) {
@@ -57,6 +58,8 @@ function FilterRow({ label, count, color, glyph, active, onClick }: { label: str
 export function TreePane({
   open,
   onToggle,
+  width,
+  onResize,
   tree,
   noteKind,
   selectedNoteId,
@@ -65,15 +68,16 @@ export function TreePane({
   stats,
   sourceFilter,
   activeTag,
-  searchActive,
   onSelectNote,
   onOpenIdea,
-  onSearch,
+  onOpenFile,
   onSelectSource,
   onSelectTag,
 }: {
   open: boolean;
   onToggle: () => void;
+  width: number;
+  onResize: (w: number) => void;
   tree: TreeNode | null;
   noteKind: Record<string, string>;
   selectedNoteId: string | null;
@@ -82,10 +86,9 @@ export function TreePane({
   stats: Stats | null;
   sourceFilter: string | null;
   activeTag: string | null;
-  searchActive: boolean;
   onSelectNote: (id: string) => void;
   onOpenIdea: (id: string) => void;
-  onSearch: (q: string) => void;
+  onOpenFile: (f: OpenFile) => void;
   onSelectSource: (s: string | null) => void;
   onSelectTag: (t: string) => void;
 }) {
@@ -106,13 +109,11 @@ export function TreePane({
   for (const n of graph?.nodes ?? []) counts[n.source_kind] = (counts[n.source_kind] ?? 0) + 1;
   const indexed = stats?.notes.embedding_indexed ?? 0;
   const healthy = stats?.index_configured && (stats?.notes.embedding_failed ?? 0) === 0;
-
-  const submit = () => {
-    if (query.trim()) onSearch(query.trim());
-  };
+  const filtering = query.trim().length > 0;
 
   return (
-    <div style={{ width: RAIL, flexShrink: 0, borderRight: `1px solid ${P.line}`, background: P.bg1, display: "flex", flexDirection: "column", minHeight: 0 }}>
+    <div style={{ position: "relative", width, flexShrink: 0, borderRight: `1px solid ${P.line}`, background: P.bg1, display: "flex", flexDirection: "column", minHeight: 0 }}>
+      <ResizeHandle side="left" width={width} onResize={onResize} />
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 12px 6px" }}>
         <span style={{ fontFamily: P.mono, fontSize: 10, letterSpacing: 1.2, color: P.faint, textTransform: "uppercase" }}>Explorer</span>
         <span onClick={onToggle} title="Collapse" style={{ cursor: "pointer" }}>
@@ -121,23 +122,22 @@ export function TreePane({
       </div>
 
       <div style={{ padding: "2px 12px 8px" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, height: 32, background: searchActive ? P.accentDim : P.bg2, border: `1px solid ${searchActive ? P.accent : P.line}`, borderRadius: 7, padding: "0 10px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, height: 32, background: filtering ? P.accentDim : P.bg2, border: `1px solid ${filtering ? P.accent : P.line}`, borderRadius: 7, padding: "0 10px" }}>
           <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke={P.lo} strokeWidth="1.5"><circle cx="5.5" cy="5.5" r="4" /><path d="M9 9l3 3" strokeLinecap="round" /></svg>
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && submit()}
-            placeholder="Search notes…  (/find)"
+            placeholder="Filter files by name…"
             style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: P.hi, fontFamily: P.sans, fontSize: 12.5 }}
           />
-          {searchActive && (
-            <span onClick={() => { setQuery(""); onSearch(""); }} title="Clear" style={{ fontFamily: P.mono, fontSize: 11, color: P.lo, cursor: "pointer" }}>×</span>
+          {filtering && (
+            <span onClick={() => setQuery("")} title="Clear" style={{ fontFamily: P.mono, fontSize: 11, color: P.lo, cursor: "pointer" }}>×</span>
           )}
         </div>
       </div>
 
       <div style={{ flex: 1, overflowY: "auto" }}>
-        <FileTree root={tree} selectedNoteId={selectedNoteId} noteKind={noteKind} onSelectNote={onSelectNote} onOpenIdea={onOpenIdea} />
+        <FileTree root={tree} filter={query} selectedNoteId={selectedNoteId} noteKind={noteKind} onSelectNote={onSelectNote} onOpenIdea={onOpenIdea} onOpenFile={onOpenFile} />
 
         <SectionHead open={filtersOpen} onClick={() => setFiltersOpen((o) => !o)}>Filters</SectionHead>
         {filtersOpen && (

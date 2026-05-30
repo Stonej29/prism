@@ -1,12 +1,25 @@
 import { useState } from "react";
 import { P, srcColor } from "../theme";
 import type { TreeNode } from "../types";
+import type { OpenFile } from "./FileViewer";
 
 interface Ctx {
   selectedNoteId: string | null;
   noteKind: Record<string, string>;
+  filter: string;
   onSelectNote: (id: string) => void;
   onOpenIdea: (id: string) => void;
+  onOpenFile: (f: OpenFile) => void;
+}
+
+// Prune the tree to nodes whose name (or a descendant's) matches the filter.
+function prune(node: TreeNode, q: string): TreeNode | null {
+  if (!q) return node;
+  const self = node.name.toLowerCase().includes(q);
+  if (node.type === "file") return self ? node : null;
+  const kids = (node.children ?? []).map((c) => prune(c, q)).filter((c): c is TreeNode => c !== null);
+  if (self || kids.length) return { ...node, children: self ? node.children : kids };
+  return null;
 }
 
 function Chevron({ open }: { open: boolean }) {
@@ -18,65 +31,70 @@ function Chevron({ open }: { open: boolean }) {
 }
 
 function Entry({ node, depth, ctx }: { node: TreeNode; depth: number; ctx: Ctx }) {
-  const [open, setOpen] = useState(depth < 1);
+  const [openState, setOpenState] = useState(depth < 1);
+  const open = ctx.filter ? true : openState;
   const padLeft = 8 + depth * 13;
 
   if (node.type === "dir") {
     return (
       <div>
         <div
-          onClick={() => setOpen((o) => !o)}
+          onClick={() => setOpenState((o) => !o)}
           style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 8px", paddingLeft: padLeft, cursor: "pointer", color: P.mid }}
         >
           <Chevron open={open} />
-          <span style={{ fontFamily: P.sans, fontSize: 13, flex: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-            {node.name}
-          </span>
+          <span style={{ fontFamily: P.sans, fontSize: 13, flex: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{node.name}</span>
           <span style={{ fontFamily: P.mono, fontSize: 10, color: P.faint }}>{node.children?.length ?? 0}</span>
         </div>
-        {open && node.children?.map((c) => <Entry key={c.path} node={c} depth={depth + 1} ctx={ctx} />)}
+        {open && node.children?.map((c) => <Entry key={c.path + c.name} node={c} depth={depth + 1} ctx={ctx} />)}
       </div>
     );
   }
 
-  const clickable = !!(node.note_id || node.idea_id);
   const active = !!node.note_id && node.note_id === ctx.selectedNoteId;
   const dot = node.note_id ? srcColor(ctx.noteKind[node.note_id] ?? "unknown") : node.idea_id ? "#ffd66e" : P.faint;
   const label = node.name.replace(/\.md$/, "");
 
+  const onClick = () => {
+    if (node.note_id) ctx.onSelectNote(node.note_id);
+    else if (node.idea_id) ctx.onOpenIdea(node.idea_id);
+    else ctx.onOpenFile({ root: node.root ?? "vault", path: node.path, name: node.name });
+  };
+
   return (
     <div
-      onClick={() => {
-        if (node.note_id) ctx.onSelectNote(node.note_id);
-        else if (node.idea_id) ctx.onOpenIdea(node.idea_id);
-      }}
+      onClick={onClick}
       style={{
         display: "flex",
         alignItems: "center",
         gap: 8,
         padding: "4px 8px",
         paddingLeft: padLeft + 16,
-        cursor: clickable ? "pointer" : "default",
+        cursor: "pointer",
         background: active ? P.accentDim : "transparent",
-        color: active ? P.hi : clickable ? P.mid : P.faint,
+        color: active ? P.hi : node.note_id || node.idea_id ? P.mid : P.lo,
         borderRadius: 5,
       }}
     >
       <span style={{ width: 6, height: 6, borderRadius: "50%", background: dot, flexShrink: 0 }} />
-      <span style={{ fontFamily: P.sans, fontSize: 12.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-        {label}
-      </span>
+      <span style={{ fontFamily: P.sans, fontSize: 12.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{label}</span>
     </div>
   );
 }
 
 export function FileTree({ root, ...ctx }: { root: TreeNode | null } & Ctx) {
   if (!root) return null;
+  const children = (root.children ?? [])
+    .map((c) => prune(c, ctx.filter.toLowerCase()))
+    .filter((c): c is TreeNode => c !== null);
   return (
     <div>
-      {(root.children ?? []).map((c) => (
-        <Entry key={c.path} node={c} depth={0} ctx={ctx} />
+      {children.map((c) => (
+        <Entry key={c.path + c.name} node={c} depth={0} ctx={ctx} />
       ))}
+      {ctx.filter && children.length === 0 && (
+        <div style={{ padding: "6px 14px", fontFamily: P.sans, fontSize: 12, color: P.faint }}>No matches.</div>
+      )}
     </div>
   );
 }

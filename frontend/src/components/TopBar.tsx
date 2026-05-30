@@ -9,6 +9,7 @@ export function TopBar({
   saving,
   ideaStatus,
   onAsk,
+  onFind,
   onSave,
   onLightbulb,
 }: {
@@ -16,6 +17,7 @@ export function TopBar({
   saving: boolean;
   ideaStatus: IdeaStatus;
   onAsk: (q: string) => void;
+  onFind: (q: string) => void;
   onSave: (url: string) => void;
   onLightbulb: () => void;
 }) {
@@ -63,7 +65,7 @@ export function TopBar({
         </span>
       </div>
 
-      <Omnibar busy={busy} onAsk={onAsk} />
+      <Omnibar busy={busy} onAsk={onAsk} onFind={onFind} />
 
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <Lightbulb status={ideaStatus} onClick={onLightbulb} />

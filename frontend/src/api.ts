@@ -70,6 +70,14 @@ export const api = {
 
   idea: (id: string) => req<Idea>(`/ideas/${id}`),
 
+  fileUrl: (root: string, path: string) => `/api/file?root=${encodeURIComponent(root)}&path=${encodeURIComponent(path)}`,
+
+  fileText: async (root: string, path: string): Promise<string> => {
+    const res = await fetch(`/api/file?root=${encodeURIComponent(root)}&path=${encodeURIComponent(path)}`);
+    if (!res.ok) throw new Error(`${res.status}`);
+    return res.text();
+  },
+
   stats: () => req<Stats>(`/stats`),
 
   find: (q: string, limit = 20) =>

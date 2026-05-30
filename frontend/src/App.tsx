@@ -8,6 +8,7 @@ import { GraphPane } from "./components/GraphPane";
 import { NotePane } from "./components/NotePane";
 import { AskOverlay } from "./components/AskOverlay";
 import { IdeaView } from "./components/IdeaView";
+import { FileViewer, type OpenFile } from "./components/FileViewer";
 import type { IdeaStatus } from "./components/Lightbulb";
 
 interface AskState {
@@ -23,6 +24,9 @@ interface IdeaJob {
   topic: string;
 }
 
+const LEFT_CLOSED_W = 32;
+const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
+
 export default function App() {
   const [graph, setGraph] = useState<GraphPayload | null>(null);
   const [tags, setTags] = useState<TagCount[]>([]);
@@ -36,16 +40,18 @@ export default function App() {
 
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(false);
+  const [leftWidth, setLeftWidth] = useState(264);
+  const [rightWidth, setRightWidth] = useState(392);
 
   const [sourceFilter, setSourceFilter] = useState<string | null>(null);
   const [activeTag, setActiveTag] = useState<string | null>(null);
   const [highlight, setHighlight] = useState<Set<string> | null>(null);
-  const [searchQuery, setSearchQuery] = useState("");
 
   const [busy, setBusy] = useState(false);
   const [saving, setSaving] = useState(false);
   const [ask, setAsk] = useState<AskState>({ open: false, question: "", result: null, loading: false });
   const [ideaJob, setIdeaJob] = useState<IdeaJob>({ status: "idle", idea: null, open: false, topic: "" });
+  const [openFile, setOpenFile] = useState<OpenFile | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
   const noteKind = useMemo(() => {
@@ -76,6 +82,7 @@ export default function App() {
   const selectNote = useCallback((id: string) => {
     setSelectedId(id);
     setRightOpen(true);
+    setHighlight(null); // clear any related/tag highlight when focusing a node
     setNoteLoading(true);
     api
       .note(id)
@@ -88,23 +95,18 @@ export default function App() {
     setSelectedId(null);
     setNote(null);
     setRightOpen(false);
-  }, []);
-
-  const clearSearch = () => {
     setHighlight(null);
-    setSearchQuery("");
-  };
+  }, []);
 
   const onSelectSource = (s: string | null) => {
     setSourceFilter(s);
     setActiveTag(null);
-    clearSearch();
+    setHighlight(null);
   };
 
   const onSelectTag = async (tag: string) => {
     setActiveTag(tag);
     setSourceFilter(null);
-    setSearchQuery("");
     try {
       const res = await api.notes({ tag, limit: 200 });
       setHighlight(new Set(res.items.map((n) => n.id)));
@@ -113,24 +115,13 @@ export default function App() {
     }
   };
 
-  const onSearch = async (q: string) => {
-    if (!q) {
-      clearSearch();
-      return;
+  const onShowRelated = (id: string) => {
+    const neighbors = new Set<string>([id]);
+    for (const e of graph?.edges ?? []) {
+      if (e.source === id) neighbors.add(e.target);
+      else if (e.target === id) neighbors.add(e.source);
     }
-    setBusy(true);
-    setActiveTag(null);
-    setSourceFilter(null);
-    try {
-      const res = await api.find(q);
-      if (!res.configured) setToast("Semantic search is not configured.");
-      setSearchQuery(q);
-      setHighlight(new Set(res.results.map((c) => c.id)));
-    } catch (e) {
-      setToast(String(e));
-    } finally {
-      setBusy(false);
-    }
+    setHighlight(neighbors);
   };
 
   const onAsk = async (question: string) => {
@@ -140,6 +131,20 @@ export default function App() {
       setAsk((a) => ({ ...a, result, loading: false }));
     } catch (e) {
       setAsk((a) => ({ ...a, loading: false, result: { ok: false, answer: "", message: String(e), sources: [] } }));
+    }
+  };
+
+  const onFind = async (q: string) => {
+    setBusy(true);
+    try {
+      const res = await api.find(q);
+      if (!res.configured) setToast("Semantic search is not configured.");
+      else if (res.results.length === 0) setToast(`No matches for “${q}”.`);
+      else selectNote(res.results[0].id);
+    } catch (e) {
+      setToast(String(e));
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -157,8 +162,8 @@ export default function App() {
     }
   };
 
-  // Idea topic follows the active filter: find query → tag → source kind, else none.
-  const ideaTopic = (): string => searchQuery || activeTag || (sourceFilter ? srcLabel(sourceFilter) : "");
+  // Idea topic follows the active filter: tag → source kind, else topic-less.
+  const ideaTopic = (): string => activeTag || (sourceFilter ? srcLabel(sourceFilter) : "");
 
   const generateIdea = async () => {
     const topic = ideaTopic();
@@ -246,6 +251,7 @@ export default function App() {
       if (e.key === "Escape") {
         setAsk((a) => ({ ...a, open: false }));
         setIdeaJob((j) => ({ ...j, open: false }));
+        setOpenFile(null);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -259,6 +265,7 @@ export default function App() {
         saving={saving}
         ideaStatus={ideaJob.status}
         onAsk={onAsk}
+        onFind={onFind}
         onSave={onSave}
         onLightbulb={onLightbulb}
       />
@@ -266,6 +273,8 @@ export default function App() {
         <TreePane
           open={leftOpen}
           onToggle={() => setLeftOpen((o) => !o)}
+          width={leftWidth}
+          onResize={(w) => setLeftWidth(clamp(w, 200, 560))}
           tree={tree}
           noteKind={noteKind}
           selectedNoteId={selectedId}
@@ -274,10 +283,9 @@ export default function App() {
           stats={stats}
           sourceFilter={sourceFilter}
           activeTag={activeTag}
-          searchActive={!!searchQuery}
           onSelectNote={selectNote}
           onOpenIdea={onOpenIdeaById}
-          onSearch={onSearch}
+          onOpenFile={setOpenFile}
           onSelectSource={onSelectSource}
           onSelectTag={onSelectTag}
         />
@@ -289,6 +297,8 @@ export default function App() {
           highlightIds={highlight}
           onSelect={selectNote}
           onDeselect={deselect}
+          onClearHighlight={() => setHighlight(null)}
+          leftPanelWidth={leftOpen ? leftWidth : LEFT_CLOSED_W}
         />
         <NotePane
           note={note}
@@ -296,7 +306,10 @@ export default function App() {
           busy={paneBusy}
           open={rightOpen}
           onToggle={() => setRightOpen((o) => !o)}
+          width={rightWidth}
+          onResize={(w) => setRightWidth(clamp(w, 320, 680))}
           onSelectRelated={selectNote}
+          onShowRelated={onShowRelated}
           onReprocess={onReprocess}
           onDelete={onDelete}
           onEditTags={onEditTags}
@@ -323,6 +336,7 @@ export default function App() {
             onRegenerate={generateIdea}
           />
         )}
+        {openFile && <FileViewer file={openFile} onClose={() => setOpenFile(null)} />}
       </div>
 
       {toast && (
