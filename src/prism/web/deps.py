@@ -48,6 +48,10 @@ def get_services() -> Services:
     return build_services(load_settings(require_telegram=False))
 
 
+def get_settings() -> Settings:
+    return get_services().settings
+
+
 def get_db() -> PrismDatabase:
     return get_services().database
 

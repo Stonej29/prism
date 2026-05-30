@@ -65,6 +65,15 @@ export interface TagCount {
   count: number;
 }
 
+export interface TreeNode {
+  name: string;
+  path: string;
+  type: "dir" | "file";
+  children?: TreeNode[];
+  note_id?: string | null;
+  idea_id?: string | null;
+}
+
 export interface Stats {
   notes: {
     total: number;

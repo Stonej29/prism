@@ -7,6 +7,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from prism.config import Settings
 from prism.db import IdeaRecord, NoteRecord, PrismDatabase
 from prism.embedding import EmbeddingConfig
 from prism.ideas import IdeaService
@@ -14,7 +15,7 @@ from prism.index import NoteIndexer
 from prism.llm import LLMConfig
 from prism.notes import NoteService
 from prism.web.app import create_app
-from prism.web.deps import get_db, get_ideas, get_indexer, get_notes
+from prism.web.deps import get_db, get_ideas, get_indexer, get_notes, get_settings
 
 
 def make_note(note_id: str, *, source_kind="paper", tags=("graph",), related=(), title=None) -> NoteRecord:
@@ -44,12 +45,30 @@ def make_note(note_id: str, *, source_kind="paper", tags=("graph",), related=(),
     )
 
 
+def _settings(vault: Path) -> Settings:
+    return Settings(
+        telegram_bot_token="",
+        telegram_allowed_user_ids=frozenset(),
+        llm_base_url="https://example.com",
+        llm_api_key=None,
+        llm_model=None,
+        embedding_base_url="https://example.com",
+        embedding_api_key=None,
+        embedding_model=None,
+        vault_path=vault,
+        sqlite_path=vault / "x.sqlite3",
+        archive_path=vault / "archives",
+        lancedb_path=vault / "lancedb",
+    )
+
+
 class WebApiTest(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
         root = Path(self._tmp.name)
         self.db = PrismDatabase(root / "prism.sqlite3")
         vault = root / "vault"
+        self.vault = vault
         archive = root / "archives"
         llm = LLMConfig("https://example.com", None, None)  # unconfigured
         indexer = NoteIndexer(root / "lancedb", EmbeddingConfig("https://example.com", None, None))  # unconfigured
@@ -61,6 +80,7 @@ class WebApiTest(unittest.TestCase):
         app.dependency_overrides[get_notes] = lambda: notes
         app.dependency_overrides[get_ideas] = lambda: ideas
         app.dependency_overrides[get_indexer] = lambda: indexer
+        app.dependency_overrides[get_settings] = lambda: _settings(vault)
         self.client = TestClient(app)
 
     def tearDown(self) -> None:
@@ -148,6 +168,24 @@ class WebApiTest(unittest.TestCase):
         result = self.client.get("/api/find", params={"q": "graph"}).json()
         self.assertFalse(result["configured"])
         self.assertEqual(result["results"], [])
+
+    def test_tree_nests_and_maps_note_ids(self) -> None:
+        self.db.insert_note(make_note("aaa111"))  # note_path = notes/aaa111.md
+        (self.vault / "notes").mkdir(parents=True, exist_ok=True)
+        (self.vault / "notes" / "aaa111.md").write_text("# note", encoding="utf-8")
+        (self.vault / "notes" / "orphan.md").write_text("# orphan", encoding="utf-8")
+        (self.vault / ".git").mkdir(exist_ok=True)
+        (self.vault / ".git" / "HEAD").write_text("ref", encoding="utf-8")
+
+        tree = self.client.get("/api/tree").json()
+        self.assertEqual(tree["type"], "dir")
+        names = {c["name"]: c for c in tree["children"]}
+        self.assertIn("notes", names)
+        self.assertNotIn(".git", names)  # hidden dirs skipped
+
+        files = {f["name"]: f for f in names["notes"]["children"]}
+        self.assertEqual(files["aaa111.md"]["note_id"], "aaa111")
+        self.assertIsNone(files["orphan.md"]["note_id"])
 
 
 if __name__ == "__main__":

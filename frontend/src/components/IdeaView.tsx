@@ -1,7 +1,6 @@
 import { P } from "../theme";
 import type { Idea } from "../types";
 import { Backdrop } from "./AskOverlay";
-import { Spinner } from "./Spinner";
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -26,31 +25,30 @@ function list(s: Record<string, unknown>, k: string): string[] {
 export function IdeaView({
   topic,
   idea,
-  loading,
   onClose,
   onRate,
+  onRegenerate,
 }: {
   topic: string;
   idea: Idea | null;
-  loading: boolean;
   onClose: () => void;
   onRate: (id: string, rating: number) => void;
+  onRegenerate: () => void;
 }) {
   return (
     <Backdrop onClose={onClose}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
         <span style={{ fontFamily: P.mono, fontSize: 12, color: P.accent }}>/idea</span>
         {topic && <span style={{ fontFamily: P.mono, fontSize: 12, color: P.lo }}>{topic}</span>}
-        <span onClick={onClose} style={{ marginLeft: "auto", fontFamily: P.mono, fontSize: 12, color: P.lo, cursor: "pointer" }}>
+        <span onClick={() => { onRegenerate(); onClose(); }} style={{ marginLeft: "auto", fontFamily: P.mono, fontSize: 11, color: P.accent, cursor: "pointer" }}>
+          generate another
+        </span>
+        <span onClick={onClose} style={{ fontFamily: P.mono, fontSize: 12, color: P.lo, cursor: "pointer" }}>
           esc
         </span>
       </div>
 
-      {loading ? (
-        <div style={{ marginTop: 16 }}>
-          <Spinner label="Synthesizing an idea from your notes…" />
-        </div>
-      ) : !idea ? null : (
+      {!idea ? null : (
         <>
           <h2 style={{ fontFamily: P.sans, fontSize: 20, fontWeight: 600, color: P.hi, margin: "8px 0 6px" }}>{idea.title}</h2>
           <p style={{ fontFamily: P.sans, fontSize: 14, color: P.mid, margin: 0, lineHeight: 1.6 }}>{idea.summary}</p>

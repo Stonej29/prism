@@ -1,26 +1,36 @@
+import { useState } from "react";
 import { P } from "../theme";
-import { Omnibar, type Dispatch } from "./Omnibar";
+import { Omnibar } from "./Omnibar";
+import { Lightbulb, type IdeaStatus } from "./Lightbulb";
+import { Spinner } from "./Spinner";
 
-function TopBtn({ children, onClick }: { children: React.ReactNode; onClick?: () => void }) {
-  return (
-    <span
-      onClick={onClick}
-      style={{
-        fontFamily: P.mono,
-        fontSize: 11,
-        color: P.mid,
-        padding: "5px 10px",
-        border: `1px solid ${P.line}`,
-        borderRadius: 6,
-        cursor: "pointer",
-      }}
-    >
-      {children}
-    </span>
-  );
-}
+export function TopBar({
+  busy,
+  saving,
+  ideaStatus,
+  onAsk,
+  onSave,
+  onLightbulb,
+}: {
+  busy: boolean;
+  saving: boolean;
+  ideaStatus: IdeaStatus;
+  onAsk: (q: string) => void;
+  onSave: (url: string) => void;
+  onLightbulb: () => void;
+}) {
+  const [saveOpen, setSaveOpen] = useState(false);
+  const [url, setUrl] = useState("");
 
-export function TopBar({ busy, onDispatch }: { busy: boolean; onDispatch: (d: Dispatch) => void }) {
+  const submitSave = () => {
+    const u = url.trim();
+    if (u) {
+      onSave(u);
+      setUrl("");
+      setSaveOpen(false);
+    }
+  };
+
   return (
     <div
       style={{
@@ -32,6 +42,8 @@ export function TopBar({ busy, onDispatch }: { busy: boolean; onDispatch: (d: Di
         alignItems: "center",
         padding: "0 16px",
         gap: 16,
+        position: "relative",
+        zIndex: 30,
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
@@ -50,10 +62,71 @@ export function TopBar({ busy, onDispatch }: { busy: boolean; onDispatch: (d: Di
           PRISM
         </span>
       </div>
-      <Omnibar busy={busy} onDispatch={onDispatch} />
-      <div style={{ display: "flex", gap: 8 }}>
-        <TopBtn onClick={() => onDispatch({ kind: "idea", text: "" })}>/idea</TopBtn>
+
+      <Omnibar busy={busy} onAsk={onAsk} />
+
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <Lightbulb status={ideaStatus} onClick={onLightbulb} />
+        <span
+          onClick={() => setSaveOpen((o) => !o)}
+          title="Save a URL"
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            width: 30,
+            height: 30,
+            borderRadius: 7,
+            border: `1px solid ${saveOpen ? P.accent : P.line}`,
+            background: saveOpen ? P.accentDim : P.bg2,
+            color: saveOpen ? P.accent : P.mid,
+            cursor: "pointer",
+            fontFamily: P.mono,
+            fontSize: 18,
+            lineHeight: 1,
+          }}
+        >
+          +
+        </span>
       </div>
+
+      {saveOpen && (
+        <div
+          style={{
+            position: "absolute",
+            top: 56,
+            right: 16,
+            zIndex: 31,
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            background: P.bg1,
+            border: `1px solid ${P.line}`,
+            borderRadius: 8,
+            padding: "8px 10px",
+            boxShadow: "0 16px 40px rgba(0,0,0,0.45)",
+            width: 380,
+          }}
+        >
+          <span style={{ fontFamily: P.mono, fontSize: 12, color: P.accent }}>url</span>
+          <input
+            autoFocus
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") submitSave();
+              if (e.key === "Escape") setSaveOpen(false);
+            }}
+            placeholder="https://…  (runs fetch → LLM → index)"
+            style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: P.hi, fontFamily: P.sans, fontSize: 13 }}
+          />
+          {saving ? <Spinner size={13} /> : (
+            <span onClick={submitSave} style={{ fontFamily: P.mono, fontSize: 11, color: P.accent, cursor: "pointer" }}>
+              save
+            </span>
+          )}
+        </div>
+      )}
     </div>
   );
 }

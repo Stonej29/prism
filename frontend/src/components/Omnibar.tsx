@@ -2,28 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import { P } from "../theme";
 import { Spinner } from "./Spinner";
 
-export type Command = "ask" | "find" | "idea" | "save";
-
-export interface Dispatch {
-  kind: Command;
-  text: string;
-}
-
-const URL_RE = /^https?:\/\/\S+$/i;
-
-function parse(raw: string): Dispatch | null {
-  const value = raw.trim();
-  if (!value) return null;
-  const m = value.match(/^\/(ask|find|idea|save)\s*(.*)$/is);
-  if (m) return { kind: m[1].toLowerCase() as Command, text: m[2].trim() };
-  if (URL_RE.test(value)) return { kind: "save", text: value };
-  return { kind: "find", text: value };
-}
-
-export function Omnibar({ busy, onDispatch }: { busy: boolean; onDispatch: (d: Dispatch) => void }) {
+export function Omnibar({ busy, onAsk }: { busy: boolean; onAsk: (q: string) => void }) {
   const [value, setValue] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
-  const parsed = parse(value);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -38,9 +19,9 @@ export function Omnibar({ busy, onDispatch }: { busy: boolean; onDispatch: (d: D
 
   const submit = () => {
     if (busy) return;
-    const d = parse(value);
-    if (d) {
-      onDispatch(d);
+    const q = value.trim();
+    if (q) {
+      onAsk(q);
       setValue("");
     }
   };
@@ -61,15 +42,13 @@ export function Omnibar({ busy, onDispatch }: { busy: boolean; onDispatch: (d: D
         padding: "0 12px",
       }}
     >
-      <span style={{ fontFamily: P.mono, fontSize: 12, color: P.accent }}>
-        {parsed ? `/${parsed.kind}` : "/"}
-      </span>
+      <span style={{ fontFamily: P.mono, fontSize: 12, color: P.accent }}>/ask</span>
       <input
         ref={inputRef}
         value={value}
         onChange={(e) => setValue(e.target.value)}
         onKeyDown={(e) => e.key === "Enter" && submit()}
-        placeholder="Ask, find, save a URL, or /idea a topic…"
+        placeholder="Ask a question grounded in your notes…"
         style={{
           flex: 1,
           background: "transparent",

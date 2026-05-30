@@ -14,6 +14,7 @@ export function GraphPane({
   selectedId,
   highlightIds,
   onSelect,
+  onDeselect,
 }: {
   graph: GraphPayload | null;
   sourceFilter: string | null;
@@ -21,6 +22,7 @@ export function GraphPane({
   selectedId: string | null;
   highlightIds: Set<string> | null;
   onSelect: (id: string) => void;
+  onDeselect: () => void;
 }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 800, h: 600 });
@@ -52,31 +54,46 @@ export function GraphPane({
   const { sim, tick, simRef } = useGraphSimulation(nodes, edges, size.w, size.h, layout);
   void tick; // re-render trigger
 
-  // ---- zoom / pan ----
-  const onWheel = (e: React.WheelEvent) => {
-    e.preventDefault();
-    const rect = wrapRef.current!.getBoundingClientRect();
-    const px = e.clientX - rect.left;
-    const py = e.clientY - rect.top;
-    const t = transformRef.current;
-    const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
-    const k = Math.max(0.25, Math.min(4, t.k * factor));
-    const x = px - ((px - t.x) / t.k) * k;
-    const y = py - ((py - t.y) / t.k) * k;
-    setTransform({ k, x, y });
-  };
+  // ---- zoom (native non-passive wheel so only the graph zooms, never the page) ----
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const rect = el.getBoundingClientRect();
+      const px = e.clientX - rect.left;
+      const py = e.clientY - rect.top;
+      const t = transformRef.current;
+      const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+      const k = Math.max(0.25, Math.min(4, t.k * factor));
+      const x = px - ((px - t.x) / t.k) * k;
+      const y = py - ((py - t.y) / t.k) * k;
+      setTransform({ k, x, y });
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, []);
 
+  // ---- pan (and distinguish a click from a drag for deselect) ----
   const panRef = useRef<{ sx: number; sy: number; ox: number; oy: number } | null>(null);
+  const movedRef = useRef(false);
   const onBgDown = (e: React.PointerEvent) => {
     if (e.button !== 0) return;
+    movedRef.current = false;
     panRef.current = { sx: e.clientX, sy: e.clientY, ox: transform.x, oy: transform.y };
     (e.target as Element).setPointerCapture(e.pointerId);
   };
   const onBgMove = (e: React.PointerEvent) => {
     if (!panRef.current) return;
-    setTransform((t) => ({ ...t, x: panRef.current!.ox + (e.clientX - panRef.current!.sx), y: panRef.current!.oy + (e.clientY - panRef.current!.sy) }));
+    const dx = e.clientX - panRef.current.sx;
+    const dy = e.clientY - panRef.current.sy;
+    if (Math.abs(dx) + Math.abs(dy) > 3) movedRef.current = true;
+    setTransform((t) => ({ ...t, x: panRef.current!.ox + dx, y: panRef.current!.oy + dy }));
   };
   const onBgUp = () => (panRef.current = null);
+  const onBgClick = () => {
+    if (!movedRef.current) onDeselect();
+  };
 
   const zoomBy = (factor: number) => {
     const t = transformRef.current;
@@ -118,7 +135,10 @@ export function GraphPane({
   };
 
   return (
-    <div ref={wrapRef} style={{ flex: 1, position: "relative", background: P.bg0, overflow: "hidden" }}>
+    <div
+      ref={wrapRef}
+      style={{ flex: 1, position: "relative", background: P.bg0, overflow: "hidden", touchAction: "none", overscrollBehavior: "contain" }}
+    >
       {/* toolbar */}
       <div
         style={{
@@ -190,10 +210,10 @@ export function GraphPane({
       <svg
         width={size.w}
         height={size.h}
-        onWheel={onWheel}
         onPointerDown={onBgDown}
         onPointerMove={onBgMove}
         onPointerUp={onBgUp}
+        onClick={onBgClick}
         style={{ display: "block", cursor: panRef.current ? "grabbing" : "grab" }}
       >
         <g transform={`translate(${transform.x},${transform.y}) scale(${transform.k})`}>

@@ -30,6 +30,8 @@ export function NotePane({
   note,
   loading,
   busy,
+  open,
+  onToggle,
   onSelectRelated,
   onReprocess,
   onDelete,
@@ -38,6 +40,8 @@ export function NotePane({
   note: NoteDetail | null;
   loading: boolean;
   busy: boolean;
+  open: boolean;
+  onToggle: () => void;
   onSelectRelated: (id: string) => void;
   onReprocess: (id: string) => void;
   onDelete: (id: string) => void;
@@ -58,9 +62,24 @@ export function NotePane({
         minHeight: 0,
       }}
     >
+      <div style={{ display: "flex", alignItems: "center", height: 28, padding: "0 10px", flexShrink: 0 }}>
+        <span onClick={onToggle} title="Collapse" style={{ cursor: "pointer", padding: 4 }}>
+          <svg width="14" height="14" viewBox="0 0 14 14"><path d="M5 3l4 4-4 4" fill="none" stroke={P.lo} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
+        </span>
+      </div>
       {children}
     </div>
   );
+
+  if (!open) {
+    return (
+      <div style={{ width: 32, flexShrink: 0, borderLeft: `1px solid ${P.line}`, background: P.bg1, display: "flex", flexDirection: "column", alignItems: "center", paddingTop: 10 }}>
+        <span onClick={onToggle} title="Show note" style={{ cursor: "pointer", padding: 6 }}>
+          <svg width="14" height="14" viewBox="0 0 14 14"><path d="M9 3L5 7l4 4" fill="none" stroke={P.mid} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
+        </span>
+      </div>
+    );
+  }
 
   if (loading) return wrap(<div style={{ padding: 24 }}><Spinner label="Loading note…" /></div>);
   if (!note)

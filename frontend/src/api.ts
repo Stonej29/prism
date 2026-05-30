@@ -8,6 +8,7 @@ import type {
   NoteSummary,
   Stats,
   TagCount,
+  TreeNode,
 } from "./types";
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
@@ -64,6 +65,10 @@ export const api = {
     req<NoteDetail>(`/notes/${id}/tags`, { method: "PUT", body: JSON.stringify({ tags }) }),
 
   tags: () => req<{ items: TagCount[] }>(`/tags`),
+
+  tree: () => req<TreeNode>(`/tree`),
+
+  idea: (id: string) => req<Idea>(`/ideas/${id}`),
 
   stats: () => req<Stats>(`/stats`),
 

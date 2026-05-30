@@ -1,138 +1,165 @@
+import { useState } from "react";
 import { P, srcColor, srcLabel } from "../theme";
-import type { GraphPayload, Stats, TagCount } from "../types";
+import type { GraphPayload, Stats, TagCount, TreeNode } from "../types";
+import { FileTree } from "./FileTree";
 
 const RAIL = 264;
 const KNOWN_SOURCES = ["paper", "github", "pdf", "website"];
 
-function TreeHead({ children }: { children: React.ReactNode }) {
-  return (
-    <div
-      style={{
-        fontFamily: P.mono,
-        fontSize: 10,
-        letterSpacing: 1.2,
-        color: P.faint,
-        textTransform: "uppercase",
-        padding: "14px 12px 6px",
-      }}
-    >
-      {children}
-    </div>
-  );
+function Mono({ children, c = P.mid }: { children: React.ReactNode; c?: string }) {
+  return <span style={{ fontFamily: P.mono, fontSize: 11, color: c }}>{children}</span>;
 }
 
-function TreeRow({
-  label,
-  count,
-  color,
-  glyph,
-  active,
-  indent = 0,
-  onClick,
-}: {
-  label: string;
-  count?: number | null;
-  color?: string;
-  glyph?: string;
-  active?: boolean;
-  indent?: number;
-  onClick?: () => void;
-}) {
+function SectionHead({ children, open, onClick }: { children: React.ReactNode; open?: boolean; onClick?: () => void }) {
   return (
     <div
       onClick={onClick}
       style={{
         display: "flex",
         alignItems: "center",
-        gap: 9,
-        padding: "6px 10px",
-        paddingLeft: 12 + indent,
-        borderRadius: 6,
-        background: active ? P.accentDim : "transparent",
-        cursor: "pointer",
-        color: active ? P.hi : P.mid,
+        gap: 6,
+        fontFamily: P.mono,
+        fontSize: 10,
+        letterSpacing: 1.2,
+        color: P.faint,
+        textTransform: "uppercase",
+        padding: "12px 12px 6px",
+        cursor: onClick ? "pointer" : "default",
       }}
+    >
+      {onClick && (
+        <svg width="9" height="9" viewBox="0 0 10 10" style={{ transform: open ? "rotate(90deg)" : "none" }}>
+          <path d="M3 2l4 3-4 3" fill="none" stroke={P.faint} strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      )}
+      {children}
+    </div>
+  );
+}
+
+function FilterRow({ label, count, color, glyph, active, onClick }: { label: string; count?: number; color?: string; glyph?: string; active?: boolean; onClick?: () => void }) {
+  return (
+    <div
+      onClick={onClick}
+      style={{ display: "flex", alignItems: "center", gap: 9, padding: "5px 10px", paddingLeft: 14, borderRadius: 6, background: active ? P.accentDim : "transparent", cursor: "pointer", color: active ? P.hi : P.mid }}
     >
       {color ? (
         <span style={{ width: 7, height: 7, borderRadius: "50%", background: color, flexShrink: 0 }} />
       ) : (
         <span style={{ fontFamily: P.mono, fontSize: 11, color: P.lo, width: 7, textAlign: "center" }}>{glyph}</span>
       )}
-      <span style={{ fontFamily: P.sans, fontSize: 13, flex: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-        {label}
-      </span>
+      <span style={{ fontFamily: P.sans, fontSize: 13, flex: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{label}</span>
       {count != null && <span style={{ fontFamily: P.mono, fontSize: 11, color: P.lo }}>{count}</span>}
     </div>
   );
 }
 
-function Mono({ children, c = P.mid }: { children: React.ReactNode; c?: string }) {
-  return <span style={{ fontFamily: P.mono, fontSize: 11, color: c }}>{children}</span>;
-}
-
 export function TreePane({
+  open,
+  onToggle,
+  tree,
+  noteKind,
+  selectedNoteId,
   graph,
   tags,
   stats,
   sourceFilter,
   activeTag,
+  searchActive,
+  onSelectNote,
+  onOpenIdea,
+  onSearch,
   onSelectSource,
   onSelectTag,
 }: {
+  open: boolean;
+  onToggle: () => void;
+  tree: TreeNode | null;
+  noteKind: Record<string, string>;
+  selectedNoteId: string | null;
   graph: GraphPayload | null;
   tags: TagCount[];
   stats: Stats | null;
   sourceFilter: string | null;
   activeTag: string | null;
+  searchActive: boolean;
+  onSelectNote: (id: string) => void;
+  onOpenIdea: (id: string) => void;
+  onSearch: (q: string) => void;
   onSelectSource: (s: string | null) => void;
   onSelectTag: (t: string) => void;
 }) {
+  const [query, setQuery] = useState("");
+  const [filtersOpen, setFiltersOpen] = useState(false);
+
+  if (!open) {
+    return (
+      <div style={{ width: 32, flexShrink: 0, borderRight: `1px solid ${P.line}`, background: P.bg1, display: "flex", flexDirection: "column", alignItems: "center", paddingTop: 10 }}>
+        <span onClick={onToggle} title="Show explorer" style={{ cursor: "pointer", padding: 6 }}>
+          <svg width="14" height="14" viewBox="0 0 14 14"><path d="M5 3l4 4-4 4" fill="none" stroke={P.mid} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
+        </span>
+      </div>
+    );
+  }
+
   const counts: Record<string, number> = {};
   for (const n of graph?.nodes ?? []) counts[n.source_kind] = (counts[n.source_kind] ?? 0) + 1;
-  const total = graph?.nodes.length ?? 0;
   const indexed = stats?.notes.embedding_indexed ?? 0;
   const healthy = stats?.index_configured && (stats?.notes.embedding_failed ?? 0) === 0;
 
+  const submit = () => {
+    if (query.trim()) onSearch(query.trim());
+  };
+
   return (
-    <div
-      style={{
-        width: RAIL,
-        flexShrink: 0,
-        borderRight: `1px solid ${P.line}`,
-        background: P.bg1,
-        display: "flex",
-        flexDirection: "column",
-      }}
-    >
-      <div style={{ flex: 1, overflowY: "auto", padding: "2px 8px" }}>
-        <TreeHead>Library</TreeHead>
-        <TreeRow glyph="◇" label="All notes" count={total} active={!sourceFilter && !activeTag} onClick={() => onSelectSource(null)} />
+    <div style={{ width: RAIL, flexShrink: 0, borderRight: `1px solid ${P.line}`, background: P.bg1, display: "flex", flexDirection: "column", minHeight: 0 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 12px 6px" }}>
+        <span style={{ fontFamily: P.mono, fontSize: 10, letterSpacing: 1.2, color: P.faint, textTransform: "uppercase" }}>Explorer</span>
+        <span onClick={onToggle} title="Collapse" style={{ cursor: "pointer" }}>
+          <svg width="14" height="14" viewBox="0 0 14 14"><path d="M9 3L5 7l4 4" fill="none" stroke={P.lo} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
+        </span>
+      </div>
 
-        <TreeHead>By source</TreeHead>
-        {KNOWN_SOURCES.map((kind) => (
-          <TreeRow
-            key={kind}
-            color={srcColor(kind)}
-            label={`${srcLabel(kind)} ${kind === "paper" ? "papers" : kind === "github" ? "repos" : kind === "pdf" ? "files" : "sites"}`}
-            count={counts[kind] ?? 0}
-            active={sourceFilter === kind}
-            onClick={() => onSelectSource(sourceFilter === kind ? null : kind)}
+      <div style={{ padding: "2px 12px 8px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, height: 32, background: searchActive ? P.accentDim : P.bg2, border: `1px solid ${searchActive ? P.accent : P.line}`, borderRadius: 7, padding: "0 10px" }}>
+          <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke={P.lo} strokeWidth="1.5"><circle cx="5.5" cy="5.5" r="4" /><path d="M9 9l3 3" strokeLinecap="round" /></svg>
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && submit()}
+            placeholder="Search notes…  (/find)"
+            style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: P.hi, fontFamily: P.sans, fontSize: 12.5 }}
           />
-        ))}
+          {searchActive && (
+            <span onClick={() => { setQuery(""); onSearch(""); }} title="Clear" style={{ fontFamily: P.mono, fontSize: 11, color: P.lo, cursor: "pointer" }}>×</span>
+          )}
+        </div>
+      </div>
 
-        <TreeHead>Tags</TreeHead>
-        {tags.slice(0, 14).map((t) => (
-          <TreeRow
-            key={t.tag}
-            glyph="≈"
-            label={t.tag}
-            count={t.count}
-            active={activeTag === t.tag}
-            onClick={() => onSelectTag(t.tag)}
-          />
-        ))}
-        {tags.length === 0 && (
-          <div style={{ padding: "6px 12px", fontFamily: P.sans, fontSize: 12, color: P.faint }}>No tags yet.</div>
+      <div style={{ flex: 1, overflowY: "auto" }}>
+        <FileTree root={tree} selectedNoteId={selectedNoteId} noteKind={noteKind} onSelectNote={onSelectNote} onOpenIdea={onOpenIdea} />
+
+        <SectionHead open={filtersOpen} onClick={() => setFiltersOpen((o) => !o)}>Filters</SectionHead>
+        {filtersOpen && (
+          <div style={{ padding: "0 4px 8px" }}>
+            <FilterRow glyph="◇" label="All notes" active={!sourceFilter && !activeTag} onClick={() => onSelectSource(null)} />
+            <div style={{ fontFamily: P.mono, fontSize: 9, letterSpacing: 1, color: P.faint, padding: "8px 12px 4px" }}>BY SOURCE</div>
+            {KNOWN_SOURCES.map((kind) => (
+              <FilterRow
+                key={kind}
+                color={srcColor(kind)}
+                label={srcLabel(kind)}
+                count={counts[kind] ?? 0}
+                active={sourceFilter === kind}
+                onClick={() => onSelectSource(sourceFilter === kind ? null : kind)}
+              />
+            ))}
+            <div style={{ fontFamily: P.mono, fontSize: 9, letterSpacing: 1, color: P.faint, padding: "8px 12px 4px" }}>TAGS</div>
+            {tags.slice(0, 12).map((t) => (
+              <FilterRow key={t.tag} glyph="≈" label={t.tag} count={t.count} active={activeTag === t.tag} onClick={() => onSelectTag(t.tag)} />
+            ))}
+            {tags.length === 0 && <div style={{ padding: "4px 14px", fontFamily: P.sans, fontSize: 12, color: P.faint }}>No tags yet.</div>}
+          </div>
         )}
       </div>
 
