@@ -1,6 +1,6 @@
 import { P } from "../theme";
 
-export function Spinner({ size = 16, label }: { size?: number; label?: string }) {
+export function Spinner({ size = 16, label, color = P.accent }: { size?: number; label?: string; color?: string }) {
   return (
     <span style={{ display: "inline-flex", alignItems: "center", gap: 9 }}>
       <span
@@ -8,7 +8,7 @@ export function Spinner({ size = 16, label }: { size?: number; label?: string })
           width: size,
           height: size,
           border: `2px solid ${P.line}`,
-          borderTopColor: P.accent,
+          borderTopColor: color,
           borderRadius: "50%",
           display: "inline-block",
           animation: "prism-spin 0.7s linear infinite",

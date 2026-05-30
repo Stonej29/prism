@@ -44,7 +44,8 @@ export interface GraphNode {
   source_kind: string;
   overall: number | null;
   tags: string[];
-  cluster: string;
+  topic: number;
+  community: number;
 }
 
 export interface GraphEdge {
@@ -56,8 +57,8 @@ export interface GraphEdge {
 export interface GraphPayload {
   nodes: GraphNode[];
   edges: GraphEdge[];
-  clusters: string[];
-  counts: { notes: number; links: number; clusters: number };
+  topic_labels: Record<string, string>;
+  counts: { notes: number; links: number; topics: number; communities: number };
 }
 
 export interface TagCount {

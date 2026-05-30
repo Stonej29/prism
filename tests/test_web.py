@@ -120,7 +120,10 @@ class WebApiTest(unittest.TestCase):
         self.assertEqual(graph["counts"]["notes"], 2)
         self.assertEqual(graph["counts"]["links"], 1)
         self.assertEqual(sorted(graph["edges"][0][k] for k in ("source", "target")), ["aaa111", "bbb222"])
-        self.assertEqual(set(graph["clusters"]), {"paper", "github"})
+        # the two linked notes form one community; nodes carry topic + community
+        self.assertEqual(graph["counts"]["communities"], 1)
+        self.assertEqual({n["community"] for n in graph["nodes"]}, {0})
+        self.assertTrue(all("topic" in n for n in graph["nodes"]))
 
     def test_tags_and_stats(self) -> None:
         self.db.insert_note(make_note("aaa111", tags=["graph", "rag"]))

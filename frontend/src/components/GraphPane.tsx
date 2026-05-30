@@ -200,10 +200,11 @@ export function GraphPane({
           })}
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
           <Mono c={P.mid}>layout</Mono>
-          {(["force", "cluster"] as LayoutMode[]).map((m) => (
+          {([["force", "force"], ["topic", "topics"], ["link", "links"]] as [LayoutMode, string][]).map(([m, label]) => (
             <span
               key={m}
               onClick={() => setLayout(m)}
+              title={m === "topic" ? "Group by embedding similarity" : m === "link" ? "Group by related-note links" : "Force-directed"}
               style={{
                 fontFamily: P.mono,
                 fontSize: 11,
@@ -214,7 +215,7 @@ export function GraphPane({
                 cursor: "pointer",
               }}
             >
-              {m}
+              {label}
             </span>
           ))}
         </div>
@@ -331,7 +332,9 @@ export function GraphPane({
       <div style={{ position: "absolute", bottom: 16, left: 16, zIndex: 6, display: "flex", gap: 8 }}>
         <div style={{ background: `${P.bg1}dd`, border: `1px solid ${P.line}`, borderRadius: 8, padding: "7px 12px" }}>
           <Mono>
-            {sim.nodes.length} notes · {sim.links.length} links · {graph?.counts.clusters ?? 0} clusters
+            {sim.nodes.length} notes · {sim.links.length} links ·{" "}
+            {new Set(nodes.map((n) => (layout === "link" ? n.community : n.topic))).size}{" "}
+            {layout === "link" ? "communities" : "topics"}
           </Mono>
         </div>
         {highlightIds && (

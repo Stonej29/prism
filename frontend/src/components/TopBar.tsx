@@ -70,8 +70,8 @@ export function TopBar({
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <Lightbulb status={ideaStatus} onClick={onLightbulb} />
         <span
-          onClick={() => setSaveOpen((o) => !o)}
-          title="Save a URL"
+          onClick={() => !saving && setSaveOpen((o) => !o)}
+          title={saving ? "Saving…" : "Save a URL"}
           style={{
             display: "inline-flex",
             alignItems: "center",
@@ -79,16 +79,16 @@ export function TopBar({
             width: 30,
             height: 30,
             borderRadius: 7,
-            border: `1px solid ${saveOpen ? P.accent : P.line}`,
-            background: saveOpen ? P.accentDim : P.bg2,
-            color: saveOpen ? P.accent : P.mid,
-            cursor: "pointer",
+            border: `1px solid ${saving || saveOpen ? P.accent : P.line}`,
+            background: saving || saveOpen ? P.accentDim : P.bg2,
+            color: saving || saveOpen ? P.accent : P.mid,
+            cursor: saving ? "default" : "pointer",
             fontFamily: P.mono,
             fontSize: 18,
             lineHeight: 1,
           }}
         >
-          +
+          {saving ? <Spinner size={14} /> : "+"}
         </span>
       </div>
 

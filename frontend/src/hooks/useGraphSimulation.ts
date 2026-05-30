@@ -24,7 +24,7 @@ export interface SimLink extends SimulationLinkDatum<SimNode> {
   reason: string;
 }
 
-export type LayoutMode = "force" | "cluster";
+export type LayoutMode = "force" | "topic" | "link";
 
 interface SimState {
   nodes: SimNode[];
@@ -64,22 +64,25 @@ export function useGraphSimulation(
     stateRef.current = { nodes: simNodes, links: simLinks };
 
     const sim = forceSimulation(simNodes)
+      .velocityDecay(0.6) // more friction → nodes glide to new positions instead of snapping
+      .alphaDecay(0.015) // ease in over a longer, gentler settle
       .force("charge", forceManyBody().strength(-220))
       .force("link", forceLink<SimNode, SimLink>(simLinks).id((d) => d.id).distance(90).strength(0.5))
       .force("collide", forceCollide<SimNode>().radius((d) => nodeRadius(d.overall) + 6))
       .force("center", forceCenter(width / 2, height / 2));
 
-    if (layout === "cluster") {
-      const clusters = [...new Set(simNodes.map((n) => n.cluster))];
-      const centroid = (c: string) => {
-        const i = clusters.indexOf(c);
-        const angle = (i / Math.max(clusters.length, 1)) * Math.PI * 2;
+    if (layout !== "force") {
+      const groupOf = (n: SimNode) => (layout === "topic" ? n.topic : n.community);
+      const groups = [...new Set(simNodes.map(groupOf))];
+      const centroid = (g: number) => {
+        const i = groups.indexOf(g);
+        const angle = (i / Math.max(groups.length, 1)) * Math.PI * 2;
         const radius = Math.min(width, height) * 0.3;
         return { x: width / 2 + Math.cos(angle) * radius, y: height / 2 + Math.sin(angle) * radius };
       };
       sim
-        .force("x", forceX<SimNode>((d) => centroid(d.cluster).x).strength(0.25))
-        .force("y", forceY<SimNode>((d) => centroid(d.cluster).y).strength(0.25))
+        .force("x", forceX<SimNode>((d) => centroid(groupOf(d)).x).strength(0.12))
+        .force("y", forceY<SimNode>((d) => centroid(groupOf(d)).y).strength(0.12))
         .force("charge", forceManyBody().strength(-120));
     }
 

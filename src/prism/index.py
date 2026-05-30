@@ -101,6 +101,27 @@ class NoteIndexer:
     def search_related(self, record: NoteRecord, *, limit: int = 10) -> list[RelatedCandidate]:
         return self.search_text(canonical_index_text(record), limit=limit, exclude_note_id=record.note_id)
 
+    def all_vectors(self) -> dict[str, list[float]]:
+        """Return {note_id: vector} for every indexed note (used for clustering)."""
+        table = self._open_table()
+        if table is None:
+            return {}
+        try:
+            rows = table.to_arrow().to_pylist()
+        except Exception:
+            return {}
+        out: dict[str, list[float]] = {}
+        for row in rows:
+            nid = row.get("note_id")
+            vec = row.get("vector")
+            if nid is None or vec is None:
+                continue
+            try:
+                out[str(nid)] = [float(x) for x in vec]
+            except (TypeError, ValueError):
+                continue
+        return out
+
     def index_is_empty(self) -> bool:
         table = self._open_table()
         if table is None:
