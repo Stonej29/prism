@@ -26,6 +26,27 @@ sudo docker compose up -d --force-recreate
 sudo docker compose logs -f prism
 ```
 
+Run the web UI (FastAPI + React three-pane "Atlas" interface) via Docker:
+```sh
+docker compose build prism-web
+sudo docker compose up -d prism-web   # serves on http://localhost:8000
+```
+
+Develop the web UI locally (FastAPI on :8000, Vite dev server on :5173 proxying /api):
+```sh
+# Terminal 1 — API (shares runtime/ with the bot)
+PYTHONPATH=src SQLITE_PATH=runtime/prism.sqlite3 LANCEDB_PATH=runtime/lancedb \
+  VAULT_PATH=runtime/research-vault ARCHIVE_PATH=runtime/archives \
+  PRISM_WEB_RELOAD=1 python -m prism.web
+# Terminal 2 — frontend
+cd frontend && npm install && npm run dev
+```
+
+Build the frontend bundle (type-checked):
+```sh
+cd frontend && npm run build   # outputs frontend/dist, served by FastAPI in prod
+```
+
 Rebuild the LanceDB semantic index from SQLite:
 ```sh
 PYTHONPATH=src SQLITE_PATH=runtime/prism.sqlite3 LANCEDB_PATH=runtime/lancedb python -m prism.index rebuild
@@ -79,6 +100,17 @@ Telegram message → handle_message → NoteService.save_url
 - **LanceDB is a cache**: SQLite and Markdown files are the source of truth. The index can be fully rebuilt from SQLite at any time via `python -m prism.index rebuild`.
 - **LLM provider compatibility**: falls back to a request without `response_format` if the provider returns HTTP 400.
 
+### Web UI (`src/prism/web/` + `frontend/`)
+
+A separate FastAPI service (entry point `prism-web` / `python -m prism.web`) puts a REST API in front of the same service layer the bot uses, and serves a React/Vite three-pane "Atlas" interface (directory tree · force-directed note graph · note detail). It is a **distinct process/container** (`prism-web` in `compose.yaml`) sharing the same `runtime/` volume; the Telegram bot is untouched.
+
+- `web/deps.py` builds the service singletons (`PrismDatabase`, `NoteIndexer`, `NoteService`, `IdeaService`) lazily, mirroring `PrismBot.__init__`, and exposes them as FastAPI `Depends` providers (overridable in tests via `app.dependency_overrides`). `load_settings(require_telegram=False)` lets the web app boot without a Telegram token.
+- Route handlers are plain `def` (not `async def`) so blocking/LLM service calls run in FastAPI's threadpool. `PrismDatabase.connect()` opens a fresh connection per call, so the singleton is thread-safe.
+- `web/serializers.py` turns frozen `NoteRecord`/`IdeaRecord` dataclasses into JSON DTOs by **reusing** the helpers in `notes.py` (`scores_for_record`, `tags_for_record`, `structured_summary`, `related_notes_for_record`) — never re-parsing the `*_json` columns by hand.
+- `web/graph.py` builds the graph payload: nodes = notes, edges = deduped undirected pairs from each note's `related_notes_json` (dangling refs dropped), clusters = `source_kind`.
+- Endpoints live under `/api` (`web/routes/`): notes (list/detail/save/reprocess/retry/delete/edit-tags), graph, tags, stats, find, ask, ideas (list/generate/rate/delete). In production `app.py` mounts the built `frontend/dist` as a SPA at `/` (via `PRISM_WEB_STATIC`, default `/app/static` in Docker).
+- API tests: `tests/test_web.py` (FastAPI `TestClient` against a seeded temp DB with unconfigured LLM/indexer).
+
 ## Environment
 
 Copy `.env.example` to `.env`. Required:
@@ -88,5 +120,8 @@ Copy `.env.example` to `.env`. Required:
 Optional (each service degrades gracefully if unset):
 - `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL` — LLM note generation (default base URL: OpenRouter)
 - `EMBEDDING_BASE_URL` / `EMBEDDING_API_KEY` / `EMBEDDING_MODEL` — semantic indexing (default base URL: OpenAI)
+
+Web UI only (the bot ignores these; `prism-web` does not require the Telegram vars):
+- `PRISM_WEB_HOST` (default `0.0.0.0`) / `PRISM_WEB_PORT` (default `8000`) / `PRISM_WEB_RELOAD` (`1` for uvicorn auto-reload) / `PRISM_WEB_STATIC` (path to the built `frontend/dist`; default `/app/static` in Docker)
 
 Runtime data lives in `runtime/` (Docker volume mount) and is intentionally excluded from this repo. The Obsidian vault at `runtime/research-vault` is its own separate git repo.

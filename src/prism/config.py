@@ -21,13 +21,13 @@ class Settings:
     lancedb_path: Path
 
 
-def load_settings() -> Settings:
+def load_settings(*, require_telegram: bool = True) -> Settings:
     token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
-    if not token:
+    if require_telegram and not token:
         raise RuntimeError("TELEGRAM_BOT_TOKEN is required. Copy .env.example to .env and set it.")
 
     allowed_user_ids = _parse_allowed_user_ids(os.getenv("TELEGRAM_ALLOWED_USER_IDS", ""))
-    if not allowed_user_ids:
+    if require_telegram and not allowed_user_ids:
         raise RuntimeError("TELEGRAM_ALLOWED_USER_IDS is required. Use comma-separated numeric Telegram user IDs.")
 
     return Settings(

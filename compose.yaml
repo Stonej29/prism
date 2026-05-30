@@ -8,3 +8,17 @@ services:
     volumes:
       - ./runtime:/data:z
     restart: unless-stopped
+
+  prism-web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    user: "${PRISM_UID:-1000}:${PRISM_GID:-1000}"
+    env_file:
+      - path: .env
+        required: false
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./runtime:/data:z
+    restart: unless-stopped

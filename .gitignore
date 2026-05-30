@@ -5,6 +5,10 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 
+# Frontend build artifacts and dependencies.
+node_modules/
+frontend/dist/
+
 # Local private data and generated runtime state.
 runtime/
 *.sqlite
@@ -14,3 +18,4 @@ runtime/
 *.log
 archives/
 logs/
+*.tsbuildinfo

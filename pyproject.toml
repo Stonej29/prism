@@ -15,10 +15,14 @@ dependencies = [
   "trafilatura>=2.0.0,<3",
   "PyMuPDF>=1.25.0,<2",
   "lancedb>=0.18.0,<0.19",
+  "fastapi>=0.115,<0.116",
+  "uvicorn[standard]>=0.30,<0.35",
+  "pydantic>=2.7,<3",
 ]
 
 [project.scripts]
 prism-bot = "prism.bot:main"
+prism-web = "prism.web.__main__:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
