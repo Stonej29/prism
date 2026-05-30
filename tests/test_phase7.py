@@ -12,6 +12,7 @@ from prism.embedding import EmbeddingConfig
 from prism.fetch import (
     FetchResult,
     detect_source_kind,
+    extract_read_more_links,
     fetch_source,
     fetch_upload,
     parse_youtube_id,
@@ -123,6 +124,23 @@ class HuggingFaceFetchTests(unittest.TestCase):
             self.assertIs(result, sentinel)
             called_url = mock_arxiv.call_args[0][0]
             self.assertEqual(called_url, "https://arxiv.org/abs/2106.01345")
+
+
+class ReadMoreLinkTests(unittest.TestCase):
+    def test_extracts_read_more_targets_only(self) -> None:
+        html = """
+        <p>Item one <a href="https://github.com/o/r">Read more</a></p>
+        <p>Item two <a href="/relative/path">Read more →</a></p>
+        <p><a href="https://sponsor.com/x">Use my link for 12% OFF</a></p>
+        <p>Item three <a href="https://a.com"><span>read more</span></a></p>
+        <p>dup <a href="https://github.com/o/r">Read more</a></p>
+        """
+        links = extract_read_more_links(html, "https://blog.com/post")
+        self.assertEqual(links, [
+            "https://github.com/o/r",
+            "https://blog.com/relative/path",  # relative resolved against base
+            "https://a.com",                    # text inside nested span still matches
+        ])
 
 
 class UploadFetchTests(unittest.TestCase):

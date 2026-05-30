@@ -329,11 +329,15 @@ export default function App() {
         saving={saving}
         ideaStatus={ideaJob.status}
         pendingProposals={proposals.pending}
+        ingesting={proposals.runningJob === "ingest"}
+        maintaining={proposals.runningJob === "traverse"}
         onAsk={onAsk}
         onFind={onFind}
         onSave={onSave}
         onLightbulb={onLightbulb}
         onProposals={openProposals}
+        onPullFeeds={runIngest}
+        onRunMaintenance={runTraverse}
       />
       <div style={{ flex: 1, display: "flex", minHeight: 0, position: "relative" }}>
         <TreePane
@@ -407,12 +411,9 @@ export default function App() {
             proposals={proposals.items}
             loading={proposals.loading}
             busyId={proposals.busyId}
-            runningJob={proposals.runningJob}
             onClose={() => setProposals((p) => ({ ...p, open: false }))}
             onApprove={(id) => resolveProposal(id, "approve")}
             onReject={(id) => resolveProposal(id, "reject")}
-            onRunIngest={runIngest}
-            onRunTraverse={runTraverse}
           />
         )}
         {openFile && <FileViewer file={openFile} onClose={() => setOpenFile(null)} />}

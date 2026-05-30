@@ -716,6 +716,30 @@ def _iframe_sources(html: str) -> list[str]:
     return parser.sources
 
 
+def extract_read_more_links(html: str, base_url: str) -> list[str]:
+    """Return the targets of "Read more"-style anchors in a digest/newsletter post.
+
+    Roundup posts label each item with a `<a ...>Read more</a>` link pointing at the
+    underlying repo / project page / paper; those are the substantive links worth
+    saving (the post itself is not). Deduped, resolved against base_url, http(s) only.
+    """
+    parser = _ReadMoreLinkExtractor()
+    parser.feed(html)
+    links: list[str] = []
+    seen: set[str] = set()
+    for href in parser.links:
+        url = urljoin(base_url, href)
+        if not url.startswith(("http://", "https://")) or url in seen:
+            continue
+        seen.add(url)
+        links.append(url)
+    return links
+
+
+def _is_read_more(text: str) -> bool:
+    return text.strip().lower().lstrip("→▸»·- ").startswith("read more")
+
+
 def _same_site(base_url: str, candidate_url: str) -> bool:
     base = urlparse(base_url)
     candidate = urlparse(candidate_url)
@@ -814,6 +838,32 @@ class _IframeSourceExtractor(HTMLParser):
         src = attr_map.get("src")
         if src:
             self.sources.append(src)
+
+
+class _ReadMoreLinkExtractor(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.links: list[str] = []
+        self._href: str | None = None
+        self._parts: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag == "a":
+            attr_map = {key.lower(): value for key, value in attrs if value is not None}
+            self._href = attr_map.get("href")
+            self._parts = []
+
+    def handle_data(self, data: str) -> None:
+        if self._href is not None:
+            self._parts.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "a" and self._href is not None:
+            text = re.sub(r"\s+", " ", "".join(self._parts)).strip()
+            if _is_read_more(text):
+                self.links.append(self._href)
+            self._href = None
+            self._parts = []
 
 
 class _SimpleHTMLTextExtractor(HTMLParser):

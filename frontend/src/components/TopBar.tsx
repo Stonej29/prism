@@ -9,21 +9,29 @@ export function TopBar({
   saving,
   ideaStatus,
   pendingProposals,
+  ingesting,
+  maintaining,
   onAsk,
   onFind,
   onSave,
   onLightbulb,
   onProposals,
+  onPullFeeds,
+  onRunMaintenance,
 }: {
   busy: boolean;
   saving: boolean;
   ideaStatus: IdeaStatus;
   pendingProposals: number;
+  ingesting: boolean;
+  maintaining: boolean;
   onAsk: (q: string) => void;
   onFind: (q: string) => void;
   onSave: (url: string) => void;
   onLightbulb: () => void;
   onProposals: () => void;
+  onPullFeeds: () => void;
+  onRunMaintenance: () => void;
 }) {
   const [saveOpen, setSaveOpen] = useState(false);
   const [url, setUrl] = useState("");
@@ -73,26 +81,25 @@ export function TopBar({
 
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <span
+          onClick={() => !ingesting && onPullFeeds()}
+          title="Pull configured feeds now"
+          style={iconBtnStyle(ingesting, ingesting)}
+        >
+          {ingesting ? <Spinner size={14} /> : "⭳"}
+        </span>
+        <span
+          onClick={() => !maintaining && onRunMaintenance()}
+          title="Run graph maintenance now (links, tags, merge proposals)"
+          style={iconBtnStyle(maintaining, maintaining)}
+        >
+          {maintaining ? <Spinner size={14} /> : "⚙"}
+        </span>
+        <span
           onClick={onProposals}
           title="Review graph maintenance proposals"
-          style={{
-            position: "relative",
-            display: "inline-flex",
-            alignItems: "center",
-            justifyContent: "center",
-            width: 30,
-            height: 30,
-            borderRadius: 7,
-            border: `1px solid ${pendingProposals > 0 ? P.accent : P.line}`,
-            background: pendingProposals > 0 ? P.accentDim : P.bg2,
-            color: pendingProposals > 0 ? P.accent : P.mid,
-            cursor: "pointer",
-            fontFamily: P.mono,
-            fontSize: 14,
-            lineHeight: 1,
-          }}
+          style={{ ...iconBtnStyle(false, pendingProposals > 0), position: "relative" }}
         >
-          ⤬
+          ⚑
           {pendingProposals > 0 && (
             <span
               style={{
@@ -180,4 +187,23 @@ export function TopBar({
       )}
     </div>
   );
+}
+
+function iconBtnStyle(busy: boolean, accent: boolean): React.CSSProperties {
+  const lit = busy || accent;
+  return {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    width: 30,
+    height: 30,
+    borderRadius: 7,
+    border: `1px solid ${lit ? P.accent : P.line}`,
+    background: lit ? P.accentDim : P.bg2,
+    color: lit ? P.accent : P.mid,
+    cursor: busy ? "default" : "pointer",
+    fontFamily: P.mono,
+    fontSize: 15,
+    lineHeight: 1,
+  };
 }

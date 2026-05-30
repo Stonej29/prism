@@ -33,6 +33,7 @@ class FeedSpec:
     type: str
     url: str
     max_items: int = DEFAULT_MAX_ITEMS
+    posts: int = 3  # digest feeds only: how many newest posts to expand into their read-more links
     input_source: str = "ai_search"
 
 
@@ -85,10 +86,15 @@ def _parse_feed(item: object) -> FeedSpec | None:
         max_items = max(1, int(item.get("max", DEFAULT_MAX_ITEMS)))
     except (TypeError, ValueError):
         max_items = DEFAULT_MAX_ITEMS
+    try:
+        posts = max(1, int(item.get("posts", 3)))
+    except (TypeError, ValueError):
+        posts = 3
     return FeedSpec(
         type=feed_type,
         url=url,
         max_items=max_items,
+        posts=posts,
         input_source=_str(item.get("input_source"), "ai_search"),
     )
 

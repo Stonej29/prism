@@ -88,6 +88,33 @@ class FeedAdapterTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             feed_item_urls(FeedSpec(type="atomish", url="https://ex.com/feed"), get_bytes=lambda *a, **k: (b"", "", None))
 
+    def test_digest_follows_read_more_links(self) -> None:
+        rss = b"""<?xml version="1.0"?><rss version="2.0"><channel>
+          <item><link>https://blog.com/p/one</link></item>
+          <item><link>https://blog.com/p/two</link></item>
+        </channel></rss>"""
+        post1 = b'<a href="https://github.com/a/b">Read more</a><a href="https://x.com">subscribe</a>'
+        post2 = b'<a href="https://huggingface.co/m">Read more</a>'
+
+        def fake_get(url, headers=None):
+            if url.endswith("/feed"):
+                return rss, url, "application/rss+xml"
+            if url.endswith("/one"):
+                return post1, url, "text/html"
+            if url.endswith("/two"):
+                return post2, url, "text/html"
+            return b"", url, None
+
+        spec = FeedSpec(type="digest", url="https://blog.com/feed", posts=2)
+        self.assertEqual(
+            feed_item_urls(spec, get_bytes=fake_get),
+            ["https://github.com/a/b", "https://huggingface.co/m"],  # read-more targets, not the posts
+        )
+
+        # posts=1 expands only the newest post.
+        spec1 = FeedSpec(type="digest", url="https://blog.com/feed", posts=1)
+        self.assertEqual(feed_item_urls(spec1, get_bytes=fake_get), ["https://github.com/a/b"])
+
 
 class _FakeNotes:
     def __init__(self, behaviors: dict[str, str]) -> None:

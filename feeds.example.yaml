@@ -4,9 +4,17 @@
 # feeds configured.
 
 feeds:
-  - type: rss
+  # "rss": save each feed entry's own link (one note per entry).
+  #   - type: rss
+  #     url: https://some-single-topic-blog.com/feed
+  #     max: 20
+  #
+  # "digest": for roundup newsletters where each post links to many items,
+  # follow the "Read more" links (repos / papers / project pages) and save each
+  # as its own note — one tech per note — instead of the digest post itself.
+  - type: digest
     url: https://aisearch.substack.com/feed
-    max: 10
+    posts: 3          # expand the newest 3 posts each run
     # input_source tags how these notes entered PRISM (default: ai_search).
     input_source: ai_search
 
