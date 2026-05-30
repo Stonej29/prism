@@ -30,6 +30,7 @@ class NoteRecord:
     title: str
     summary: str
     source_kind: str = "unknown"
+    input_source: str = "unknown"
     local_archive: str | None = None
     pdf_path: str | None = None
     content_hash: str | None = None
@@ -130,12 +131,12 @@ class PrismDatabase:
                 """
                 INSERT INTO notes (
                     note_id, source_url, resolved_url, note_path, date_saved, status, title, summary,
-                    source_kind, local_archive, pdf_path, content_hash, fetch_status, fetch_error,
+                    source_kind, input_source, local_archive, pdf_path, content_hash, fetch_status, fetch_error,
                     fetched_at, metadata_json, llm_status, llm_error, llm_generated_at, llm_model,
                     tags_json, scores_json, structured_summary_json, embedding_status, embedding_error,
                     embedded_at, embedding_model, embedding_dimensions, embedding_text_hash, related_notes_json
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record.note_id,
@@ -147,6 +148,7 @@ class PrismDatabase:
                     record.title,
                     record.summary,
                     record.source_kind,
+                    record.input_source,
                     record.local_archive,
                     record.pdf_path,
                     record.content_hash,
@@ -177,7 +179,7 @@ class PrismDatabase:
                 """
                 UPDATE notes
                 SET source_url = ?, resolved_url = ?, note_path = ?, date_saved = ?, status = ?,
-                    title = ?, summary = ?, source_kind = ?, local_archive = ?, pdf_path = ?,
+                    title = ?, summary = ?, source_kind = ?, input_source = ?, local_archive = ?, pdf_path = ?,
                     content_hash = ?, fetch_status = ?, fetch_error = ?, fetched_at = ?,
                     metadata_json = ?, llm_status = ?, llm_error = ?, llm_generated_at = ?,
                     llm_model = ?, tags_json = ?, scores_json = ?, structured_summary_json = ?,
@@ -194,6 +196,7 @@ class PrismDatabase:
                     record.title,
                     record.summary,
                     record.source_kind,
+                    record.input_source,
                     record.local_archive,
                     record.pdf_path,
                     record.content_hash,
@@ -314,6 +317,16 @@ class PrismDatabase:
             ).fetchall()
         records = [_row_to_record(row) for row in rows]
         return [r for r in records if tag in _parse_tags_json(r.tags_json)]
+
+    def list_notes_by_input_source(self, input_source: str, limit: int, offset: int = 0) -> list[NoteRecord]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"""SELECT {_NOTE_COLUMNS} FROM notes
+                    WHERE input_source = ?
+                    ORDER BY date_saved DESC LIMIT ? OFFSET ?""",
+                (input_source, limit, offset),
+            ).fetchall()
+        return [_row_to_record(row) for row in rows]
 
     def search_notes_keyword(self, query: str, limit: int) -> list[NoteRecord]:
         terms = _keyword_terms(query)
@@ -492,7 +505,7 @@ class PrismDatabase:
 
 _NOTE_COLUMNS = """
     note_id, source_url, resolved_url, note_path, date_saved, status, title, summary,
-    source_kind, local_archive, pdf_path, content_hash, fetch_status, fetch_error, fetched_at, metadata_json,
+    source_kind, input_source, local_archive, pdf_path, content_hash, fetch_status, fetch_error, fetched_at, metadata_json,
     llm_status, llm_error, llm_generated_at, llm_model, tags_json, scores_json, structured_summary_json,
     embedding_status, embedding_error, embedded_at, embedding_model, embedding_dimensions,
     embedding_text_hash, related_notes_json
@@ -500,6 +513,7 @@ _NOTE_COLUMNS = """
 
 _ADDED_COLUMNS = {
     "source_kind": "TEXT NOT NULL DEFAULT 'unknown'",
+    "input_source": "TEXT NOT NULL DEFAULT 'unknown'",
     "local_archive": "TEXT",
     "pdf_path": "TEXT",
     "content_hash": "TEXT",
@@ -568,6 +582,7 @@ def _row_to_record(row: sqlite3.Row) -> NoteRecord:
         title=row["title"],
         summary=row["summary"],
         source_kind=row["source_kind"],
+        input_source=row["input_source"],
         local_archive=row["local_archive"],
         pdf_path=row["pdf_path"],
         content_hash=row["content_hash"],

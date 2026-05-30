@@ -13,12 +13,16 @@ from urllib.parse import urlparse
 import yaml
 
 from prism.db import NoteRecord, PrismDatabase
-from prism.fetch import FetchResult, extract_website_text, fetch_source
+from prism.fetch import FetchResult, extract_website_text, fetch_source, fetch_upload
 from prism.index import NoteIndexer, RelatedCandidate, canonical_index_text
 from prism.llm import LLMClient, LLMConfig, build_ask_context, build_llm_context
 
 URL_RE = re.compile(r"https?://[^\s<>()]+", re.IGNORECASE)
 PREVIEW_LIMIT = 1500
+# Per-note caps for /ask context so large retrieval K cannot blow the context window.
+ASK_QUICK_LIMIT = 600
+ASK_DETAILED_LIMIT = 1200
+ASK_CLAIM_LIMIT = 300
 SCORE_FIELDS = ("relevance", "novelty", "credibility", "actionability", "interest", "overall")
 DEFAULT_PROFILE = """# Personal Profile
 
@@ -102,14 +106,31 @@ class NoteService:
         self.archive_path.mkdir(parents=True, exist_ok=True)
         ensure_profile(self.profile_path)
 
-    def save_url(self, source_url: str) -> SaveResult:
+    def save_url(self, source_url: str, input_source: str = "telegram") -> SaveResult:
         existing = self.database.find_by_source_url(source_url)
         if existing:
             return SaveResult(record=existing, created=False, duplicate_reason="source_url")
 
-        saved_at = datetime.now(UTC).replace(microsecond=0)
         note_id = self._new_note_id()
         fetch = fetch_source(source_url, self.archive_path, note_id)
+        return self._persist_fetch(source_url, fetch, note_id, input_source)
+
+    def save_upload(
+        self,
+        filename: str,
+        data: bytes,
+        content_type: str | None = None,
+        input_source: str = "telegram",
+    ) -> SaveResult:
+        note_id = self._new_note_id()
+        fetch = fetch_upload(data, filename, self.archive_path, note_id, content_type)
+        existing = self.database.find_by_source_url(fetch.source_url)
+        if existing:
+            return SaveResult(record=existing, created=False, duplicate_reason="source_url")
+        return self._persist_fetch(fetch.source_url, fetch, note_id, input_source)
+
+    def _persist_fetch(self, source_url: str, fetch: FetchResult, note_id: str, input_source: str) -> SaveResult:
+        saved_at = datetime.now(UTC).replace(microsecond=0)
 
         duplicate = self.database.find_by_content_hash(fetch.content_hash)
         if duplicate:
@@ -131,6 +152,7 @@ class NoteService:
             title=title,
             summary=summary,
             source_kind=fetch.source_kind,
+            input_source=input_source,
             local_archive=fetch.local_archive,
             pdf_path=fetch.pdf_path,
             content_hash=fetch.content_hash,
@@ -308,12 +330,12 @@ class NoteService:
         quick = _string_field(structured, "quick_summary") or (record.summary if record else candidate.summary)
         detailed = _string_field(structured, "detailed_summary")
         claims = structured.get("key_claims")
-        key_claims = [str(c).strip() for c in claims if str(c).strip()] if isinstance(claims, list) else []
+        key_claims = [str(c).strip()[:ASK_CLAIM_LIMIT] for c in claims if str(c).strip()] if isinstance(claims, list) else []
         return {
             "id": candidate.note_id,
             "title": record.title if record else candidate.title,
-            "quick_summary": quick,
-            "detailed_summary": detailed,
+            "quick_summary": _truncate(quick, ASK_QUICK_LIMIT),
+            "detailed_summary": _truncate(detailed, ASK_DETAILED_LIMIT),
             "key_claims": key_claims[:5],
             "tags": tags_for_record(record) if record else candidate.tags,
             "source_url": record.source_url if record else candidate.source_url,
@@ -493,6 +515,7 @@ def render_note(record: NoteRecord, extracted_text: str = "") -> str:
         "date_saved": record.date_saved,
         "date_processed": record.fetched_at,
         "source_kind": record.source_kind,
+        "input_source": record.input_source,
         "local_archive": record.local_archive,
         "pdf_path": record.pdf_path,
         "content_hash": record.content_hash,
@@ -645,6 +668,12 @@ def related_notes_for_record(record: NoteRecord) -> list[dict[str, str]]:
         if note_id:
             normalized.append({"id": note_id, "title": title, "reason": reason, "path": path})
     return normalized
+
+
+def _truncate(text: str, limit: int) -> str:
+    if not text or len(text) <= limit:
+        return text
+    return text[:limit].rstrip() + "..."
 
 
 def extracted_preview(text: str) -> str:

@@ -18,6 +18,7 @@ router = APIRouter(prefix="/notes", tags=["notes"])
 @router.get("")
 def list_notes(
     source: str | None = None,
+    input_source: str | None = None,
     tag: str | None = None,
     limit: int = 50,
     offset: int = 0,
@@ -25,6 +26,8 @@ def list_notes(
 ) -> dict:
     if tag:
         records = db.list_notes_by_tag(tag, limit, offset)
+    elif input_source:
+        records = db.list_notes_by_input_source(input_source, limit, offset)
     elif source:
         filtered = [r for r in gather_all_notes(db) if r.source_kind == source]
         records = filtered[offset : offset + limit]
@@ -43,7 +46,7 @@ def get_note(note_id: str, db: PrismDatabase = Depends(get_db)) -> dict:
 
 @router.post("")
 def save_url(body: SaveUrlBody, notes: NoteService = Depends(get_notes)) -> dict:
-    result = notes.save_url(body.url.strip())
+    result = notes.save_url(body.url.strip(), body.input_source.strip() or "web_ui")
     return {
         "created": result.created,
         "duplicate_reason": result.duplicate_reason,

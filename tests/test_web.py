@@ -102,6 +102,19 @@ class WebApiTest(unittest.TestCase):
         by_tag = self.client.get("/api/notes", params={"tag": "graph"}).json()
         self.assertEqual([n["id"] for n in by_tag["items"]], ["aaa111"])
 
+    def test_filter_by_input_source_and_dto(self) -> None:
+        import dataclasses
+
+        self.db.insert_note(dataclasses.replace(make_note("aaa111"), input_source="web_ui"))
+        self.db.insert_note(dataclasses.replace(make_note("bbb222"), input_source="ai_search"))
+
+        by_input = self.client.get("/api/notes", params={"input_source": "ai_search"}).json()
+        self.assertEqual([n["id"] for n in by_input["items"]], ["bbb222"])
+        self.assertEqual(by_input["items"][0]["input_source"], "ai_search")
+
+        detail = self.client.get("/api/notes/aaa111").json()
+        self.assertEqual(detail["input_source"], "web_ui")
+
     def test_note_detail_parses_json_columns(self) -> None:
         self.db.insert_note(make_note("aaa111", tags=["graph"], related=["bbb222"]))
         detail = self.client.get("/api/notes/aaa111").json()

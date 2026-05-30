@@ -4,11 +4,13 @@
 
 Send a URL and PRISM fetches it, archives the source, generates a rich LLM summary, embeds it into a semantic index, and saves an Obsidian-compatible Markdown note with tags, evaluation scores, and backlinks to related notes. Over time it becomes a personal research memory you can browse, search, and ask questions against — and generate new project ideas from. Drive it from Telegram, or from a graph-based [web interface](#web-interface).
 
-Supported source types: arXiv papers, GitHub repos, PDFs, and general websites.
+Supported source types: arXiv papers, GitHub repos, Hugging Face models/datasets/papers, YouTube videos (title + transcript), PDFs (by URL or uploaded directly to the bot), and general websites.
+
+Every note also records an `input_source` — how it entered PRISM (`telegram`, `web_ui`, `ai_search`, `scheduled`, …) — kept distinct from `source_kind` (what the content is), so pipelines and feeds can be filtered and tracked separately.
 
 ## What it does
 
-- **Save** — send any URL to the bot; it archives and processes it automatically
+- **Save** — send any URL (or upload a PDF) to the bot; it archives and processes it automatically
 - **Summarize** — LLM generates title, summary, key claims, limitations, tags, and scores
 - **Connect** — semantic search links each note to related ones via Obsidian backlinks
 - **Search** — `/find`, `/related`, and `/ask` let you query your knowledge base

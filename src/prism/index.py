@@ -12,6 +12,9 @@ from prism.db import NoteRecord, PrismDatabase
 from prism.embedding import EmbeddingClient, EmbeddingConfig
 
 TABLE_NAME = "notes"
+# Build an approximate-nearest-neighbour index once the corpus is large enough to
+# benefit; below this, LanceDB's exact flat scan is faster and create_index errors.
+ANN_INDEX_MIN_ROWS = 256
 
 
 @dataclass(frozen=True)
@@ -122,6 +125,32 @@ class NoteIndexer:
                 continue
         return out
 
+    def ensure_ann_index(self) -> bool:
+        """Create a vector ANN index once the table is large enough. Idempotent and non-fatal.
+
+        Below ANN_INDEX_MIN_ROWS the exact flat scan is faster, and create_index
+        would fail for lack of training data. Any failure is swallowed: search
+        still works via flat scan.
+        """
+        table = self._open_table()
+        if table is None:
+            return False
+        try:
+            if int(table.count_rows()) < ANN_INDEX_MIN_ROWS:
+                return False
+        except Exception:
+            return False
+        try:
+            if table.list_indices():
+                return False
+        except Exception:
+            pass
+        try:
+            table.create_index(metric="cosine", vector_column_name="vector")
+            return True
+        except Exception:
+            return False
+
     def index_is_empty(self) -> bool:
         table = self._open_table()
         if table is None:
@@ -165,6 +194,7 @@ class NoteIndexer:
         escaped = record.note_id.replace("'", "''")
         table.delete(f"note_id = '{escaped}'")
         table.add([row])
+        self.ensure_ann_index()
 
     def _search_vector(self, vector: list[float], *, limit: int, exclude_note_id: str | None) -> list[RelatedCandidate]:
         table = self._open_table()
@@ -243,6 +273,7 @@ def rebuild_index() -> tuple[int, int, int]:
             skipped += 1
         else:
             failed += 1
+    indexer.ensure_ann_index()
     return indexed, skipped, failed
 
 

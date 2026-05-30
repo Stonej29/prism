@@ -18,6 +18,7 @@ dependencies = [
   "fastapi>=0.115,<0.116",
   "uvicorn[standard]>=0.30,<0.35",
   "pydantic>=2.7,<3",
+  "youtube-transcript-api>=0.6.2,<2",
 ]
 
 [project.scripts]

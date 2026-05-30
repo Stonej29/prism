@@ -46,6 +46,10 @@ def fetch_source(source_url: str, archive_root: Path, note_id: str) -> FetchResu
             return _fetch_github_repo(source_url, archive_dir, fetched_at)
         if source_kind == "pdf":
             return _fetch_pdf(source_url, archive_dir, fetched_at, source_kind="pdf")
+        if source_kind == "youtube":
+            return _fetch_youtube(source_url, archive_dir, fetched_at)
+        if source_kind == "huggingface":
+            return _fetch_huggingface(source_url, archive_dir, fetched_at)
         return _fetch_website(source_url, archive_dir, fetched_at)
     except Exception as exc:  # Fetch failures should still produce a note.
         metadata = {"source_url": source_url, "error_type": type(exc).__name__}
@@ -75,11 +79,32 @@ def detect_source_kind(url: str) -> str:
         return "paper"
     if path.endswith(".pdf"):
         return "pdf"
+    if parse_youtube_id(url):
+        return "youtube"
+    if host in {"huggingface.co", "www.huggingface.co"} and _hf_kind(url):
+        return "huggingface"
     if host == "github.com" and _github_owner_repo(url):
         return "github"
     if parsed.scheme in {"http", "https"}:
         return "website"
     return "unknown"
+
+
+def parse_youtube_id(url: str) -> str | None:
+    parsed = urlparse(url)
+    host = parsed.netloc.lower()
+    if host == "youtu.be":
+        video_id = parsed.path.lstrip("/").split("/")[0]
+        return video_id or None
+    if host in {"youtube.com", "www.youtube.com", "m.youtube.com"}:
+        path = parsed.path
+        if path == "/watch":
+            video_id = parse_qs(parsed.query).get("v", [None])[0]
+            return video_id or None
+        match = re.match(r"/(?:shorts|embed|live|v)/([^/?#]+)", path)
+        if match:
+            return match.group(1) or None
+    return None
 
 
 def parse_arxiv_id(url: str) -> str | None:
@@ -168,6 +193,68 @@ def _fetch_pdf(source_url: str, archive_dir: Path, fetched_at: str, source_kind:
         fetched_at=fetched_at,
         metadata=metadata,
     )
+
+
+def fetch_upload(
+    data: bytes,
+    filename: str,
+    archive_root: Path,
+    note_id: str,
+    content_type: str | None = None,
+) -> FetchResult:
+    """Build a FetchResult from uploaded bytes (e.g. a Telegram document), no URL fetch."""
+    fetched_at = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    archive_dir = archive_root / note_id
+    safe_name = filename.strip() or "upload"
+    hashed = content_hash("", fallback_bytes=data) or hashlib.sha256(data or b"").hexdigest()
+    source_url = f"upload://{hashed[:16]}/{slugify_filename(safe_name)}"
+    try:
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        if len(data) > MAX_DOWNLOAD_BYTES:
+            raise ValueError(f"Upload exceeded {MAX_DOWNLOAD_BYTES} byte limit")
+        is_pdf = (content_type or "").lower().startswith("application/pdf") or safe_name.lower().endswith(".pdf")
+        if not is_pdf:
+            raise ValueError(f"Unsupported upload type: {content_type or safe_name}")
+        pdf_path = archive_dir / "source.pdf"
+        pdf_path.write_bytes(data)
+        extracted = _extract_pdf_text(data)
+        title = _title_from_filename(safe_name)
+        metadata = {"source_url": source_url, "filename": safe_name, "content_type": content_type, "upload": True}
+        _write_text(archive_dir / "extracted.txt", extracted)
+        _write_json(archive_dir / "metadata.json", metadata)
+        return FetchResult(
+            source_url=source_url,
+            resolved_url=source_url,
+            source_kind="pdf",
+            title=title,
+            summary=None,
+            extracted_text=extracted,
+            local_archive=str(archive_dir),
+            pdf_path=str(pdf_path),
+            content_hash=content_hash(extracted, fallback_bytes=data),
+            fetch_status="fetched",
+            fetch_error=None,
+            fetched_at=fetched_at,
+            metadata=metadata,
+        )
+    except Exception as exc:
+        metadata = {"source_url": source_url, "filename": safe_name, "error_type": type(exc).__name__, "upload": True}
+        _write_json(archive_dir / "metadata.json", metadata)
+        return FetchResult(
+            source_url=source_url,
+            resolved_url=source_url,
+            source_kind="pdf",
+            title=_title_from_filename(safe_name),
+            summary=None,
+            extracted_text="",
+            local_archive=str(archive_dir),
+            pdf_path=None,
+            content_hash=content_hash("", fallback_bytes=data),
+            fetch_status="failed",
+            fetch_error=str(exc)[:1000],
+            fetched_at=fetched_at,
+            metadata=metadata,
+        )
 
 
 def _fetch_github_repo(source_url: str, archive_dir: Path, fetched_at: str) -> FetchResult:
@@ -261,6 +348,184 @@ def _github_metadata_header(owner: str, repo: str, meta: dict[str, Any]) -> str:
         lines.append(f"Last updated: {meta['last_pushed']}")
     if meta.get("topics"):
         lines.append(f"Topics: {', '.join(meta['topics'])}")
+    return "\n".join(lines)
+
+
+def _fetch_youtube(source_url: str, archive_dir: Path, fetched_at: str) -> FetchResult:
+    video_id = parse_youtube_id(source_url)
+    if not video_id:
+        raise ValueError("Could not parse YouTube video id")
+
+    metadata: dict[str, Any] = {"source_url": source_url, "video_id": video_id}
+    title: str | None = None
+    summary: str | None = None
+    try:
+        oembed_url = f"https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={video_id}&format=json"
+        oembed_bytes, _, _ = _http_get_bytes(oembed_url)
+        oembed = json.loads(oembed_bytes.decode("utf-8"))
+        title = oembed.get("title")
+        metadata["author_name"] = oembed.get("author_name")
+        metadata["author_url"] = oembed.get("author_url")
+        summary = oembed.get("title")
+    except Exception as exc:
+        metadata["oembed_error"] = f"{type(exc).__name__}: {exc}"[:500]
+
+    transcript_text = ""
+    try:
+        transcript_text = _youtube_transcript(video_id)
+        if transcript_text:
+            _write_text(archive_dir / "transcript.txt", transcript_text)
+    except Exception as exc:
+        metadata["transcript_error"] = f"{type(exc).__name__}: {exc}"[:500]
+
+    header_lines = [f"YouTube video: {title or video_id}"]
+    if metadata.get("author_name"):
+        header_lines.append(f"Channel: {metadata['author_name']}")
+    header_lines.append(f"URL: https://www.youtube.com/watch?v={video_id}")
+    header = "\n".join(header_lines)
+    extracted = f"{header}\n\n{transcript_text}".strip() if transcript_text else header
+
+    _write_text(archive_dir / "extracted.txt", extracted)
+    _write_json(archive_dir / "metadata.json", metadata)
+    return FetchResult(
+        source_url=source_url,
+        resolved_url=f"https://www.youtube.com/watch?v={video_id}",
+        source_kind="youtube",
+        title=title or _title_from_url(source_url) or video_id,
+        summary=summary,
+        extracted_text=extracted,
+        local_archive=str(archive_dir),
+        pdf_path=None,
+        content_hash=content_hash(extracted),
+        fetch_status="fetched",
+        fetch_error=None,
+        fetched_at=fetched_at,
+        metadata=metadata,
+    )
+
+
+def _youtube_transcript(video_id: str) -> str:
+    from youtube_transcript_api import YouTubeTranscriptApi
+
+    segments = YouTubeTranscriptApi.get_transcript(video_id)
+    parts = [str(segment.get("text", "")).strip() for segment in segments]
+    return re.sub(r"\s+", " ", " ".join(part for part in parts if part)).strip()
+
+
+def _hf_kind(url: str) -> tuple[str, str] | None:
+    """Return (kind, repo_or_id) for a Hugging Face URL, else None.
+
+    kind is one of 'paper', 'dataset', 'model'.
+    """
+    parsed = urlparse(url)
+    if parsed.netloc.lower() not in {"huggingface.co", "www.huggingface.co"}:
+        return None
+    parts = [part for part in parsed.path.split("/") if part]
+    if not parts:
+        return None
+    if parts[0] == "papers" and len(parts) >= 2:
+        return "paper", parts[1]
+    if parts[0] == "datasets" and len(parts) >= 2:
+        return "dataset", "/".join(parts[1:3])
+    reserved = {"models", "spaces", "organizations", "settings", "docs", "blog", "join", "login", "pricing"}
+    if parts[0] in reserved:
+        return None
+    if len(parts) >= 2:
+        return "model", "/".join(parts[:2])
+    return None
+
+
+def _fetch_huggingface(source_url: str, archive_dir: Path, fetched_at: str) -> FetchResult:
+    parsed = _hf_kind(source_url)
+    if not parsed:
+        raise ValueError("Hugging Face URL is not a model, dataset, or paper URL")
+    kind, repo = parsed
+
+    if kind == "paper":
+        arxiv_url = f"https://arxiv.org/abs/{repo}"
+        return _fetch_arxiv(arxiv_url, archive_dir, fetched_at)
+
+    api_segment = "datasets" if kind == "dataset" else "models"
+    repo_meta = _fetch_huggingface_metadata(api_segment, repo)
+
+    raw_prefix = f"datasets/{repo}" if kind == "dataset" else repo
+    readme_url = f"https://huggingface.co/{raw_prefix}/raw/main/README.md"
+    readme_text = ""
+    try:
+        readme_bytes, _, _ = _http_get_bytes(readme_url)
+        readme_text = readme_bytes.decode("utf-8", errors="replace")
+        _write_text(archive_dir / "readme.md", readme_text)
+    except Exception as exc:
+        repo_meta["readme_error"] = f"{type(exc).__name__}: {exc}"[:500]
+
+    header = _huggingface_metadata_header(kind, repo, repo_meta)
+    extracted_text = f"{header}\n\n{readme_text}".strip() if readme_text else header
+
+    html_url = f"https://huggingface.co/{raw_prefix}"
+    metadata = {
+        "source_url": source_url,
+        "resolved_url": html_url,
+        "hf_kind": kind,
+        "repo": repo,
+        **{f"hf_{k}": v for k, v in repo_meta.items()},
+    }
+    _write_text(archive_dir / "extracted.txt", extracted_text)
+    _write_json(archive_dir / "metadata.json", metadata)
+    return FetchResult(
+        source_url=source_url,
+        resolved_url=html_url,
+        source_kind="huggingface",
+        title=repo,
+        summary=repo_meta.get("description") or (f"Hugging Face {kind}: {repo}"),
+        extracted_text=extracted_text,
+        local_archive=str(archive_dir),
+        pdf_path=None,
+        content_hash=content_hash(extracted_text),
+        fetch_status="fetched",
+        fetch_error=None,
+        fetched_at=fetched_at,
+        metadata=metadata,
+    )
+
+
+def _fetch_huggingface_metadata(api_segment: str, repo: str) -> dict[str, Any]:
+    try:
+        api_url = f"https://huggingface.co/api/{api_segment}/{repo}"
+        data_bytes, _, _ = _http_get_bytes(api_url)
+        data = json.loads(data_bytes.decode("utf-8"))
+        result: dict[str, Any] = {}
+        if isinstance(data.get("downloads"), int):
+            result["downloads"] = data["downloads"]
+        if isinstance(data.get("likes"), int):
+            result["likes"] = data["likes"]
+        if isinstance(data.get("pipeline_tag"), str) and data["pipeline_tag"]:
+            result["pipeline_tag"] = data["pipeline_tag"]
+        if isinstance(data.get("lastModified"), str):
+            result["last_modified"] = data["lastModified"][:10]
+        if isinstance(data.get("tags"), list):
+            result["tags"] = [t for t in data["tags"] if isinstance(t, str)][:20]
+        card = data.get("cardData") if isinstance(data.get("cardData"), dict) else {}
+        if isinstance(card.get("license"), str):
+            result["license"] = card["license"]
+        return result
+    except Exception:
+        return {}
+
+
+def _huggingface_metadata_header(kind: str, repo: str, meta: dict[str, Any]) -> str:
+    lines = [f"Hugging Face {kind}: {repo}"]
+    if meta.get("pipeline_tag"):
+        lines.append(f"Task: {meta['pipeline_tag']}")
+    if meta.get("downloads") is not None:
+        lines.append(f"Downloads: {meta['downloads']}")
+    if meta.get("likes") is not None:
+        lines.append(f"Likes: {meta['likes']}")
+    if meta.get("license"):
+        lines.append(f"License: {meta['license']}")
+    if meta.get("last_modified"):
+        lines.append(f"Last modified: {meta['last_modified']}")
+    if meta.get("tags"):
+        lines.append(f"Tags: {', '.join(meta['tags'])}")
     return "\n".join(lines)
 
 
@@ -517,6 +782,16 @@ def _title_from_url(url: str) -> str | None:
     parsed = urlparse(url)
     stem = Path(parsed.path).stem
     return re.sub(r"[-_]+", " ", stem).strip() or parsed.netloc or None
+
+
+def _title_from_filename(filename: str) -> str | None:
+    stem = Path(filename).stem
+    return re.sub(r"[-_]+", " ", stem).strip() or filename or None
+
+
+def slugify_filename(filename: str) -> str:
+    slug = re.sub(r"[^A-Za-z0-9._-]+", "-", filename).strip("-")
+    return slug[:120] or "upload"
 
 
 def _write_text(path: Path, text: str) -> None:

@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 class SaveUrlBody(BaseModel):
     url: str = Field(..., min_length=1)
+    input_source: str = Field(default="web_ui", min_length=1)
 
 
 class AskBody(BaseModel):

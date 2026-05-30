@@ -102,10 +102,42 @@ class PrismBot:
 
     async def _save_url_task(self, source_url: str, message) -> None:
         try:
-            result = await asyncio.to_thread(self.notes.save_url, source_url)
+            result = await asyncio.to_thread(self.notes.save_url, source_url, "telegram")
         except Exception as exc:
             LOGGER.exception("Background save_url failed for %s", source_url)
             await message.reply_text(f"Failed to save {source_url}: {type(exc).__name__}: {exc}")
+            return
+        record = result.record
+        if result.created:
+            await message.reply_text(self._saved_reply(record), parse_mode=HTML_PARSE_MODE)
+        else:
+            await message.reply_text(_already_saved_reply(record), parse_mode=HTML_PARSE_MODE)
+
+    async def handle_document(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        del context
+        if not await self._is_allowed(update):
+            return
+        message = update.effective_message
+        if not message or not message.document:
+            return
+        doc = message.document
+        filename = doc.file_name or "upload.pdf"
+        mime = doc.mime_type or ""
+        is_pdf = mime.lower().startswith("application/pdf") or filename.lower().endswith(".pdf")
+        if not is_pdf:
+            await message.reply_text("Only PDF documents are supported right now.")
+            return
+        await message.reply_text(f"Saving {filename}...")
+        asyncio.create_task(self._save_upload_task(doc.file_id, filename, mime, message))
+
+    async def _save_upload_task(self, file_id: str, filename: str, mime: str, message) -> None:
+        try:
+            tg_file = await message.get_bot().get_file(file_id)
+            data = bytes(await tg_file.download_as_bytearray())
+            result = await asyncio.to_thread(self.notes.save_upload, filename, data, mime, "telegram")
+        except Exception as exc:
+            LOGGER.exception("Background save_upload failed for %s", filename)
+            await message.reply_text(f"Failed to save {filename}: {type(exc).__name__}: {exc}")
             return
         record = result.record
         if result.created:
@@ -958,6 +990,7 @@ def build_application(settings: Settings) -> Application:
     application.add_handler(CallbackQueryHandler(bot.handle_delete_callback, pattern="^delete:"))
     application.add_handler(CallbackQueryHandler(bot.handle_page, pattern="^pg:"))
     application.add_handler(CallbackQueryHandler(bot.handle_semantic_page, pattern="^sp:"))
+    application.add_handler(MessageHandler(filters.Document.ALL, bot.handle_document))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot.handle_message))
     return application
 
