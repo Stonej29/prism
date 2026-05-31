@@ -251,7 +251,7 @@ class CliCore:
         return IngestResult(ok=True, message="Feed ingestion complete.", summary=summary)
 
     def traverse(self) -> TraversalSummary:
-        return run_graph_traversal(self.services)
+        return run_graph_traversal(self.services, load_worker_config().traversal)
 
     def reembed(self) -> ReembedSummary:
         return run_reembed(self.services)

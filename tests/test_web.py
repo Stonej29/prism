@@ -117,6 +117,31 @@ class WebApiTest(unittest.TestCase):
         detail = self.client.get("/api/notes/aaa111").json()
         self.assertEqual(detail["input_source"], "web_ui")
 
+    def test_maintenance_settings_round_trip(self) -> None:
+        import os
+
+        feeds = Path(self._tmp.name) / "feeds.yaml"
+        prev = os.environ.get("PRISM_FEEDS_PATH")
+        os.environ["PRISM_FEEDS_PATH"] = str(feeds)
+        try:
+            defaults = self.client.get("/api/maintenance/settings").json()
+            self.assertEqual(defaults["link_threshold"], 0.70)
+
+            saved = self.client.put("/api/maintenance/settings", json={"link_threshold": 0.8, "max_auto_links": 4}).json()
+            self.assertEqual(saved["link_threshold"], 0.8)
+            self.assertEqual(saved["max_auto_links"], 4)
+            self.assertEqual(saved["dup_threshold"], 0.92)  # untouched field preserved
+
+            # Persisted to the YAML and reloaded.
+            again = self.client.get("/api/maintenance/settings").json()
+            self.assertEqual(again["link_threshold"], 0.8)
+            self.assertIn("traversal", feeds.read_text())
+        finally:
+            if prev is None:
+                os.environ.pop("PRISM_FEEDS_PATH", None)
+            else:
+                os.environ["PRISM_FEEDS_PATH"] = prev
+
     def test_note_detail_parses_json_columns(self) -> None:
         self.db.insert_note(make_note("aaa111", tags=["graph"], related=["bbb222"]))
         detail = self.client.get("/api/notes/aaa111").json()

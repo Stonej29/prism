@@ -26,13 +26,10 @@ from datetime import UTC, datetime
 from prism.db import ProposalRecord
 from prism.proposals import KIND_MERGE, new_proposal_id
 from prism.services import Services
+from prism.worker.config import TraversalSettings
 
 LOGGER = logging.getLogger(__name__)
 
-LINK_THRESHOLD = 0.55          # cosine; a neighbour above this becomes an auto related link
-MAX_LINKS_PER_NOTE = 12        # cap total related links per note (LLM + auto)
-MAX_AUTO_LINKS = 8             # cap auto (semantic) links per note
-DUP_THRESHOLD = 0.92           # cosine; near-duplicate -> merge proposal
 MAX_PROPOSALS_PER_RUN = 25
 AUTO_ORIGIN = "auto"           # marks links this job manages (vs. LLM-chosen ones)
 
@@ -48,9 +45,10 @@ class TraversalSummary:
     duplicates_proposed: int = 0
 
 
-def run_graph_traversal(services: Services) -> TraversalSummary:
+def run_graph_traversal(services: Services, settings: TraversalSettings | None = None) -> TraversalSummary:
     indexer = services.indexer
     summary = TraversalSummary()
+    settings = settings or TraversalSettings()
 
     # Tag normalization needs only SQLite, so it runs even without embeddings.
     _normalize_tags(services, summary)
@@ -65,8 +63,8 @@ def run_graph_traversal(services: Services) -> TraversalSummary:
     if len(ids) >= 2:
         sim = _similarity_matrix([vectors[i] for i in ids])
         records = {nid: services.database.find_by_note_id(nid) for nid in ids}
-        _refresh_related_links(services, ids, sim, records, summary)
-        _detect_duplicate_proposals(services, ids, sim, records, summary)
+        _refresh_related_links(services, ids, sim, records, summary, settings)
+        _detect_duplicate_proposals(services, ids, sim, records, summary, settings)
 
     LOGGER.info(
         "Graph traversal: %d notes; links +%d/-%d across %d notes; tags merged %d across %d notes; %d duplicate proposals",
@@ -78,7 +76,7 @@ def run_graph_traversal(services: Services) -> TraversalSummary:
 
 # --- auto: related links (recompute, never pile up) -------------------------
 
-def _refresh_related_links(services, ids, sim, records, summary: TraversalSummary) -> None:
+def _refresh_related_links(services, ids, sim, records, summary: TraversalSummary, settings: TraversalSettings) -> None:
     for i, note_id in enumerate(ids):
         record = records.get(note_id)
         if record is None:
@@ -89,13 +87,13 @@ def _refresh_related_links(services, ids, sim, records, summary: TraversalSummar
         prev_auto_ids = {str(item.get("id")) for item in raw if item.get("origin") == AUTO_ORIGIN}
 
         auto: list[dict] = []
-        slots = min(MAX_AUTO_LINKS, MAX_LINKS_PER_NOTE - len(kept))
+        slots = min(settings.max_auto_links, settings.max_links_per_note - len(kept))
         for score, other_id in sorted(
             ((sim[i][j], ids[j]) for j in range(len(ids)) if j != i),
             key=lambda pair: pair[0],
             reverse=True,
         ):
-            if len(auto) >= slots or score < LINK_THRESHOLD:
+            if len(auto) >= slots or score < settings.link_threshold:
                 break
             if other_id in kept_ids:
                 continue
@@ -173,14 +171,14 @@ def _tag_key(tag: str) -> str:
 
 # --- proposals: near-duplicate notes ----------------------------------------
 
-def _detect_duplicate_proposals(services, ids, sim, records, summary: TraversalSummary) -> None:
+def _detect_duplicate_proposals(services, ids, sim, records, summary: TraversalSummary, settings: TraversalSettings) -> None:
     created = 0
     for i in range(len(ids)):
         for j in range(i + 1, len(ids)):
             if created >= MAX_PROPOSALS_PER_RUN:
                 summary.duplicates_proposed = created
                 return
-            if sim[i][j] < DUP_THRESHOLD:
+            if sim[i][j] < settings.dup_threshold:
                 continue
             keep_id, remove_id = _rank_pair(ids[i], ids[j], records)
             note_ids_json = json.dumps(sorted([keep_id, remove_id]), ensure_ascii=True)

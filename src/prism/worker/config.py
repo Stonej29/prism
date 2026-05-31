@@ -31,6 +31,19 @@ DEFAULT_MAX_ITEMS = 10
 
 
 @dataclass(frozen=True)
+class TraversalSettings:
+    """Tunable thresholds for graph maintenance (see worker/traversal.py).
+
+    Defaults err on the side of *fewer, stronger* links than the old fixed 0.55
+    cutoff so auto "related" edges stop being a stretch.
+    """
+    link_threshold: float = 0.70   # cosine; a neighbour above this becomes an auto link
+    max_links_per_note: int = 12   # cap total related links per note (LLM + auto)
+    max_auto_links: int = 6        # cap auto (semantic) links per note
+    dup_threshold: float = 0.92    # cosine; near-duplicate -> merge proposal
+
+
+@dataclass(frozen=True)
 class FeedSpec:
     type: str
     url: str
@@ -50,6 +63,7 @@ class WorkerConfig:
     traversal_enabled: bool = False
     backup_enabled: bool = False
     reembed_enabled: bool = False
+    traversal: TraversalSettings = field(default_factory=TraversalSettings)
 
 
 def feeds_path_from_env() -> Path:
@@ -82,7 +96,41 @@ def parse_worker_config(raw: dict) -> WorkerConfig:
         traversal_enabled=bool(raw.get("traversal_enabled", False)),
         backup_enabled=bool(raw.get("backup_enabled", False)),
         reembed_enabled=bool(raw.get("reembed_enabled", False)),
+        traversal=_parse_traversal(raw.get("traversal")),
     )
+
+
+def _parse_traversal(raw: object) -> TraversalSettings:
+    d = TraversalSettings()
+    if not isinstance(raw, dict):
+        return d
+    return TraversalSettings(
+        link_threshold=_float(raw.get("link_threshold"), d.link_threshold, 0.0, 1.0),
+        max_links_per_note=_int(raw.get("max_links_per_note"), d.max_links_per_note, 1, 50),
+        max_auto_links=_int(raw.get("max_auto_links"), d.max_auto_links, 0, 50),
+        dup_threshold=_float(raw.get("dup_threshold"), d.dup_threshold, 0.0, 1.0),
+    )
+
+
+def save_traversal_settings(settings: TraversalSettings, path: Path | None = None) -> None:
+    """Persist the traversal block into feeds.yaml, leaving feeds/schedule intact."""
+    path = path or feeds_path_from_env()
+    raw: dict = {}
+    if path.exists():
+        try:
+            loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                raw = loaded
+        except (OSError, yaml.YAMLError):
+            raw = {}
+    raw["traversal"] = {
+        "link_threshold": settings.link_threshold,
+        "max_links_per_note": settings.max_links_per_note,
+        "max_auto_links": settings.max_auto_links,
+        "dup_threshold": settings.dup_threshold,
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
 
 
 def _parse_feed(item: object) -> FeedSpec | None:
@@ -115,3 +163,17 @@ def _as_list(value: object) -> list:
 
 def _str(value: object, default: str) -> str:
     return value.strip() if isinstance(value, str) and value.strip() else default
+
+
+def _float(value: object, default: float, lo: float, hi: float) -> float:
+    try:
+        return min(hi, max(lo, float(value)))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return default
+
+
+def _int(value: object, default: int, lo: int, hi: int) -> int:
+    try:
+        return min(hi, max(lo, int(value)))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return default
