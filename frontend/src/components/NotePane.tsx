@@ -90,6 +90,7 @@ export function NotePane({
   onSelectRelated,
   onShowRelated,
   onReprocess,
+  onResearch,
   onDelete,
   onEditTags,
   onEditTitle,
@@ -108,6 +109,7 @@ export function NotePane({
   onSelectRelated: (id: string) => void;
   onShowRelated: (id: string) => void;
   onReprocess: (id: string) => void;
+  onResearch: (id: string) => void;
   onDelete: (id: string) => void;
   onEditTags: (id: string, tags: string[]) => void;
   onEditTitle: (id: string, title: string) => void;
@@ -370,6 +372,8 @@ export function NotePane({
             <Meta label="kind" value={note.source_kind} />
             {note.llm_model && <Meta label="model" value={note.llm_model} />}
             <Meta label="status" value={`fetch:${note.fetch_status} · llm:${note.llm_status} · embed:${note.embedding_status}`} />
+            {note.research_status && <Meta label="research" value={note.researched_at ? `${note.research_status} · ${note.researched_at}` : note.research_status} />}
+            {note.research_error && <Meta label="r.error" value={note.research_error} />}
             {note.embedding_dimensions != null && <Meta label="dims" value={String(note.embedding_dimensions)} />}
           </div>
         </Section>
@@ -377,8 +381,11 @@ export function NotePane({
 
       <div style={{ padding: "12px 20px", borderTop: `1px solid ${P.line}`, display: "flex", alignItems: "center", gap: 10 }}>
         {busy && <Spinner size={13} />}
-        <span onClick={() => !busy && onReprocess(note.id)} style={{ fontFamily: P.mono, fontSize: 11, color: P.mid, cursor: "pointer" }}>
+        <span onClick={() => !busy && onReprocess(note.id)} style={{ fontFamily: P.mono, fontSize: 11, color: P.mid, cursor: busy ? "default" : "pointer" }}>
           reprocess
+        </span>
+        <span onClick={() => !busy && onResearch(note.id)} title="Reprocess with OpenRouter web research" style={{ fontFamily: P.mono, fontSize: 11, color: P.accent, cursor: busy ? "default" : "pointer" }}>
+          research
         </span>
         <span
           onClick={() => !busy && confirm(`Delete "${note.title}"?`) && onDelete(note.id)}

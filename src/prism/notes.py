@@ -215,6 +215,61 @@ class NoteService:
             return ReprocessResult(record=updated, ok=True, message=f"Reprocessed: {updated.title}")
         return ReprocessResult(record=updated, ok=False, message=f"LLM {updated.llm_status}: {updated.llm_error or 'not generated'}")
 
+    def research_note(self, note_id: str) -> ReprocessResult:
+        record = self.database.find_by_note_id(note_id.strip().lower())
+        if not record:
+            return ReprocessResult(record=None, ok=False, message=f"No note found for {note_id}.")
+        if record.fetch_status != "fetched":
+            return ReprocessResult(record=record, ok=False, message=f"Cannot research {record.note_id}: fetch status is {record.fetch_status}.")
+        if not record.local_archive:
+            return ReprocessResult(record=record, ok=False, message=f"Cannot research {record.note_id}: no local archive recorded.")
+
+        extracted_path = Path(record.local_archive) / "extracted.txt"
+        if not extracted_path.exists():
+            return ReprocessResult(record=record, ok=False, message=f"Cannot research {record.note_id}: archived extracted.txt is missing.")
+
+        extracted_text = extracted_path.read_text(encoding="utf-8")
+        metadata = _json_object(record.metadata_json)
+        if not extracted_text.strip() and record.local_archive:
+            raw_path = Path(record.local_archive) / "raw.html"
+            if raw_path.exists():
+                _, recovered_text, recovered_metadata = extract_website_text(
+                    raw_path.read_text(encoding="utf-8"),
+                    record.resolved_url or record.source_url,
+                    Path(record.local_archive),
+                )
+                if recovered_text.strip():
+                    extracted_text = recovered_text
+                    extracted_path.write_text(extracted_text, encoding="utf-8")
+                    metadata = {**metadata, **recovered_metadata}
+
+        requested_at = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        metadata = {**metadata, "research_status": "running", "research_requested_at": requested_at}
+        working = replace(record, metadata_json=json.dumps(metadata, ensure_ascii=True, sort_keys=True))
+        updated = self._apply_llm(working, extracted_text, metadata, force=True, web=True)
+
+        metadata = _json_object(updated.metadata_json)
+        if updated.llm_status == "generated":
+            metadata.update({
+                "research_status": "generated",
+                "researched_at": updated.llm_generated_at or requested_at,
+                "research_error": None,
+            })
+        else:
+            metadata.update({
+                "research_status": "failed",
+                "research_error": updated.llm_error or updated.llm_status,
+            })
+        updated = replace(updated, metadata_json=json.dumps(metadata, ensure_ascii=True, sort_keys=True))
+
+        note_path = self.vault_path / updated.note_path
+        note_path.write_text(render_note(updated, extracted_text), encoding="utf-8")
+        self.database.update_note(updated)
+        updated = self._index_after_persist(updated)
+        if updated.llm_status == "generated":
+            return ReprocessResult(record=updated, ok=True, message=f"Researched: {updated.title}")
+        return ReprocessResult(record=updated, ok=False, message=f"Research LLM {updated.llm_status}: {updated.llm_error or 'not generated'}")
+
     def retry_failed(self, limit: int = 25) -> RetryFailedResult:
         records = self.database.list_failed_notes(limit)
         retried = repaired = failed = skipped = 0
@@ -521,7 +576,7 @@ class NoteService:
             "source_url": record.source_url if record else candidate.source_url,
         }
 
-    def _apply_llm(self, record: NoteRecord, extracted_text: str, metadata: dict[str, Any], force: bool = False) -> NoteRecord:
+    def _apply_llm(self, record: NoteRecord, extracted_text: str, metadata: dict[str, Any], force: bool = False, *, web: bool = False) -> NoteRecord:
         if record.fetch_status != "fetched":
             return replace(record, llm_status="skipped", llm_error="fetch did not succeed")
         if not self.llm_config.is_configured:
@@ -543,7 +598,13 @@ class NoteService:
                 extracted_text=extracted_text,
                 related_candidates=[candidate.to_llm_dict() for candidate in related_candidates],
             )
-            generation = LLMClient(self.llm_config).generate_note(context, self.profile_path.read_text(encoding="utf-8"))
+            if web:
+                context["research_request"] = (
+                    "Use OpenRouter web search to enrich this saved source with current, external context. "
+                    "Keep the normal PRISM JSON shape, preserve uncertainty, and separate claims grounded in the "
+                    "saved source from extra context discovered on the web."
+                )
+            generation = LLMClient(self.llm_config).generate_note(context, self.profile_path.read_text(encoding="utf-8"), web=web)
             structured = normalize_structured_summary(generation.data, related_candidates)
             title = clean_title(_string_field(structured, "title")) or record.title
             summary = _string_field(structured, "quick_summary") or record.summary

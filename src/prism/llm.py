@@ -43,16 +43,16 @@ class LLMClient:
     def __init__(self, config: LLMConfig) -> None:
         self.config = config
 
-    def generate_note(self, context: dict[str, Any], profile: str) -> LLMGeneration:
+    def generate_note(self, context: dict[str, Any], profile: str, *, web: bool = False) -> LLMGeneration:
         if not self.config.is_configured:
             raise RuntimeError("LLM_API_KEY and LLM_MODEL are required")
 
-        payload = self._payload(context, profile, use_response_format=True)
+        payload = self._payload(context, profile, use_response_format=True, web=web)
         try:
             data = self._post(payload)
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code == 400:
-                data = self._post(self._payload(context, profile, use_response_format=False))
+                data = self._post(self._payload(context, profile, use_response_format=False, web=web))
             else:
                 raise
 
@@ -161,7 +161,7 @@ class LLMClient:
             time.sleep(RETRY_BACKOFF_BASE * (2 ** attempt))
         raise last_exc  # pragma: no cover - loop either returns or raises
 
-    def _payload(self, context: dict[str, Any], profile: str, use_response_format: bool) -> dict[str, Any]:
+    def _payload(self, context: dict[str, Any], profile: str, use_response_format: bool, *, web: bool = False) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "model": self.config.model,
             "temperature": 0.2,
@@ -173,6 +173,8 @@ class LLMClient:
         }
         if use_response_format:
             payload["response_format"] = {"type": "json_object"}
+        if web:
+            payload["plugins"] = [{"id": "web"}]
         return payload
 
     def _merge_payload(self, context: dict[str, Any], profile: str, use_response_format: bool) -> dict[str, Any]:

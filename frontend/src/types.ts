@@ -32,6 +32,9 @@ export interface NoteDetail {
   llm_model: string | null;
   embedding_status: string;
   embedding_dimensions: number | null;
+  research_status: string | null;
+  researched_at: string | null;
+  research_error: string | null;
   scores: Record<string, number>;
   tags: string[];
   structured_summary: Record<string, unknown>;

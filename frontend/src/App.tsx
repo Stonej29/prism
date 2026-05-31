@@ -240,6 +240,20 @@ export default function App() {
     }
   };
 
+  const onResearch = async (id: string) => {
+    setPaneBusy(true);
+    try {
+      const res = await api.research(id);
+      setNote(res.note);
+      setToast(res.message);
+      await refreshData();
+    } catch (e) {
+      setToast(String(e));
+    } finally {
+      setPaneBusy(false);
+    }
+  };
+
   const onDelete = async (id: string) => {
     setPaneBusy(true);
     try {
@@ -471,6 +485,7 @@ export default function App() {
           onSelectRelated={selectNote}
           onShowRelated={onShowRelated}
           onReprocess={onReprocess}
+          onResearch={onResearch}
           onDelete={onDelete}
           onEditTags={onEditTags}
           onEditTitle={onEditTitle}
