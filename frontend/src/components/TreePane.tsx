@@ -87,6 +87,7 @@ export function TreePane({
   onDateFrom,
   onDateTo,
   onMinScore,
+  onJob,
 }: {
   open: boolean;
   onToggle: () => void;
@@ -112,6 +113,7 @@ export function TreePane({
   onDateFrom: (v: string) => void;
   onDateTo: (v: string) => void;
   onMinScore: (v: number) => void;
+  onJob: () => void;
 }) {
   const [query, setQuery] = useState("");
   const [filtersOpen, toggleFilters] = usePersistentToggle("prism.tree.filters", false);
@@ -177,6 +179,7 @@ export function TreePane({
         {filtersOpen && (
           <div style={{ padding: "0 4px 8px" }}>
             <FilterRow glyph="◇" label="All notes" active={!sourceFilter && !activeTag} onClick={() => onSelectSource(null)} />
+            <FilterRow glyph="★" label="Job-relevant" count={(graph?.nodes ?? []).filter((n) => n.job_relevant).length} onClick={onJob} />
             <div style={{ fontFamily: P.mono, fontSize: 9, letterSpacing: 1, color: P.faint, padding: "8px 12px 4px" }}>BY SOURCE</div>
             {KNOWN_SOURCES.map((kind) => (
               <FilterRow

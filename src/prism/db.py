@@ -66,6 +66,7 @@ class NoteRecord:
     embedding_dimensions: int | None = None
     embedding_text_hash: str | None = None
     related_notes_json: str | None = None
+    job_relevant: int = 0
 
 
 @dataclass(frozen=True)
@@ -159,9 +160,10 @@ class PrismDatabase:
                     source_kind, input_source, local_archive, pdf_path, content_hash, fetch_status, fetch_error,
                     fetched_at, metadata_json, llm_status, llm_error, llm_generated_at, llm_model,
                     tags_json, scores_json, structured_summary_json, embedding_status, embedding_error,
-                    embedded_at, embedding_model, embedding_dimensions, embedding_text_hash, related_notes_json
+                    embedded_at, embedding_model, embedding_dimensions, embedding_text_hash, related_notes_json,
+                    job_relevant
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record.note_id,
@@ -195,6 +197,7 @@ class PrismDatabase:
                     record.embedding_dimensions,
                     record.embedding_text_hash,
                     record.related_notes_json,
+                    record.job_relevant,
                 ),
             )
 
@@ -209,7 +212,8 @@ class PrismDatabase:
                     metadata_json = ?, llm_status = ?, llm_error = ?, llm_generated_at = ?,
                     llm_model = ?, tags_json = ?, scores_json = ?, structured_summary_json = ?,
                     embedding_status = ?, embedding_error = ?, embedded_at = ?, embedding_model = ?,
-                    embedding_dimensions = ?, embedding_text_hash = ?, related_notes_json = ?
+                    embedding_dimensions = ?, embedding_text_hash = ?, related_notes_json = ?,
+                    job_relevant = ?
                 WHERE note_id = ?
                 """,
                 (
@@ -243,9 +247,23 @@ class PrismDatabase:
                     record.embedding_dimensions,
                     record.embedding_text_hash,
                     record.related_notes_json,
+                    record.job_relevant,
                     record.note_id,
                 ),
             )
+
+    def set_job_flag(self, note_id: str, value: bool) -> None:
+        with self.connect() as conn:
+            conn.execute("UPDATE notes SET job_relevant = ? WHERE note_id = ?", (1 if value else 0, note_id))
+            conn.commit()
+
+    def list_job_notes(self, limit: int = 200) -> list[NoteRecord]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"SELECT {_NOTE_COLUMNS} FROM notes WHERE job_relevant = 1 ORDER BY date_saved DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [_row_to_record(row) for row in rows]
 
     def list_failed_notes(self, limit: int = 25) -> list[NoteRecord]:
         with self.connect() as conn:
@@ -676,7 +694,7 @@ _NOTE_COLUMNS = """
     source_kind, input_source, local_archive, pdf_path, content_hash, fetch_status, fetch_error, fetched_at, metadata_json,
     llm_status, llm_error, llm_generated_at, llm_model, tags_json, scores_json, structured_summary_json,
     embedding_status, embedding_error, embedded_at, embedding_model, embedding_dimensions,
-    embedding_text_hash, related_notes_json
+    embedding_text_hash, related_notes_json, job_relevant
 """
 
 _ADDED_COLUMNS = {
@@ -703,6 +721,7 @@ _ADDED_COLUMNS = {
     "embedding_dimensions": "INTEGER",
     "embedding_text_hash": "TEXT",
     "related_notes_json": "TEXT",
+    "job_relevant": "INTEGER NOT NULL DEFAULT 0",
 }
 
 
@@ -801,6 +820,7 @@ def _row_to_record(row: sqlite3.Row) -> NoteRecord:
         embedding_dimensions=row["embedding_dimensions"],
         embedding_text_hash=row["embedding_text_hash"],
         related_notes_json=row["related_notes_json"],
+        job_relevant=row["job_relevant"] if "job_relevant" in row.keys() else 0,
     )
 
 

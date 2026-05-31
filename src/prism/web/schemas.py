@@ -16,6 +16,7 @@ class AskBody(BaseModel):
 
 class GenerateIdeaBody(BaseModel):
     topic: str | None = None
+    prefer_job: bool = False
 
 
 class RateIdeaBody(BaseModel):
@@ -44,3 +45,7 @@ class TraversalSettingsBody(BaseModel):
     max_links_per_note: int | None = Field(default=None, ge=1, le=50)
     max_auto_links: int | None = Field(default=None, ge=0, le=50)
     dup_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
+
+
+class JobFlagBody(BaseModel):
+    value: bool

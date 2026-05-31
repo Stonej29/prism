@@ -35,6 +35,7 @@ def note_summary_dto(record: NoteRecord) -> dict[str, Any]:
         "tags": tags_for_record(record),
         "overall": scores.get("overall"),
         "llm_status": record.llm_status,
+        "job_relevant": bool(record.job_relevant),
     }
 
 
@@ -60,6 +61,7 @@ def note_to_dto(record: NoteRecord) -> dict[str, Any]:
         "tags": tags_for_record(record),
         "structured_summary": structured_summary(record),
         "related_notes": related_notes_for_record(record),
+        "job_relevant": bool(record.job_relevant),
     }
 
 

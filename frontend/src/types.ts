@@ -36,6 +36,7 @@ export interface NoteDetail {
   tags: string[];
   structured_summary: Record<string, unknown>;
   related_notes: RelatedNote[];
+  job_relevant: boolean;
 }
 
 export interface GraphNode {
@@ -45,6 +46,7 @@ export interface GraphNode {
   status: string;
   date_saved: string;
   overall: number | null;
+  job_relevant: boolean;
   tags: string[];
   topic: number;
   community: number;

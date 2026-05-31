@@ -189,6 +189,22 @@ class WebApiTest(unittest.TestCase):
 
         self.assertEqual(self.client.get("/api/notes/missing").status_code, 404)
 
+    def test_job_flag_round_trip(self) -> None:
+        self.db.insert_note(make_note("aaa111"))
+        self.assertFalse(self.client.get("/api/notes/aaa111").json()["job_relevant"])
+
+        flagged = self.client.put("/api/notes/aaa111/job_flag", json={"value": True}).json()
+        self.assertTrue(flagged["job_relevant"])
+
+        # Reflected in detail, summary list, and graph node payload.
+        self.assertTrue(self.client.get("/api/notes/aaa111").json()["job_relevant"])
+        node = next(n for n in self.client.get("/api/graph").json()["nodes"] if n["id"] == "aaa111")
+        self.assertTrue(node["job_relevant"])
+        self.assertEqual([r.note_id for r in self.db.list_job_notes()], ["aaa111"])
+
+        self.client.put("/api/notes/aaa111/job_flag", json={"value": False})
+        self.assertFalse(self.client.get("/api/notes/aaa111").json()["job_relevant"])
+
     def test_graph_dedup_and_dangling(self) -> None:
         # aaa <-> bbb (mutual), and aaa -> zzz (dangling, not inserted)
         self.db.insert_note(make_note("aaa111", related=["bbb222", "zzz999"]))
