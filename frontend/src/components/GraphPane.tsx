@@ -39,9 +39,17 @@ export function GraphPane({
   useEffect(() => {
     const el = wrapRef.current;
     if (!el) return;
-    const ro = new ResizeObserver(() => setSize({ w: el.clientWidth, h: el.clientHeight }));
+    // Ignore transient 0-size measurements (e.g. when the tab/window is
+    // backgrounded or the layout briefly collapses). Setting the SVG to 0×0
+    // blanks it to the bare background and it stays dark until a reload.
+    const measure = () => {
+      const w = el.clientWidth;
+      const h = el.clientHeight;
+      if (w > 0 && h > 0) setSize({ w, h });
+    };
+    const ro = new ResizeObserver(measure);
     ro.observe(el);
-    setSize({ w: el.clientWidth, h: el.clientHeight });
+    measure();
     return () => ro.disconnect();
   }, []);
 
@@ -57,6 +65,25 @@ export function GraphPane({
 
   const { sim, tick, simRef } = useGraphSimulation(nodes, edges, size.w, size.h, layout);
   void tick; // re-render trigger
+
+  // Returning from another app/tab can leave the SVG blank or the simulation's
+  // rAF loop paused; re-measure the container and nudge the layout so it repaints.
+  useEffect(() => {
+    const onReturn = () => {
+      if (document.visibilityState !== "visible") return;
+      const el = wrapRef.current;
+      if (el && el.clientWidth > 0 && el.clientHeight > 0) {
+        setSize({ w: el.clientWidth, h: el.clientHeight });
+      }
+      simRef.current?.alpha(0.05).restart();
+    };
+    window.addEventListener("focus", onReturn);
+    document.addEventListener("visibilitychange", onReturn);
+    return () => {
+      window.removeEventListener("focus", onReturn);
+      document.removeEventListener("visibilitychange", onReturn);
+    };
+  }, [simRef]);
 
   // Keep nodes screen-stable when the LEFT panel folds (its width change moves the
   // graph's left origin); compensate the pan so the graph doesn't appear to jump.
