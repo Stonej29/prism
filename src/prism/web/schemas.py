@@ -37,3 +37,10 @@ class SetStatusBody(BaseModel):
 class BulkStatusBody(BaseModel):
     ids: list[str] = Field(..., min_length=1)
     status: str = Field(..., min_length=1)
+
+
+class TraversalSettingsBody(BaseModel):
+    link_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
+    max_links_per_note: int | None = Field(default=None, ge=1, le=50)
+    max_auto_links: int | None = Field(default=None, ge=0, le=50)
+    dup_threshold: float | None = Field(default=None, ge=0.0, le=1.0)

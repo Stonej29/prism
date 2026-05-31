@@ -105,7 +105,7 @@ def _register_traversal(scheduler, services: Services, config: WorkerConfig) -> 
         LOGGER.info("Traversal enabled but module unavailable; skipping")
         return
     scheduler.add_job(
-        lambda: run_graph_traversal(services),
+        lambda: run_graph_traversal(services, config.traversal),
         CronTrigger.from_crontab(config.traversal_cron, timezone=_timezone(config.timezone)),
         id="graph_traversal",
         name="graph traversal",

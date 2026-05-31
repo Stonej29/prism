@@ -189,3 +189,10 @@ export interface TraverseSummary {
   duplicates_proposed: number;
   pending_proposals: number;
 }
+
+export interface MaintenanceSettings {
+  link_threshold: number;
+  max_links_per_note: number;
+  max_auto_links: number;
+  dup_threshold: number;
+}

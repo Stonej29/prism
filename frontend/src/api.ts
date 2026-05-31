@@ -10,6 +10,7 @@ import type {
   Proposal,
   ProposalAction,
   ProposalList,
+  MaintenanceSettings,
   Stats,
   TagCount,
   TraverseSummary,
@@ -130,6 +131,11 @@ export const api = {
   runIngest: () => req<IngestSummary>(`/maintenance/ingest`, { method: "POST" }),
 
   runTraverse: () => req<TraverseSummary>(`/maintenance/traverse`, { method: "POST" }),
+
+  maintenanceSettings: () => req<MaintenanceSettings>(`/maintenance/settings`),
+
+  saveMaintenanceSettings: (body: MaintenanceSettings) =>
+    req<MaintenanceSettings>(`/maintenance/settings`, { method: "PUT", body: JSON.stringify(body) }),
 };
 
 export type { Proposal };

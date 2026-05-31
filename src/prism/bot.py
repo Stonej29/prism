@@ -715,7 +715,7 @@ class PrismBot:
 
     async def _traverse_task(self, message) -> None:
         try:
-            summary = await asyncio.to_thread(run_graph_traversal, self._services())
+            summary = await asyncio.to_thread(run_graph_traversal, self._services(), load_worker_config().traversal)
         except Exception as exc:
             LOGGER.exception("Manual graph traversal failed")
             await message.reply_text(f"Graph maintenance failed: {type(exc).__name__}: {exc}")
