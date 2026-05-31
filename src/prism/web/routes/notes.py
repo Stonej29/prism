@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from prism.db import PrismDatabase
 from prism.notes import NOTE_STATUSES, NoteService, _tags
 from prism.web.deps import get_db, get_notes
-from prism.web.routes import gather_all_notes
+from prism.web.routes import filter_notes, gather_all_notes
 from prism.web.schemas import BulkStatusBody, EditTagsBody, RenameBody, SaveUrlBody, SetStatusBody
 from prism.web.serializers import note_summary_dto, note_to_dto
 
@@ -29,6 +29,9 @@ def list_notes(
     input_source: str | None = None,
     tag: str | None = None,
     status: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    min_score: float | None = None,
     limit: int = 50,
     offset: int = 0,
     db: PrismDatabase = Depends(get_db),
@@ -42,6 +45,7 @@ def list_notes(
         records = filtered[offset : offset + limit]
     else:
         records = db.list_recent_notes(limit, offset, status)
+    records = filter_notes(records, date_from=date_from, date_to=date_to, min_score=min_score)
     return {"items": [note_summary_dto(r) for r in records], "limit": limit, "offset": offset}
 
 

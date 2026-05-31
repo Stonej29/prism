@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { P, srcColor, srcLabel } from "../theme";
-import type { GraphPayload, Stats, TagCount, TreeNode } from "../types";
+import type { GraphPayload, Stats, TagCount, TreeNode, Usage } from "../types";
 import { FileTree } from "./FileTree";
 import type { OpenFile } from "./FileViewer";
 import { ResizeHandle } from "./ResizeHandle";
@@ -9,6 +9,12 @@ const KNOWN_SOURCES = ["paper", "github", "huggingface", "youtube", "pdf", "webs
 
 function Mono({ children, c = P.mid }: { children: React.ReactNode; c?: string }) {
   return <span style={{ fontFamily: P.mono, fontSize: 11, color: c }}>{children}</span>;
+}
+
+function fmtTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  return String(n);
 }
 
 function SectionHead({ children, open, onClick }: { children: React.ReactNode; open?: boolean; onClick?: () => void }) {
@@ -68,11 +74,18 @@ export function TreePane({
   stats,
   sourceFilter,
   activeTag,
+  dateFrom,
+  dateTo,
+  minScore,
+  usage,
   onSelectNote,
   onOpenIdea,
   onOpenFile,
   onSelectSource,
   onSelectTag,
+  onDateFrom,
+  onDateTo,
+  onMinScore,
 }: {
   open: boolean;
   onToggle: () => void;
@@ -86,11 +99,18 @@ export function TreePane({
   stats: Stats | null;
   sourceFilter: string | null;
   activeTag: string | null;
+  dateFrom: string;
+  dateTo: string;
+  minScore: number;
+  usage: Usage | null;
   onSelectNote: (id: string) => void;
   onOpenIdea: (id: string) => void;
   onOpenFile: (f: OpenFile) => void;
   onSelectSource: (s: string | null) => void;
   onSelectTag: (t: string) => void;
+  onDateFrom: (v: string) => void;
+  onDateTo: (v: string) => void;
+  onMinScore: (v: number) => void;
 }) {
   const [query, setQuery] = useState("");
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -110,6 +130,19 @@ export function TreePane({
   const indexed = stats?.notes.embedding_indexed ?? 0;
   const healthy = stats?.index_configured && (stats?.notes.embedding_failed ?? 0) === 0;
   const filtering = query.trim().length > 0;
+  const fieldStyle: React.CSSProperties = {
+    flex: 1,
+    minWidth: 0,
+    background: P.bg2,
+    border: `1px solid ${P.line}`,
+    borderRadius: 6,
+    padding: "4px 6px",
+    color: P.hi,
+    fontFamily: P.mono,
+    fontSize: 11,
+    outline: "none",
+    colorScheme: "dark",
+  };
 
   return (
     <div style={{ position: "relative", width, flexShrink: 0, borderRight: `1px solid ${P.line}`, background: P.bg1, display: "flex", flexDirection: "column", minHeight: 0 }}>
@@ -159,6 +192,27 @@ export function TreePane({
               <FilterRow key={t.tag} glyph="≈" label={t.tag} count={t.count} active={activeTag === t.tag} onClick={() => onSelectTag(t.tag)} />
             ))}
             {tags.length === 0 && <div style={{ padding: "4px 14px", fontFamily: P.sans, fontSize: 12, color: P.faint }}>No tags yet.</div>}
+
+            <div style={{ fontFamily: P.mono, fontSize: 9, letterSpacing: 1, color: P.faint, padding: "10px 12px 4px" }}>BY DATE</div>
+            <div style={{ display: "flex", gap: 6, padding: "2px 14px 4px" }}>
+              <input type="date" value={dateFrom} max={dateTo || undefined} onChange={(e) => onDateFrom(e.target.value)} style={fieldStyle} />
+              <input type="date" value={dateTo} min={dateFrom || undefined} onChange={(e) => onDateTo(e.target.value)} style={fieldStyle} />
+            </div>
+
+            <div style={{ fontFamily: P.mono, fontSize: 9, letterSpacing: 1, color: P.faint, padding: "10px 12px 4px" }}>MIN SCORE</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "2px 14px 4px" }}>
+              <input type="range" min={0} max={10} step={1} value={minScore} onChange={(e) => onMinScore(Number(e.target.value))} style={{ flex: 1, accentColor: P.accent }} />
+              <span style={{ fontFamily: P.mono, fontSize: 11, color: minScore > 0 ? P.hi : P.lo, width: 30, textAlign: "right" }}>{minScore > 0 ? `≥${minScore}` : "off"}</span>
+            </div>
+
+            {(dateFrom || dateTo || minScore > 0) && (
+              <div
+                onClick={() => { onDateFrom(""); onDateTo(""); onMinScore(0); }}
+                style={{ padding: "6px 14px", fontFamily: P.mono, fontSize: 11, color: P.accent, cursor: "pointer" }}
+              >
+                × clear date/score
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -171,6 +225,10 @@ export function TreePane({
         <div style={{ display: "flex", justifyContent: "space-between" }}>
           <Mono>{indexed} vecs</Mono>
           <Mono c={P.lo}>{stats?.embedding_model ?? "no model"}</Mono>
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between" }} title={`${usage?.calls ?? 0} calls total · ${usage?.today_calls ?? 0} today`}>
+          <Mono>tokens</Mono>
+          <Mono c={P.lo}>{fmtTokens(usage?.total_tokens ?? 0)} · today {fmtTokens(usage?.today_total_tokens ?? 0)}</Mono>
         </div>
       </div>
     </div>

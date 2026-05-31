@@ -117,6 +117,43 @@ class WebApiTest(unittest.TestCase):
         detail = self.client.get("/api/notes/aaa111").json()
         self.assertEqual(detail["input_source"], "web_ui")
 
+    def test_filter_by_date_and_score(self) -> None:
+        import dataclasses
+
+        early = dataclasses.replace(
+            make_note("aaa111"), date_saved="2026-01-01T00:00:00Z", scores_json=json.dumps({"overall": 9})
+        )
+        late = dataclasses.replace(
+            make_note("bbb222"), date_saved="2026-12-31T00:00:00Z", scores_json=json.dumps({"overall": 4})
+        )
+        self.db.insert_note(early)
+        self.db.insert_note(late)
+
+        by_min = self.client.get("/api/notes", params={"min_score": 5}).json()
+        self.assertEqual([n["id"] for n in by_min["items"]], ["aaa111"])
+
+        by_from = self.client.get("/api/notes", params={"date_from": "2026-06-01"}).json()
+        self.assertEqual([n["id"] for n in by_from["items"]], ["bbb222"])
+
+        by_to = self.client.get("/api/notes", params={"date_to": "2026-06-01"}).json()
+        self.assertEqual([n["id"] for n in by_to["items"]], ["aaa111"])
+
+        graph = self.client.get("/api/graph", params={"min_score": 5}).json()
+        self.assertEqual([n["id"] for n in graph["nodes"]], ["aaa111"])
+        self.assertIn("date_saved", graph["nodes"][0])
+
+    def test_token_usage_endpoint(self) -> None:
+        empty = self.client.get("/api/usage").json()
+        self.assertEqual(empty["total_tokens"], 0)
+
+        self.db.add_token_usage(100, 50, 150)
+        self.db.add_token_usage(10, 5, 15)
+        usage = self.client.get("/api/usage").json()
+        self.assertEqual(usage["total_tokens"], 165)
+        self.assertEqual(usage["prompt_tokens"], 110)
+        self.assertEqual(usage["calls"], 2)
+        self.assertEqual(usage["today_total_tokens"], 165)
+
     def test_note_detail_parses_json_columns(self) -> None:
         self.db.insert_note(make_note("aaa111", tags=["graph"], related=["bbb222"]))
         detail = self.client.get("/api/notes/aaa111").json()

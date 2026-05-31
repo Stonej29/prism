@@ -7,6 +7,8 @@ from typing import Any
 
 import httpx
 
+from prism.usage import record_usage
+
 LOGGER = logging.getLogger("prism.embedding")
 
 EMBEDDING_TIMEOUT_SECONDS = 60.0
@@ -75,6 +77,7 @@ class EmbeddingClient:
                         data.get("model") or self.config.model,
                         usage.get("prompt_tokens"), usage.get("total_tokens"),
                     )
+                    record_usage("embedding", usage.get("prompt_tokens"), 0, usage.get("total_tokens"))
                 return data
             except httpx.HTTPStatusError as exc:
                 if exc.response.status_code < 500 or attempt == RETRY_ATTEMPTS - 1:
