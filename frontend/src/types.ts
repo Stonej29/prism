@@ -179,3 +179,33 @@ export interface TraverseSummary {
   duplicates_proposed: number;
   pending_proposals: number;
 }
+
+export interface MaintenanceEvent {
+  seq: number;
+  at: string;
+  kind: string;
+  phase?: string;
+  message?: string;
+  note_id?: string;
+  source?: string;
+  target?: string;
+  proposal_id?: string;
+  keep?: string;
+  remove?: string;
+  similarity?: number;
+  links_added?: number;
+  links_removed?: number;
+  tags?: string[];
+}
+
+export interface MaintenanceStatus {
+  status: "idle" | "running" | "complete" | "failed" | string;
+  run_id: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  last_seq: number;
+  events: MaintenanceEvent[];
+  event_count: number;
+  summary: TraverseSummary | null;
+  error: string | null;
+}

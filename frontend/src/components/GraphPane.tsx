@@ -1,10 +1,24 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { P, SRC, srcColor } from "../theme";
-import type { GraphPayload } from "../types";
+import type { GraphPayload, MaintenanceEvent, MaintenanceStatus } from "../types";
 import { nodeRadius, useGraphSimulation, type LayoutMode, type SimNode } from "../hooks/useGraphSimulation";
 
 function Mono({ children, s = 11, c = P.mid }: { children: React.ReactNode; s?: number; c?: string }) {
   return <span style={{ fontFamily: P.mono, fontSize: s, color: c }}>{children}</span>;
+}
+
+function edgeKey(a: string, b: string): string {
+  return a < b ? `${a}::${b}` : `${b}::${a}`;
+}
+
+function eventNodeIds(event: MaintenanceEvent): string[] {
+  const ids: string[] = [];
+  if (event.note_id) ids.push(event.note_id);
+  if (event.source) ids.push(event.source);
+  if (event.target) ids.push(event.target);
+  if (event.keep) ids.push(event.keep);
+  if (event.remove) ids.push(event.remove);
+  return ids;
 }
 
 export function GraphPane({
@@ -17,6 +31,8 @@ export function GraphPane({
   onDeselect,
   onClearHighlight,
   leftPanelWidth,
+  maintenanceStatus,
+  maintenanceEvents = [],
 }: {
   graph: GraphPayload | null;
   sourceFilter: string | null;
@@ -27,6 +43,8 @@ export function GraphPane({
   onDeselect: () => void;
   onClearHighlight: () => void;
   leftPanelWidth: number;
+  maintenanceStatus?: MaintenanceStatus | null;
+  maintenanceEvents?: MaintenanceEvent[];
 }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 800, h: 600 });
@@ -57,6 +75,21 @@ export function GraphPane({
 
   const { sim, tick, simRef } = useGraphSimulation(nodes, edges, size.w, size.h, layout);
   void tick; // re-render trigger
+
+  const recentMaintenanceEvents = maintenanceEvents.slice(-80);
+  const latestMaintenancePhase = [...recentMaintenanceEvents].reverse().find((e) => e.kind === "phase");
+  const maintenanceNodeIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const event of recentMaintenanceEvents) {
+      for (const id of eventNodeIds(event)) ids.add(id);
+    }
+    return ids;
+  }, [recentMaintenanceEvents]);
+  const maintenanceEdgeEvents = useMemo(
+    () => recentMaintenanceEvents.filter((e) => (e.kind === "edge_added" || e.kind === "edge_removed") && e.source && e.target),
+    [recentMaintenanceEvents],
+  );
+  const simNodeById = useMemo(() => new Map(sim.nodes.map((n) => [n.id, n])), [sim.nodes]);
 
   // Keep nodes screen-stable when the LEFT panel folds (its width change moves the
   // graph's left origin); compensate the pan so the graph doesn't appear to jump.
@@ -152,6 +185,27 @@ export function GraphPane({
       ref={wrapRef}
       style={{ flex: 1, position: "relative", background: P.bg0, overflow: "hidden", touchAction: "none", overscrollBehavior: "contain" }}
     >
+      <style>{`
+        @keyframes prism-maintenance-node-pulse {
+          0% { opacity: 0.95; transform: scale(0.85); }
+          100% { opacity: 0; transform: scale(2.2); }
+        }
+        @keyframes prism-maintenance-edge-pulse {
+          0% { opacity: 0.95; stroke-width: 3; }
+          100% { opacity: 0; stroke-width: 1; }
+        }
+        .prism-maintenance-node-pulse {
+          transform-box: fill-box;
+          transform-origin: center;
+          animation: prism-maintenance-node-pulse 1.8s ease-out forwards;
+          pointer-events: none;
+        }
+        .prism-maintenance-edge-pulse {
+          animation: prism-maintenance-edge-pulse 1.8s ease-out forwards;
+          pointer-events: none;
+        }
+      `}</style>
+
       {/* toolbar */}
       <div
         style={{
@@ -247,6 +301,27 @@ export function GraphPane({
               />
             );
           })}
+          {maintenanceEdgeEvents.map((event) => {
+            const source = event.source;
+            const target = event.target;
+            if (!source || !target) return null;
+            const a = simNodeById.get(source);
+            const b = simNodeById.get(target);
+            if (!a || !b) return null;
+            const removed = event.kind === "edge_removed";
+            return (
+              <line
+                key={`${event.seq}-${edgeKey(source, target)}`}
+                x1={a.x}
+                y1={a.y}
+                x2={b.x}
+                y2={b.y}
+                stroke={removed ? P.arxiv : P.accent}
+                strokeDasharray={removed ? "5 4" : "none"}
+                className="prism-maintenance-edge-pulse"
+              />
+            );
+          })}
           {sim.nodes.map((n) => {
             const r = nodeRadius(n.overall);
             const selected = n.id === selectedId;
@@ -254,6 +329,7 @@ export function GraphPane({
             const dim = !!highlightIds && !lit;
             const archived = n.status === "archived";
             const showLabel = selected || lit || hover === n.id;
+            const maintenancePulse = maintenanceNodeIds.has(n.id);
             return (
               <g
                 key={n.id}
@@ -268,6 +344,15 @@ export function GraphPane({
                 onMouseEnter={() => setHover(n.id)}
                 onMouseLeave={() => setHover((h) => (h === n.id ? null : h))}
               >
+                {maintenancePulse && (
+                  <circle
+                    r={r + 7}
+                    fill="none"
+                    stroke={P.accent}
+                    strokeWidth={1.6}
+                    className="prism-maintenance-node-pulse"
+                  />
+                )}
                 <circle
                   r={r}
                   fill={srcColor(n.source_kind)}
@@ -338,6 +423,13 @@ export function GraphPane({
             {layout === "link" ? "communities" : "topics"}
           </Mono>
         </div>
+        {maintenanceStatus && maintenanceStatus.status !== "idle" && (
+          <div style={{ background: maintenanceStatus.status === "running" ? P.accentDim : `${P.bg1}dd`, border: `1px solid ${maintenanceStatus.status === "failed" ? P.arxiv : maintenanceStatus.status === "running" ? P.accent : P.line}`, borderRadius: 8, padding: "7px 12px" }}>
+            <Mono c={maintenanceStatus.status === "failed" ? P.arxiv : maintenanceStatus.status === "running" ? P.accent : P.mid}>
+              maintenance {maintenanceStatus.status} · {maintenanceStatus.event_count} events{latestMaintenancePhase?.phase ? ` · ${latestMaintenancePhase.phase}` : ""}
+            </Mono>
+          </div>
+        )}
         {highlightIds && (
           <div style={{ display: "flex", alignItems: "center", gap: 8, background: P.accentDim, border: `1px solid ${P.accent}`, borderRadius: 8, padding: "7px 12px" }}>
             <Mono c={P.accent}>≈ {highlightIds.size} highlighted</Mono>

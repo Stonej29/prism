@@ -20,7 +20,9 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 from datetime import UTC, datetime
 
 from prism.db import ProposalRecord
@@ -35,6 +37,7 @@ MAX_AUTO_LINKS = 8             # cap auto (semantic) links per note
 DUP_THRESHOLD = 0.92           # cosine; near-duplicate -> merge proposal
 MAX_PROPOSALS_PER_RUN = 25
 AUTO_ORIGIN = "auto"           # marks links this job manages (vs. LLM-chosen ones)
+TraversalEventEmitter = Callable[[dict[str, Any]], None]
 
 
 @dataclass
@@ -48,25 +51,29 @@ class TraversalSummary:
     duplicates_proposed: int = 0
 
 
-def run_graph_traversal(services: Services) -> TraversalSummary:
+def run_graph_traversal(services: Services, emit_event: TraversalEventEmitter | None = None) -> TraversalSummary:
     indexer = services.indexer
     summary = TraversalSummary()
+    _emit(emit_event, "phase", phase="tags", message="Normalizing tags")
 
     # Tag normalization needs only SQLite, so it runs even without embeddings.
-    _normalize_tags(services, summary)
+    _normalize_tags(services, summary, emit_event)
 
     if not indexer or not indexer.is_configured:
         LOGGER.info("Graph traversal: embeddings not configured; did tags only")
+        _emit(emit_event, "phase", phase="complete", message="Embeddings not configured; tags only")
         return summary
 
+    _emit(emit_event, "phase", phase="links", message="Refreshing related-note links")
     vectors = indexer.all_vectors()
     ids = list(vectors)
     summary.notes = len(ids)
     if len(ids) >= 2:
         sim = _similarity_matrix([vectors[i] for i in ids])
         records = {nid: services.database.find_by_note_id(nid) for nid in ids}
-        _refresh_related_links(services, ids, sim, records, summary)
-        _detect_duplicate_proposals(services, ids, sim, records, summary)
+        _refresh_related_links(services, ids, sim, records, summary, emit_event)
+        _emit(emit_event, "phase", phase="duplicates", message="Detecting near-duplicate notes")
+        _detect_duplicate_proposals(services, ids, sim, records, summary, emit_event)
 
     LOGGER.info(
         "Graph traversal: %d notes; links +%d/-%d across %d notes; tags merged %d across %d notes; %d duplicate proposals",
@@ -78,7 +85,7 @@ def run_graph_traversal(services: Services) -> TraversalSummary:
 
 # --- auto: related links (recompute, never pile up) -------------------------
 
-def _refresh_related_links(services, ids, sim, records, summary: TraversalSummary) -> None:
+def _refresh_related_links(services, ids, sim, records, summary: TraversalSummary, emit_event: TraversalEventEmitter | None = None) -> None:
     for i, note_id in enumerate(ids):
         record = records.get(note_id)
         if record is None:
@@ -115,14 +122,21 @@ def _refresh_related_links(services, ids, sim, records, summary: TraversalSummar
             continue  # no change to the auto set
         merged = kept + auto
         services.database.update_related_notes(note_id, json.dumps(merged, ensure_ascii=True, sort_keys=True))
-        summary.links_added += len(new_auto_ids - prev_auto_ids)
-        summary.links_removed += len(prev_auto_ids - new_auto_ids)
+        added = new_auto_ids - prev_auto_ids
+        removed = prev_auto_ids - new_auto_ids
+        summary.links_added += len(added)
+        summary.links_removed += len(removed)
         summary.notes_relinked += 1
+        for target_id in sorted(added):
+            _emit(emit_event, "edge_added", source=note_id, target=target_id)
+        for target_id in sorted(removed):
+            _emit(emit_event, "edge_removed", source=note_id, target=target_id)
+        _emit(emit_event, "note_relinked", note_id=note_id, links_added=len(added), links_removed=len(removed))
 
 
 # --- auto: tag normalization ------------------------------------------------
 
-def _normalize_tags(services, summary: TraversalSummary) -> None:
+def _normalize_tags(services, summary: TraversalSummary, emit_event: TraversalEventEmitter | None = None) -> None:
     mapping = build_canonical_tag_map(services.database.list_tags_with_counts())
     if not mapping:
         return
@@ -139,6 +153,7 @@ def _normalize_tags(services, summary: TraversalSummary) -> None:
         if remapped != tags:
             services.notes.apply_tags(record, remapped)
             summary.notes_retagged += 1
+            _emit(emit_event, "note_retagged", note_id=record.note_id, tags=remapped)
 
 
 def build_canonical_tag_map(tag_counts: list[tuple[str, int]]) -> dict[str, str]:
@@ -173,7 +188,7 @@ def _tag_key(tag: str) -> str:
 
 # --- proposals: near-duplicate notes ----------------------------------------
 
-def _detect_duplicate_proposals(services, ids, sim, records, summary: TraversalSummary) -> None:
+def _detect_duplicate_proposals(services, ids, sim, records, summary: TraversalSummary, emit_event: TraversalEventEmitter | None = None) -> None:
     created = 0
     for i in range(len(ids)):
         for j in range(i + 1, len(ids)):
@@ -194,14 +209,16 @@ def _detect_duplicate_proposals(services, ids, sim, records, summary: TraversalS
                 "remove_title": remove.title if remove else remove_id,
                 "similarity": round(float(sim[i][j]), 4),
             }
+            proposal_id = new_proposal_id(services.database)
             services.database.insert_proposal(ProposalRecord(
-                proposal_id=new_proposal_id(services.database),
+                proposal_id=proposal_id,
                 created_at=_now(),
                 kind=KIND_MERGE,
                 status="pending",
                 note_ids_json=note_ids_json,
                 payload_json=json.dumps(payload, ensure_ascii=True, sort_keys=True),
             ))
+            _emit(emit_event, "proposal_created", proposal_id=proposal_id, keep=keep_id, remove=remove_id, similarity=payload["similarity"])
             created += 1
     summary.duplicates_proposed = created
 
@@ -218,6 +235,11 @@ def _rank_pair(a: str, b: str, records) -> tuple[str, str]:
 
 
 # --- helpers ----------------------------------------------------------------
+
+def _emit(emit_event: TraversalEventEmitter | None, kind: str, **payload: Any) -> None:
+    if emit_event is not None:
+        emit_event({"kind": kind, **payload})
+
 
 def _raw_related(record) -> list[dict]:
     if not record.related_notes_json:
