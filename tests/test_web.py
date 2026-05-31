@@ -380,6 +380,11 @@ class WebApiTest(unittest.TestCase):
         self.assertGreaterEqual(res["tags_merged"], 1)
         self.assertGreaterEqual(res["notes_retagged"], 1)
 
+        status = self.client.get("/api/maintenance/status").json()
+        self.assertEqual(status["status"], "complete")
+        self.assertEqual(status["summary"]["notes_retagged"], res["notes_retagged"])
+        self.assertTrue(any(event["kind"] == "note_retagged" for event in status["events"]))
+
     def test_ask_graceful_when_unconfigured(self) -> None:
         result = self.client.post("/api/ask", json={"question": "what is rag?"}).json()
         self.assertFalse(result["ok"])

@@ -6,6 +6,7 @@ import type {
   IdeaResult,
   NoteDetail,
   IngestSummary,
+  MaintenanceStatus,
   NoteSummary,
   Proposal,
   ProposalAction,
@@ -135,6 +136,8 @@ export const api = {
     req<ProposalAction>(`/proposals/${id}/reject`, { method: "POST" }),
 
   runIngest: () => req<IngestSummary>(`/maintenance/ingest`, { method: "POST" }),
+
+  maintenanceStatus: () => req<MaintenanceStatus>(`/maintenance/status`),
 
   runTraverse: () => req<TraverseSummary>(`/maintenance/traverse`, { method: "POST" }),
 

@@ -174,9 +174,13 @@ class TraversalTests(unittest.TestCase):
             db.insert_note(make_note("bbb", overall=5))
             db.insert_note(make_note("ccc", overall=7))
 
-            summary = run_graph_traversal(services)
+            events: list[dict] = []
+            summary = run_graph_traversal(services, emit_event=events.append)
             self.assertEqual(summary.duplicates_proposed, 1)
             self.assertGreaterEqual(summary.links_added, 2)
+            kinds = {event["kind"] for event in events}
+            self.assertIn("edge_added", kinds)
+            self.assertIn("proposal_created", kinds)
 
             # aaa and bbb are mutually linked; ccc is orthogonal.
             a_links = {item["id"] for item in related_notes_for_record(db.find_by_note_id("aaa"))}
@@ -297,9 +301,11 @@ class TagNormalizationTests(unittest.TestCase):
             db.insert_note(make_note("n2", tags=("foundation-models", "agent")))
             db.insert_note(make_note("n3", tags=("agents",)))
 
-            summary = run_graph_traversal(services)
+            events: list[dict] = []
+            summary = run_graph_traversal(services, emit_event=events.append)
             self.assertEqual(summary.notes_retagged, 1)  # only n2 changes
             self.assertGreaterEqual(summary.tags_merged, 2)
+            self.assertTrue(any(event["kind"] == "note_retagged" and event["note_id"] == "n2" for event in events))
 
             self.assertEqual(json.loads(db.find_by_note_id("n2").tags_json), ["foundation-model", "agents"])
             self.assertEqual(json.loads(db.find_by_note_id("n1").tags_json), ["foundation-model", "agents"])

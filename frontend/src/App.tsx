@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "./api";
 import { P, srcLabel } from "./theme";
-import type { AskResult, GraphPayload, Idea, NoteDetail, Proposal, Stats, TagCount, TreeNode, Usage } from "./types";
+import type { AskResult, GraphPayload, Idea, MaintenanceStatus, NoteDetail, Proposal, Stats, TagCount, TreeNode, Usage } from "./types";
 import { TopBar } from "./components/TopBar";
 import { TreePane } from "./components/TreePane";
 import { GraphPane } from "./components/GraphPane";
@@ -68,6 +68,7 @@ export default function App() {
   const [openFile, setOpenFile] = useState<OpenFile | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [proposals, setProposals] = useState<ProposalsState>({ open: false, items: [], pending: 0, loading: false, busyId: null, runningJob: null });
+  const [maintenanceStatus, setMaintenanceStatus] = useState<MaintenanceStatus | null>(null);
 
   const noteKind = useMemo(() => {
     const m: Record<string, string> = {};
@@ -102,6 +103,25 @@ export default function App() {
       return () => clearTimeout(id);
     }
   }, [toast]);
+
+  useEffect(() => {
+    if (proposals.runningJob !== "traverse") return;
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const status = await api.maintenanceStatus();
+        if (!cancelled) setMaintenanceStatus(status);
+      } catch {
+        // The POST result still reports failure; avoid noisy poll toasts.
+      }
+    };
+    poll();
+    const id = setInterval(poll, 700);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [proposals.runningJob]);
 
   const selectNote = useCallback((id: string) => {
     setSelectedId(id);
@@ -387,13 +407,21 @@ export default function App() {
 
   const runTraverse = async () => {
     setProposals((p) => ({ ...p, runningJob: "traverse" }));
+    setMaintenanceStatus(null);
     try {
       const s = await api.runTraverse();
+      const status = await api.maintenanceStatus();
+      setMaintenanceStatus(status);
       setToast(`Maintenance: links +${s.links_added}/-${s.links_removed}, ${s.tags_merged} tags merged, ${s.duplicates_proposed} new merge proposal(s)`);
       const pr = await api.proposals();
       setProposals((p) => ({ ...p, items: pr.items, pending: pr.pending, runningJob: null }));
       await refreshData();
     } catch (e) {
+      try {
+        setMaintenanceStatus(await api.maintenanceStatus());
+      } catch {
+        /* ignore */
+      }
       setToast(String(e));
       setProposals((p) => ({ ...p, runningJob: null }));
     }
@@ -472,6 +500,8 @@ export default function App() {
           onDeselect={deselect}
           onClearHighlight={() => setHighlight(null)}
           leftPanelWidth={leftOpen ? leftWidth : LEFT_CLOSED_W}
+          maintenanceStatus={maintenanceStatus}
+          maintenanceEvents={maintenanceStatus?.events ?? []}
         />
         <NotePane
           note={note}
