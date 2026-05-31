@@ -959,13 +959,19 @@ def _scores(data: dict[str, Any]) -> dict[str, float | int]:
     scores: dict[str, float | int] = {}
     for key in SCORE_FIELDS:
         value = data.get(key)
+        number: float | None = None
         if isinstance(value, (int, float)) and not isinstance(value, bool):
-            scores[key] = value
+            number = float(value)
         elif isinstance(value, str):
             try:
-                scores[key] = float(value)
+                number = float(value)
             except ValueError:
-                pass
+                number = None
+        if number is None:
+            continue
+        # Guard against an out-of-range value from the model (the rubric is 1-10).
+        number = max(1.0, min(10.0, number))
+        scores[key] = int(number) if number.is_integer() else number
     return scores
 
 
