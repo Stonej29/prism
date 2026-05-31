@@ -69,6 +69,12 @@ export const api = {
   editTags: (id: string, tags: string[]) =>
     req<NoteDetail>(`/notes/${id}/tags`, { method: "PUT", body: JSON.stringify({ tags }) }),
 
+  editTitle: (id: string, title: string) =>
+    req<NoteDetail>(`/notes/${id}/title`, { method: "PUT", body: JSON.stringify({ title }) }),
+
+  setStatus: (id: string, status: string) =>
+    req<NoteDetail>(`/notes/${id}/status`, { method: "PUT", body: JSON.stringify({ status }) }),
+
   tags: () => req<{ items: TagCount[] }>(`/tags`),
 
   tree: () => req<TreeNode>(`/tree`),

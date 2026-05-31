@@ -239,6 +239,31 @@ export default function App() {
     }
   };
 
+  const onEditTitle = async (id: string, title: string) => {
+    setPaneBusy(true);
+    try {
+      const updated = await api.editTitle(id, title);
+      setNote(updated);
+      await refreshData();
+    } catch (e) {
+      setToast(String(e));
+    } finally {
+      setPaneBusy(false);
+    }
+  };
+
+  const onSetStatus = async (id: string, status: string) => {
+    setPaneBusy(true);
+    try {
+      const updated = await api.setStatus(id, status);
+      setNote(updated);
+    } catch (e) {
+      setToast(String(e));
+    } finally {
+      setPaneBusy(false);
+    }
+  };
+
   const onRate = async (id: string, rating: number) => {
     try {
       const updated = await api.rateIdea(id, rating);
@@ -383,6 +408,8 @@ export default function App() {
           onReprocess={onReprocess}
           onDelete={onDelete}
           onEditTags={onEditTags}
+          onEditTitle={onEditTitle}
+          onSetStatus={onSetStatus}
         />
 
         {ask.open && (

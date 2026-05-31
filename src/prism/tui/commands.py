@@ -20,6 +20,8 @@ TUI_COMMANDS: list[tuple[str, str, str]] = [
     ("proposals", "proposals", "Review graph maintenance proposals"),
     ("ingest", "ingest", "Pull configured feeds now"),
     ("traverse", "traverse", "Run graph maintenance now"),
+    ("rename", "rename <id> <title>", "Rename a note"),
+    ("status_set", "status_set <id> <status>", "Set a note's review status"),
     ("reprocess", "reprocess <id>", "Re-run LLM generation for a note"),
     ("retry_failed", "retry_failed [n]", "Retry failed LLM and embedding work"),
     ("delete", "delete <id>", "Delete a note (after confirmation)"),

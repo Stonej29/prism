@@ -94,6 +94,8 @@ Open Telegram, find your bot, and send a link.
 | `/ingest` | Pull configured feeds now (instead of waiting for the schedule) |
 | `/traverse` | Run graph maintenance now (refresh links, normalize tags, propose merges) |
 | `/status` | Note / LLM / embedding counts and index state |
+| `/rename <id> <title>` | Rename a note (re-embeds; updates the vault frontmatter) |
+| `/status_set <id> <status>` | Set a note's review status (`unreviewed` / `reviewed` / `archived`) |
 | `/reprocess <id>` | Re-run LLM generation from archived text |
 | `/retry_failed [n]` | Retry failed LLM or embedding work for up to `n` notes |
 | `/delete <id>` | Delete a note or idea (inline yes/no confirmation) |
@@ -111,7 +113,7 @@ PRISM also ships a self-hosted **web UI** — a dark, three-pane "Atlas" workspa
 - **Right** — the full note (summary, key claims, scores, backlinks, tags, metadata) in collapsible sections. Both side panels fold and are drag-resizable.
 - **Top bar** — `/ask` and `/find` (toggle the icon), a `+` to save a URL, and a 💡 lightbulb that generates an idea in the background.
 
-It exposes the same actions as the bot: save URLs, ask, find, generate and rate ideas, reprocess, edit tags, and delete.
+It exposes the same actions as the bot: save URLs, ask, find, generate and rate ideas, reprocess, edit tags, rename (double-click the title), set review status, and delete.
 
 Run it as a second container (shares `runtime/`; the bot is untouched):
 
@@ -140,7 +142,7 @@ The web service ignores the Telegram env vars; optional knobs: `PRISM_WEB_HOST`,
 PRISM also runs in the terminal — over the same vault, database, and index, with full feature parity with the bot. Two front-ends share one logic layer:
 
 - **TUI** (`prism-tui`) — a full-screen [Textual](https://textual.textualize.io/) three-pane app: a mode-switchable sidebar (notes · ideas · tags · proposals), a Markdown detail pane, and a command bar. Use `1`–`4` to switch the list, `/` to type a command (`find …`, `ask …`, paste a URL to save), `r`/`d`/`a`/`x`/`g` to rate/delete/approve/reject/reprocess the selection, and `?` for the full command list. Network work runs off the UI thread, so it never blocks.
-- **CLI** (`prism-cli`) — a scriptable, pipe-friendly front-end whose subcommands map 1:1 to the bot's commands (`save`, `find`, `ask`, `recent`, `idea`, `ingest`, `status`, …) with plain-text output.
+- **CLI** (`prism-cli`) — a scriptable, pipe-friendly front-end whose subcommands map 1:1 to the bot's commands (`save`, `find`, `ask`, `recent`, `idea`, `ingest`, `status`, `rename`, `set-status`, …) with plain-text output.
 
 Both read the same env vars as the bot/worker and need no Telegram token:
 
@@ -225,5 +227,5 @@ See `CLAUDE.md` for the full architecture, data flow, and design decisions.
 - [x] Scheduled feed ingestion + AI graph maintenance (background worker)
 - [ ] Browser extension / iOS Shortcut for frictionless link sharing
 - [ ] Scheduled idea generation (daily/weekly)
-- [ ] Note editing commands (rename, retag, review status)
+- [x] Note editing commands (rename, retag, review status)
 - [ ] Local LLM and embedding support

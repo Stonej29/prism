@@ -18,6 +18,7 @@ from prism.cli.render import (
 )
 from prism.cli_core import CliCore
 from prism.config import load_settings
+from prism.notes import NOTE_STATUSES
 
 
 def _core() -> CliCore:
@@ -69,6 +70,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("ingest", help="Pull configured feeds now")
     sub.add_parser("traverse", help="Run graph maintenance now")
+
+    p = sub.add_parser("rename", help="Rename a note")
+    p.add_argument("note_id")
+    p.add_argument("title", nargs="+")
+
+    p = sub.add_parser("set-status", help="Set a note's review status")
+    p.add_argument("note_id")
+    p.add_argument("status", choices=NOTE_STATUSES)
 
     sub.add_parser("reprocess", help="Re-run LLM generation for a note").add_argument("note_id")
     sub.add_parser("retry-failed", help="Retry failed LLM and embedding work").add_argument(
@@ -239,6 +248,18 @@ def _traverse(core: CliCore, args) -> int:
     return 0
 
 
+def _rename(core: CliCore, args) -> int:
+    result = core.rename_note(args.note_id, " ".join(args.title))
+    print(result.message)
+    return 0 if result.ok else 1
+
+
+def _set_status(core: CliCore, args) -> int:
+    result = core.set_status(args.note_id, args.status)
+    print(result.message)
+    return 0 if result.ok else 1
+
+
 def _reprocess(core: CliCore, args) -> int:
     result = core.reprocess(args.note_id)
     print(result.message)
@@ -317,6 +338,8 @@ _HANDLERS = {
     "reject": _reject,
     "ingest": _ingest,
     "traverse": _traverse,
+    "rename": _rename,
+    "set-status": _set_status,
     "reprocess": _reprocess,
     "retry-failed": _retry_failed,
     "delete": _delete,

@@ -22,6 +22,7 @@ from prism.ideas import IdeaService
 from prism.index import NoteIndexer
 from prism.llm import LLMConfig
 from prism.notes import (
+    NOTE_STATUSES,
     NoteService,
     _json_array,
     extract_first_url,
@@ -56,6 +57,8 @@ COMMANDS = [
     ("proposals", "Review graph maintenance proposals"),
     ("ingest", "Pull configured feeds now"),
     ("traverse", "Run graph maintenance now"),
+    ("rename", "Rename a note"),
+    ("status_set", "Set a note's review status"),
     ("reprocess", "Re-run LLM generation for a note"),
     ("retry_failed", "Retry failed LLM and embedding work"),
     ("delete", "Delete a note or idea after confirmation"),
@@ -260,6 +263,58 @@ class PrismBot:
             await message.reply_text(self._saved_reply(result.record).replace("<b>Saved:</b>", "<b>Reprocessed:</b>", 1), parse_mode=HTML_PARSE_MODE)
             return
         await message.reply_text(result.message)
+
+    async def handle_rename(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self._is_allowed(update):
+            return
+        message = update.effective_message
+        if not message:
+            return
+        if len(context.args) < 2:
+            await message.reply_text("Usage: /rename <id> <new title>")
+            return
+        note_id = context.args[0].strip().lower()
+        title = " ".join(context.args[1:]).strip()
+        record = self.database.find_by_note_id(note_id)
+        if not record:
+            await message.reply_text(f"No note found for {note_id}.")
+            return
+        try:
+            updated = await asyncio.to_thread(self.notes.rename_note, record, title)
+        except ValueError as exc:
+            await message.reply_text(str(exc))
+            return
+        except Exception as exc:
+            LOGGER.exception("Rename failed for %s", note_id)
+            await message.reply_text(f"Rename failed: {type(exc).__name__}: {exc}")
+            return
+        await message.reply_text(f"Renamed {updated.note_id} → <b>{_h(updated.title)}</b>", parse_mode=HTML_PARSE_MODE)
+
+    async def handle_status_set(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self._is_allowed(update):
+            return
+        message = update.effective_message
+        if not message:
+            return
+        if len(context.args) < 2:
+            await message.reply_text(f"Usage: /status_set <id> <{'/'.join(NOTE_STATUSES)}>")
+            return
+        note_id = context.args[0].strip().lower()
+        status = context.args[1].strip().lower()
+        record = self.database.find_by_note_id(note_id)
+        if not record:
+            await message.reply_text(f"No note found for {note_id}.")
+            return
+        try:
+            updated = await asyncio.to_thread(self.notes.set_status, record, status)
+        except ValueError as exc:
+            await message.reply_text(str(exc))
+            return
+        except Exception as exc:
+            LOGGER.exception("Set status failed for %s", note_id)
+            await message.reply_text(f"Set status failed: {type(exc).__name__}: {exc}")
+            return
+        await message.reply_text(f"Set {updated.note_id} status to <b>{_h(updated.status)}</b>", parse_mode=HTML_PARSE_MODE)
 
     async def handle_retry_failed(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._is_allowed(update):
@@ -1117,6 +1172,8 @@ def build_application(settings: Settings) -> Application:
     application.add_handler(CommandHandler("start", bot.handle_start))
     application.add_handler(CommandHandler("help", bot.handle_help))
     application.add_handler(CommandHandler("more", bot.handle_more))
+    application.add_handler(CommandHandler("rename", bot.handle_rename))
+    application.add_handler(CommandHandler("status_set", bot.handle_status_set))
     application.add_handler(CommandHandler("reprocess", bot.handle_reprocess))
     application.add_handler(CommandHandler("retry_failed", bot.handle_retry_failed))
     application.add_handler(CommandHandler("delete", bot.handle_delete))

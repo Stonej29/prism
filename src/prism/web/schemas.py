@@ -24,3 +24,11 @@ class RateIdeaBody(BaseModel):
 
 class EditTagsBody(BaseModel):
     tags: list[str] = Field(default_factory=list)
+
+
+class RenameBody(BaseModel):
+    title: str = Field(..., min_length=1)
+
+
+class SetStatusBody(BaseModel):
+    status: str = Field(..., min_length=1)

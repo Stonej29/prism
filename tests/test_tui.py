@@ -146,6 +146,24 @@ class TuiAppTest(unittest.IsolatedAsyncioTestCase):
             await self._settle(app, pilot)
             self.assertIn("not configured", app.screen.query_one(CommandBar).last_status)
 
+    async def test_status_set_command(self) -> None:
+        self.core.database.insert_note(make_note("aaa111"))
+        app = PrismApp(self.core)
+        async with app.run_test() as pilot:
+            await self._settle(app, pilot)
+            app.screen.dispatch_command("status_set aaa111 reviewed")
+            await self._settle(app, pilot)
+            self.assertEqual(self.core.note("aaa111").status, "reviewed")
+
+    async def test_rename_command(self) -> None:
+        self.core.database.insert_note(make_note("aaa111", title="Old"))
+        app = PrismApp(self.core)
+        async with app.run_test() as pilot:
+            await self._settle(app, pilot)
+            app.screen.dispatch_command("rename aaa111 A Better Title")
+            await self._settle(app, pilot)
+            self.assertEqual(self.core.note("aaa111").title, "A Better Title")
+
     async def test_delete_flow(self) -> None:
         self.core.database.insert_note(make_note("aaa111"))
         app = PrismApp(self.core)

@@ -34,6 +34,9 @@ Prefer notes that are dense, practical, technical, and direct. Emphasize a healt
 """
 
 
+NOTE_STATUSES = ("unreviewed", "reviewed", "archived")
+
+
 @dataclass(frozen=True)
 class SaveResult:
     record: NoteRecord
@@ -260,6 +263,34 @@ class NoteService:
                 pass
         self.database.delete_note(record.note_id)
         return DeleteResult(ok=True, message=f"Deleted note {record.note_id}: {record.title}", title=record.title)
+
+    def rename_note(self, record: NoteRecord, new_title: str) -> NoteRecord:
+        """Retitle a note in SQLite, rewrite its Markdown frontmatter, and re-embed.
+
+        The title leads the canonical index text (see `canonical_index_text`), so
+        a rename changes the embedding — re-index after persisting. Raises
+        ValueError if the cleaned title is empty.
+        """
+        cleaned = clean_title(new_title)
+        if not cleaned:
+            raise ValueError("Title cannot be empty")
+        updated = replace(record, title=cleaned)
+        self.database.update_note(updated)
+        self._render_to_disk(updated)
+        return self._index_after_persist(updated)
+
+    def set_status(self, record: NoteRecord, status: str) -> NoteRecord:
+        """Set a note's review status in SQLite and rewrite its Markdown frontmatter.
+
+        Status is not part of the embedded text, so no re-indexing is needed.
+        Raises ValueError if `status` is not one of NOTE_STATUSES.
+        """
+        if status not in NOTE_STATUSES:
+            raise ValueError(f"Status must be one of {', '.join(NOTE_STATUSES)}")
+        updated = replace(record, status=status)
+        self.database.update_note(updated)
+        self._render_to_disk(updated)
+        return updated
 
     def apply_tags(self, record: NoteRecord, new_tags: list[str]) -> NoteRecord:
         """Set a note's tags in SQLite and rewrite its Markdown frontmatter in place.

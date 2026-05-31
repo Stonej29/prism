@@ -53,6 +53,15 @@ class IngestResult:
 
 
 @dataclass(frozen=True)
+class EditResult:
+    """Outcome of an in-place note edit (rename / set-status)."""
+
+    ok: bool
+    message: str
+    record: NoteRecord | None = None
+
+
+@dataclass(frozen=True)
 class StatusInfo:
     stats: NoteStats
     index_configured: bool
@@ -193,6 +202,26 @@ class CliCore:
 
     def retry_failed(self, limit: int = 25) -> RetryFailedResult:
         return self.notes.retry_failed(limit)
+
+    def rename_note(self, note_id: str, title: str) -> EditResult:
+        record = self.note(note_id)
+        if not record:
+            return EditResult(ok=False, message=f"No note found for {note_id}.")
+        try:
+            updated = self.notes.rename_note(record, title)
+        except ValueError as exc:
+            return EditResult(ok=False, message=str(exc))
+        return EditResult(ok=True, message=f"Renamed {updated.note_id} → {updated.title}", record=updated)
+
+    def set_status(self, note_id: str, status: str) -> EditResult:
+        record = self.note(note_id)
+        if not record:
+            return EditResult(ok=False, message=f"No note found for {note_id}.")
+        try:
+            updated = self.notes.set_status(record, status)
+        except ValueError as exc:
+            return EditResult(ok=False, message=str(exc))
+        return EditResult(ok=True, message=f"Set {updated.note_id} status to {updated.status}", record=updated)
 
     def delete_note(self, note_id: str) -> DeleteResult:
         return self.notes.delete_note(note_id)

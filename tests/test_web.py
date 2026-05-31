@@ -157,6 +157,23 @@ class WebApiTest(unittest.TestCase):
         again = self.client.get("/api/notes/aaa111").json()
         self.assertEqual(again["tags"], ["new-tag", "vision"])
 
+    def test_rename_note(self) -> None:
+        self.db.insert_note(make_note("aaa111", title="Old Title"))
+        resp = self.client.put("/api/notes/aaa111/title", json={"title": "A Better Title"})
+        self.assertEqual(resp.json()["title"], "A Better Title")
+        again = self.client.get("/api/notes/aaa111").json()
+        self.assertEqual(again["title"], "A Better Title")
+        self.assertEqual(self.client.put("/api/notes/missing/title", json={"title": "x"}).status_code, 404)
+
+    def test_set_status(self) -> None:
+        self.db.insert_note(make_note("aaa111"))
+        resp = self.client.put("/api/notes/aaa111/status", json={"status": "reviewed"})
+        self.assertEqual(resp.json()["status"], "reviewed")
+        self.assertEqual(self.client.get("/api/notes/aaa111").json()["status"], "reviewed")
+        bad = self.client.put("/api/notes/aaa111/status", json={"status": "bogus"})
+        self.assertEqual(bad.status_code, 400)
+        self.assertEqual(self.client.put("/api/notes/missing/status", json={"status": "reviewed"}).status_code, 404)
+
     def test_delete_note(self) -> None:
         self.db.insert_note(make_note("aaa111"))
         self.assertTrue(self.client.delete("/api/notes/aaa111").json()["ok"])

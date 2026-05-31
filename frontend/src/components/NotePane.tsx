@@ -5,6 +5,8 @@ import { SourceBadge } from "./SourceBadge";
 import { Spinner } from "./Spinner";
 import { ResizeHandle } from "./ResizeHandle";
 
+const REVIEW_STATUSES = ["unreviewed", "reviewed", "archived"] as const;
+
 const SCORE_ABBR: Record<string, string> = {
   novelty: "nov",
   relevance: "rel",
@@ -88,6 +90,8 @@ export function NotePane({
   onReprocess,
   onDelete,
   onEditTags,
+  onEditTitle,
+  onSetStatus,
 }: {
   note: NoteDetail | null;
   loading: boolean;
@@ -101,9 +105,13 @@ export function NotePane({
   onReprocess: (id: string) => void;
   onDelete: (id: string) => void;
   onEditTags: (id: string, tags: string[]) => void;
+  onEditTitle: (id: string, title: string) => void;
+  onSetStatus: (id: string, status: string) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
+  const [titleEditing, setTitleEditing] = useState(false);
+  const [titleDraft, setTitleDraft] = useState("");
 
   const wrap = (children: React.ReactNode) => (
     <div
@@ -171,6 +179,16 @@ export function NotePane({
     setEditing(false);
   };
 
+  const startTitleEdit = () => {
+    setTitleDraft(note.title);
+    setTitleEditing(true);
+  };
+  const saveTitleEdit = () => {
+    const next = titleDraft.trim();
+    if (next && next !== note.title) onEditTitle(note.id, next);
+    setTitleEditing(false);
+  };
+
   return wrap(
     <>
       <div style={{ padding: "8px 20px 16px", borderBottom: `1px solid ${P.line}` }}>
@@ -189,9 +207,27 @@ export function NotePane({
             <span onClick={() => onShowRelated(note.id)} title="Highlight related notes in the graph" style={{ fontFamily: P.mono, fontSize: 11, color: P.accent, cursor: "pointer" }}>related</span>
           </div>
         </div>
-        <div style={{ fontFamily: P.sans, fontSize: 21, fontWeight: 600, lineHeight: 1.25, letterSpacing: -0.2, marginBottom: 14, color: P.hi }}>
-          {note.title}
-        </div>
+        {titleEditing ? (
+          <input
+            value={titleDraft}
+            autoFocus
+            onChange={(e) => setTitleDraft(e.target.value)}
+            onBlur={saveTitleEdit}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") saveTitleEdit();
+              if (e.key === "Escape") setTitleEditing(false);
+            }}
+            style={{ width: "100%", background: P.bg2, border: `1px solid ${P.line}`, borderRadius: 6, padding: "6px 9px", marginBottom: 14, color: P.hi, fontFamily: P.sans, fontSize: 21, fontWeight: 600, lineHeight: 1.25, letterSpacing: -0.2, outline: "none" }}
+          />
+        ) : (
+          <div
+            onDoubleClick={startTitleEdit}
+            title="Double-click to rename"
+            style={{ fontFamily: P.sans, fontSize: 21, fontWeight: 600, lineHeight: 1.25, letterSpacing: -0.2, marginBottom: 14, color: P.hi, cursor: "text" }}
+          >
+            {note.title}
+          </div>
+        )}
         {(overall != null || restScores.length > 0) && (
           <div style={{ display: "flex", alignItems: "baseline", gap: 14, flexWrap: "wrap" }}>
             {overall != null && (
@@ -207,6 +243,32 @@ export function NotePane({
             )}
           </div>
         )}
+        <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 12 }}>
+          {REVIEW_STATUSES.map((st) => {
+            const active = note.status === st;
+            return (
+              <span
+                key={st}
+                onClick={() => !active && !busy && onSetStatus(note.id, st)}
+                title="Set review status"
+                style={{
+                  fontFamily: P.mono,
+                  fontSize: 10,
+                  letterSpacing: 0.5,
+                  textTransform: "uppercase",
+                  padding: "3px 8px",
+                  borderRadius: 5,
+                  cursor: active ? "default" : "pointer",
+                  color: active ? P.hi : P.faint,
+                  background: active ? P.bg2 : "transparent",
+                  border: `1px solid ${active ? P.accent : P.line}`,
+                }}
+              >
+                {st}
+              </span>
+            );
+          })}
+        </div>
       </div>
 
       <div style={{ flex: 1, overflowY: "auto", padding: "0 20px 16px" }}>

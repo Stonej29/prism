@@ -295,6 +295,54 @@ class Phase3NoteServiceTests(unittest.TestCase):
             self.assertIn("embedded_html", stored.metadata_json or "")
 
 
+class NoteEditTests(unittest.TestCase):
+    def _service_with_note(self, root: Path):
+        db = PrismDatabase(root / "prism.sqlite3")
+        service = NoteService(root / "vault", db, root / "archives")  # no LLM/indexer
+        note_path = root / "vault" / "notes" / "a.md"
+        note_path.parent.mkdir(parents=True, exist_ok=True)
+        note_path.write_text("old", encoding="utf-8")
+        record = NoteRecord(
+            note_id="abc123", source_url="https://a", resolved_url="https://a", note_path="notes/a.md",
+            date_saved="2026-01-01T00:00:00Z", status="unreviewed", title="Old Title", summary="A",
+            fetch_status="fetched", source_kind="website",
+        )
+        db.insert_note(record)
+        return db, service, record, note_path
+
+    def test_rename_note_updates_db_and_frontmatter(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db, service, record, note_path = self._service_with_note(root)
+            updated = service.rename_note(record, "  A   Better  Title ")
+            self.assertEqual(updated.title, "A Better Title")
+            self.assertEqual(db.find_by_note_id("abc123").title, "A Better Title")
+            self.assertIn("title: A Better Title", note_path.read_text(encoding="utf-8"))
+
+    def test_rename_note_rejects_empty_title(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _, service, record, _ = self._service_with_note(root)
+            with self.assertRaises(ValueError):
+                service.rename_note(record, "   ")
+
+    def test_set_status_updates_db_and_frontmatter(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db, service, record, note_path = self._service_with_note(root)
+            updated = service.set_status(record, "reviewed")
+            self.assertEqual(updated.status, "reviewed")
+            self.assertEqual(db.find_by_note_id("abc123").status, "reviewed")
+            self.assertIn("status: reviewed", note_path.read_text(encoding="utf-8"))
+
+    def test_set_status_rejects_invalid(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _, service, record, _ = self._service_with_note(root)
+            with self.assertRaises(ValueError):
+                service.set_status(record, "bogus")
+
+
 class Phase3RenderTests(unittest.TestCase):
     def test_renderer_handles_missing_structured_fields(self) -> None:
         record = NoteRecord(

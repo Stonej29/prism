@@ -212,6 +212,10 @@ class AtlasScreen(Screen):
         elif first == "traverse":
             self.set_status("Running graph maintenance…")
             self._run(self._op_traverse)
+        elif first == "rename":
+            self._dispatch_rename(rest)
+        elif first == "status_set":
+            self._dispatch_status_set(rest)
         elif first == "reprocess":
             self._dispatch_blocking(rest, "Usage: reprocess <id>", lambda q: self._op_reprocess(q), "Reprocessing…")
         elif first == "retry_failed":
@@ -244,6 +248,24 @@ class AtlasScreen(Screen):
             return
         self.set_status(f"Saving {url}…")
         self._run(lambda: self._op_save(url))
+
+    def _dispatch_rename(self, rest: str) -> None:
+        parts = rest.split(maxsplit=1)
+        if len(parts) < 2:
+            self.set_status("Usage: rename <id> <title>")
+            return
+        note_id, title = parts[0], parts[1]
+        self.set_status(f"Renaming {note_id}…")
+        self._run(lambda: self._op_rename(note_id, title))
+
+    def _dispatch_status_set(self, rest: str) -> None:
+        parts = rest.split()
+        if len(parts) < 2:
+            self.set_status("Usage: status_set <id> <status>")
+            return
+        note_id, status = parts[0], parts[1]
+        self.set_status(f"Setting status of {note_id}…")
+        self._run(lambda: self._op_status_set(note_id, status))
 
     def _dispatch_delete(self, rest: str) -> None:
         if not rest:
@@ -309,6 +331,16 @@ class AtlasScreen(Screen):
         if not record:
             return WorkerResult(f"No note found for {note_id}.")
         return WorkerResult("", render.note_markdown(record))
+
+    def _op_rename(self, note_id: str, title: str) -> WorkerResult:
+        r = self.core.rename_note(note_id, title)
+        detail = render.note_markdown(r.record) if r.record else None
+        return WorkerResult(r.message, detail, refresh=True)
+
+    def _op_status_set(self, note_id: str, status: str) -> WorkerResult:
+        r = self.core.set_status(note_id, status)
+        detail = render.note_markdown(r.record) if r.record else None
+        return WorkerResult(r.message, detail, refresh=True)
 
     def _op_reprocess(self, note_id: str) -> WorkerResult:
         r = self.core.reprocess(note_id)

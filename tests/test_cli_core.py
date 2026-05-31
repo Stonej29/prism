@@ -128,6 +128,32 @@ class CliCoreTest(unittest.TestCase):
         self.assertIsNotNone(removed)
         self.assertIsNone(self.core.idea("idea01"))
 
+    def test_rename_note(self) -> None:
+        self.core.database.insert_note(make_note("aaa111", title="Old"))
+        result = self.core.rename_note("aaa111", "A Better Title")
+        self.assertTrue(result.ok)
+        self.assertEqual(result.record.title, "A Better Title")
+        self.assertEqual(self.core.note("aaa111").title, "A Better Title")
+
+    def test_rename_note_missing_and_empty(self) -> None:
+        self.assertFalse(self.core.rename_note("missing", "x").ok)
+        self.core.database.insert_note(make_note("aaa111"))
+        empty = self.core.rename_note("aaa111", "   ")
+        self.assertFalse(empty.ok)
+
+    def test_set_status(self) -> None:
+        self.core.database.insert_note(make_note("aaa111"))
+        result = self.core.set_status("aaa111", "reviewed")
+        self.assertTrue(result.ok)
+        self.assertEqual(self.core.note("aaa111").status, "reviewed")
+
+    def test_set_status_invalid_and_missing(self) -> None:
+        self.assertFalse(self.core.set_status("missing", "reviewed").ok)
+        self.core.database.insert_note(make_note("aaa111"))
+        bad = self.core.set_status("aaa111", "bogus")
+        self.assertFalse(bad.ok)
+        self.assertIn("Status must be one of", bad.message)
+
     def test_ingest_without_feeds(self) -> None:
         result = self.core.ingest()
         self.assertFalse(result.ok)
