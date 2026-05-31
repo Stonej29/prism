@@ -16,6 +16,7 @@ class AskBody(BaseModel):
 
 class GenerateIdeaBody(BaseModel):
     topic: str | None = None
+    prefer_job: bool = False
 
 
 class RateIdeaBody(BaseModel):
@@ -37,3 +38,7 @@ class SetStatusBody(BaseModel):
 class BulkStatusBody(BaseModel):
     ids: list[str] = Field(..., min_length=1)
     status: str = Field(..., min_length=1)
+
+
+class JobFlagBody(BaseModel):
+    value: bool

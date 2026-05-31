@@ -50,6 +50,7 @@ def build_graph(records: list[NoteRecord], vectors: dict[str, list[float]] | Non
             "source_kind": r.source_kind,
             "status": r.status,
             "overall": scores.get("overall"),
+            "job_relevant": bool(r.job_relevant),
             "tags": tags_by_id[r.note_id],
             "topic": topic.get(r.note_id, -1),
             "community": community.get(r.note_id, -1),

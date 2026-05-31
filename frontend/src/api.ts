@@ -75,6 +75,9 @@ export const api = {
   setStatus: (id: string, status: string) =>
     req<NoteDetail>(`/notes/${id}/status`, { method: "PUT", body: JSON.stringify({ status }) }),
 
+  setJobFlag: (id: string, value: boolean) =>
+    req<NoteDetail>(`/notes/${id}/job_flag`, { method: "PUT", body: JSON.stringify({ value }) }),
+
   setStatusBulk: (ids: string[], status: string) =>
     req<{ status: string; results: { id: string; ok: boolean; status?: string }[] }>(`/notes/status`, {
       method: "PUT",
@@ -107,8 +110,8 @@ export const api = {
 
   ideas: () => req<{ items: Idea[] }>(`/ideas`),
 
-  generateIdea: (topic?: string) =>
-    req<IdeaResult>(`/ideas`, { method: "POST", body: JSON.stringify({ topic: topic || null }) }),
+  generateIdea: (topic?: string, preferJob = false) =>
+    req<IdeaResult>(`/ideas`, { method: "POST", body: JSON.stringify({ topic: topic || null, prefer_job: preferJob }) }),
 
   rateIdea: (id: string, rating: number) =>
     req<Idea>(`/ideas/${id}/rating`, { method: "POST", body: JSON.stringify({ rating }) }),

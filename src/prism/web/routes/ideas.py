@@ -27,7 +27,7 @@ def get_idea(idea_id: str, db: PrismDatabase = Depends(get_db)) -> dict:
 
 @router.post("")
 def generate_idea(body: GenerateIdeaBody, ideas: IdeaService = Depends(get_ideas)) -> dict:
-    result = ideas.generate_idea(body.topic)
+    result = ideas.generate_idea(body.topic, prefer_job=body.prefer_job)
     return {
         "ok": result.ok,
         "message": result.message,

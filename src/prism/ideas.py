@@ -54,12 +54,12 @@ class IdeaService:
         self.ideas_path.mkdir(parents=True, exist_ok=True)
         ensure_profile(self.profile_path)
 
-    def generate_idea(self, topic: str | None = None) -> IdeaResult:
+    def generate_idea(self, topic: str | None = None, prefer_job: bool = False) -> IdeaResult:
         topic = (topic or "").strip() or None
         if not self.llm_config.is_configured:
             return IdeaResult(record=None, ok=False, message="Idea generation needs LLM_API_KEY and LLM_MODEL.")
 
-        candidates = self._gather_knowledge(topic)
+        candidates = self._gather_knowledge(topic, prefer_job)
         created = datetime.now(UTC).replace(microsecond=0)
         created_at = created.isoformat().replace("+00:00", "Z")
         idea_id = self._new_idea_id()
@@ -146,7 +146,18 @@ class IdeaService:
         self.database.delete_idea(record.idea_id)
         return record
 
-    def _gather_knowledge(self, topic: str | None) -> list[RelatedCandidate]:
+    def _gather_knowledge(self, topic: str | None, prefer_job: bool = False) -> list[RelatedCandidate]:
+        # Steered ideation: when asked to focus on the user's job, seed the
+        # knowledge from notes they flagged as job-relevant (topped up with
+        # semantic/recent candidates if there are few flagged notes).
+        if prefer_job:
+            job = self._job_candidates()
+            if job:
+                if len(job) >= KNOWLEDGE_LIMIT:
+                    return job[:KNOWLEDGE_LIMIT]
+                seen = {c.note_id for c in job}
+                extra = self._gather_knowledge(topic, prefer_job=False)
+                return (job + [c for c in extra if c.note_id not in seen])[:KNOWLEDGE_LIMIT]
         if topic and self.indexer and self.indexer.is_configured:
             try:
                 results = self.indexer.search_text(topic, limit=KNOWLEDGE_LIMIT)
@@ -155,6 +166,21 @@ class IdeaService:
             if results:
                 return results
         return self._recent_candidates()
+
+    def _job_candidates(self) -> list[RelatedCandidate]:
+        return [
+            RelatedCandidate(
+                note_id=record.note_id,
+                title=record.title,
+                summary=record.summary,
+                note_path=record.note_path,
+                source_url=record.source_url,
+                tags=tags_for_record(record),
+                score=0.0,
+            )
+            for record in self.database.list_job_notes(KNOWLEDGE_LIMIT)
+            if record.llm_status == "generated"
+        ]
 
     def _recent_candidates(self) -> list[RelatedCandidate]:
         candidates: list[RelatedCandidate] = []

@@ -270,6 +270,29 @@ export default function App() {
     }
   };
 
+  const onSetJobFlag = async (id: string, value: boolean) => {
+    setPaneBusy(true);
+    try {
+      const updated = await api.setJobFlag(id, value);
+      setNote(updated);
+      await refreshData(); // node's job_relevant flag changed
+    } catch (e) {
+      setToast(String(e));
+    } finally {
+      setPaneBusy(false);
+    }
+  };
+
+  // Job: highlight job-relevant notes in the graph (clearing re-clicks).
+  const onJob = () => {
+    const flagged = new Set((graph?.nodes ?? []).filter((n) => n.job_relevant).map((n) => n.id));
+    if (flagged.size === 0) {
+      setToast("No notes flagged as job-relevant yet (use the ☆ on a note).");
+      return;
+    }
+    setHighlight((cur) => (cur && cur.size === flagged.size && [...flagged].every((id) => cur.has(id)) ? null : flagged));
+  };
+
   const onRate = async (id: string, rating: number) => {
     try {
       const updated = await api.rateIdea(id, rating);
@@ -391,6 +414,7 @@ export default function App() {
           onOpenFile={setOpenFile}
           onSelectSource={onSelectSource}
           onSelectTag={onSelectTag}
+          onJob={onJob}
         />
         <GraphPane
           graph={graph}
@@ -418,6 +442,7 @@ export default function App() {
           onEditTags={onEditTags}
           onEditTitle={onEditTitle}
           onSetStatus={onSetStatus}
+          onSetJobFlag={onSetJobFlag}
         />
 
         {ask.open && (

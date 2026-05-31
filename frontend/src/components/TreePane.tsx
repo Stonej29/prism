@@ -73,6 +73,7 @@ export function TreePane({
   onOpenFile,
   onSelectSource,
   onSelectTag,
+  onJob,
 }: {
   open: boolean;
   onToggle: () => void;
@@ -91,6 +92,7 @@ export function TreePane({
   onOpenFile: (f: OpenFile) => void;
   onSelectSource: (s: string | null) => void;
   onSelectTag: (t: string) => void;
+  onJob: () => void;
 }) {
   const [query, setQuery] = useState("");
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -143,6 +145,7 @@ export function TreePane({
         {filtersOpen && (
           <div style={{ padding: "0 4px 8px" }}>
             <FilterRow glyph="◇" label="All notes" active={!sourceFilter && !activeTag} onClick={() => onSelectSource(null)} />
+            <FilterRow glyph="★" label="Job-relevant" count={(graph?.nodes ?? []).filter((n) => n.job_relevant).length} onClick={onJob} />
             <div style={{ fontFamily: P.mono, fontSize: 9, letterSpacing: 1, color: P.faint, padding: "8px 12px 4px" }}>BY SOURCE</div>
             {KNOWN_SOURCES.map((kind) => (
               <FilterRow
