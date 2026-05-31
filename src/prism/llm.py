@@ -1,13 +1,23 @@
 from __future__ import annotations
 
 import json
+import logging
+import time
 from dataclasses import dataclass
 from typing import Any
 
 import httpx
 
+LOGGER = logging.getLogger("prism.llm")
+
 LLM_TIMEOUT_SECONDS = 90.0
 SOURCE_TEXT_LIMIT = 60000
+
+# Bounded retry for transient failures. 4xx (incl. the 400 response_format
+# fallback) is never retried so it still propagates to callers.
+RETRY_ATTEMPTS = 3
+RETRY_BACKOFF_BASE = 1.0
+_RETRYABLE = (httpx.TimeoutException, httpx.ConnectError, httpx.ReadError, httpx.WriteError, httpx.PoolTimeout)
 
 
 @dataclass(frozen=True)
@@ -127,10 +137,27 @@ class LLMClient:
             "Authorization": f"Bearer {self.config.api_key}",
             "Content-Type": "application/json",
         }
-        with httpx.Client(timeout=httpx.Timeout(LLM_TIMEOUT_SECONDS)) as client:
-            response = client.post(url, headers=headers, json=payload)
-            response.raise_for_status()
-            return response.json()
+        last_exc: Exception | None = None
+        for attempt in range(RETRY_ATTEMPTS):
+            try:
+                with httpx.Client(timeout=httpx.Timeout(LLM_TIMEOUT_SECONDS)) as client:
+                    response = client.post(url, headers=headers, json=payload)
+                    response.raise_for_status()
+                    data = response.json()
+                _log_usage(data, self.config.model)
+                return data
+            except httpx.HTTPStatusError as exc:
+                # Retry only on server errors; 4xx (incl. the 400 fallback) propagates.
+                if exc.response.status_code < 500 or attempt == RETRY_ATTEMPTS - 1:
+                    raise
+                last_exc = exc
+            except _RETRYABLE as exc:
+                if attempt == RETRY_ATTEMPTS - 1:
+                    raise
+                last_exc = exc
+            LOGGER.warning("LLM request failed (%s); retry %d/%d", type(last_exc).__name__, attempt + 1, RETRY_ATTEMPTS - 1)
+            time.sleep(RETRY_BACKOFF_BASE * (2 ** attempt))
+        raise last_exc  # pragma: no cover - loop either returns or raises
 
     def _payload(self, context: dict[str, Any], profile: str, use_response_format: bool) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -249,6 +276,16 @@ def _parse_json_object(content: str) -> dict[str, Any]:
     if not isinstance(parsed, dict):
         raise ValueError("LLM response JSON was not an object")
     return parsed
+
+
+def _log_usage(data: dict[str, Any], fallback_model: str | None) -> None:
+    usage = data.get("usage")
+    if isinstance(usage, dict):
+        LOGGER.info(
+            "LLM usage model=%s prompt=%s completion=%s total=%s",
+            data.get("model") or fallback_model,
+            usage.get("prompt_tokens"), usage.get("completion_tokens"), usage.get("total_tokens"),
+        )
 
 
 def _assistant_content(response: dict[str, Any]) -> str:

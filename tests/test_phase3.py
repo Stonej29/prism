@@ -119,6 +119,67 @@ class Phase3LLMClientTests(unittest.TestCase):
         self.assertEqual(generation.data["title"], "Generated Title")
 
 
+class LLMRetryTests(unittest.TestCase):
+    def _client(self) -> LLMClient:
+        return LLMClient(LLMConfig("https://llm.example", "key", "model-a"))
+
+    @staticmethod
+    def _ok_response(url):
+        return httpx.Response(
+            200, request=httpx.Request("POST", url),
+            json={"model": "model-a", "choices": [{"message": {"content": json.dumps(structured())}}],
+                  "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}},
+        )
+
+    def test_retries_transient_then_succeeds(self) -> None:
+        calls: list[int] = []
+
+        class FakeClient:
+            def __init__(self, timeout) -> None: ...
+            def __enter__(self): return self
+            def __exit__(self, *a): return None
+            def post(self, url, headers, json):
+                calls.append(1)
+                if len(calls) <= 2:
+                    raise httpx.ConnectError("boom")
+                return LLMRetryTests._ok_response(url)
+
+        with patch("prism.llm.httpx.Client", FakeClient), patch("prism.llm.time.sleep"):
+            gen = self._client().generate_note({"title": "T"}, "profile")
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(gen.data["title"], "Generated Title")
+
+    def test_does_not_retry_4xx(self) -> None:
+        calls: list[int] = []
+
+        class FakeClient:
+            def __init__(self, timeout) -> None: ...
+            def __enter__(self): return self
+            def __exit__(self, *a): return None
+            def post(self, url, headers, json):
+                calls.append(1)
+                resp = httpx.Response(401, request=httpx.Request("POST", url))
+                raise httpx.HTTPStatusError("unauthorized", request=resp.request, response=resp)
+
+        with patch("prism.llm.httpx.Client", FakeClient), patch("prism.llm.time.sleep"):
+            with self.assertRaises(httpx.HTTPStatusError):
+                self._client()._post({"model": "model-a"})
+        self.assertEqual(len(calls), 1)  # not retried
+
+    def test_logs_token_usage(self) -> None:
+        class FakeClient:
+            def __init__(self, timeout) -> None: ...
+            def __enter__(self): return self
+            def __exit__(self, *a): return None
+            def post(self, url, headers, json):
+                return LLMRetryTests._ok_response(url)
+
+        with patch("prism.llm.httpx.Client", FakeClient):
+            with self.assertLogs("prism.llm", level="INFO") as cm:
+                self._client().generate_note({"title": "T"}, "profile")
+        self.assertTrue(any("LLM usage" in line and "total=15" in line for line in cm.output))
+
+
 class Phase3DatabaseTests(unittest.TestCase):
     def test_migrates_phase2_schema_with_llm_columns(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

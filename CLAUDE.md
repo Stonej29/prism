@@ -140,6 +140,7 @@ Telegram message → handle_message → NoteService.save_url
 - **Deduplication**: checked by exact `source_url` first, then by `content_hash` of the extracted text. A duplicate returns the existing record without creating a new note.
 - **LanceDB is a cache**: SQLite and Markdown files are the source of truth. The index can be fully rebuilt from SQLite at any time via `python -m prism.index rebuild`.
 - **LLM provider compatibility**: falls back to a request without `response_format` if the provider returns HTTP 400.
+- **HTTP robustness**: `LLMClient._post` and `EmbeddingClient._post` retry transient failures (timeouts, connection resets, 5xx) with bounded exponential backoff (`RETRY_ATTEMPTS`/`RETRY_BACKOFF_BASE`); 4xx is never retried so the 400 `response_format` fallback path is preserved. Both log token `usage` (prompt/completion/total) at INFO on success.
 
 ### Web UI (`src/prism/web/` + `frontend/`)
 

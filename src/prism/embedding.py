@@ -1,11 +1,20 @@
 from __future__ import annotations
 
+import logging
+import time
 from dataclasses import dataclass
 from typing import Any
 
 import httpx
 
+LOGGER = logging.getLogger("prism.embedding")
+
 EMBEDDING_TIMEOUT_SECONDS = 60.0
+
+# Bounded retry for transient failures (timeouts, connection resets, 5xx).
+RETRY_ATTEMPTS = 3
+RETRY_BACKOFF_BASE = 1.0
+_RETRYABLE = (httpx.TimeoutException, httpx.ConnectError, httpx.ReadError, httpx.WriteError, httpx.PoolTimeout)
 
 
 @dataclass(frozen=True)
@@ -46,14 +55,38 @@ class EmbeddingClient:
             "Authorization": f"Bearer {self.config.api_key}",
             "Content-Type": "application/json",
         }
-        with httpx.Client(timeout=httpx.Timeout(EMBEDDING_TIMEOUT_SECONDS)) as client:
-            response = client.post(url, headers=headers, json=payload)
-            response.raise_for_status()
-            data = response.json()
-
+        data = self._post(url, headers, payload)
         vector = _first_embedding(data)
         model = str(data.get("model") or self.config.model)
         return EmbeddingResult(vector=vector, model=model)
+
+    def _post(self, url: str, headers: dict[str, str], payload: dict[str, Any]) -> dict[str, Any]:
+        last_exc: Exception | None = None
+        for attempt in range(RETRY_ATTEMPTS):
+            try:
+                with httpx.Client(timeout=httpx.Timeout(EMBEDDING_TIMEOUT_SECONDS)) as client:
+                    response = client.post(url, headers=headers, json=payload)
+                    response.raise_for_status()
+                    data = response.json()
+                usage = data.get("usage")
+                if isinstance(usage, dict):
+                    LOGGER.info(
+                        "embedding usage model=%s prompt=%s total=%s",
+                        data.get("model") or self.config.model,
+                        usage.get("prompt_tokens"), usage.get("total_tokens"),
+                    )
+                return data
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code < 500 or attempt == RETRY_ATTEMPTS - 1:
+                    raise
+                last_exc = exc
+            except _RETRYABLE as exc:
+                if attempt == RETRY_ATTEMPTS - 1:
+                    raise
+                last_exc = exc
+            LOGGER.warning("embedding request failed (%s); retry %d/%d", type(last_exc).__name__, attempt + 1, RETRY_ATTEMPTS - 1)
+            time.sleep(RETRY_BACKOFF_BASE * (2 ** attempt))
+        raise last_exc  # pragma: no cover - loop either returns or raises
 
 
 def _first_embedding(data: dict[str, Any]) -> list[float]:
