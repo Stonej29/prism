@@ -1,5 +1,7 @@
 # PRISM
 
+[![CI](https://github.com/Stonej29/prism/actions/workflows/ci.yml/badge.svg)](https://github.com/Stonej29/prism/actions/workflows/ci.yml)
+
 **Personal Research Interlinked System** — a self-hosted research memory (a Telegram bot plus a web UI) that turns links into a structured, searchable knowledge base.
 
 Send a URL and PRISM fetches it, archives the source, generates a rich LLM summary, embeds it into a semantic index, and saves an Obsidian-compatible Markdown note with tags, evaluation scores, and backlinks to related notes. Over time it becomes a personal research memory you can browse, search, and ask questions against — and generate new project ideas from. Drive it from Telegram, from a graph-based [web interface](#web-interface), or from the [terminal](#terminal-interface) (full-screen TUI or scriptable CLI).
