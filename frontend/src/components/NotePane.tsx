@@ -92,6 +92,7 @@ export function NotePane({
   onEditTags,
   onEditTitle,
   onSetStatus,
+  onSelectTag,
 }: {
   note: NoteDetail | null;
   loading: boolean;
@@ -107,6 +108,7 @@ export function NotePane({
   onEditTags: (id: string, tags: string[]) => void;
   onEditTitle: (id: string, title: string) => void;
   onSetStatus: (id: string, status: string) => void;
+  onSelectTag: (tag: string) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
@@ -333,7 +335,14 @@ export function NotePane({
           ) : (
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
               {note.tags.map((t) => (
-                <span key={t} style={{ fontFamily: P.mono, fontSize: 11, color: P.mid, padding: "3px 8px", borderRadius: 5, background: P.bg2, border: `1px solid ${P.line}` }}>{t}</span>
+                <span
+                  key={t}
+                  onClick={() => onSelectTag(t)}
+                  title={`Filter notes tagged “${t}”`}
+                  style={{ fontFamily: P.mono, fontSize: 11, color: P.mid, padding: "3px 8px", borderRadius: 5, background: P.bg2, border: `1px solid ${P.line}`, cursor: "pointer" }}
+                >
+                  {t}
+                </span>
               ))}
               {note.tags.length === 0 && <span style={{ fontFamily: P.sans, fontSize: 12, color: P.faint }}>No tags.</span>}
             </div>

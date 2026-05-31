@@ -1,7 +1,7 @@
-import { useState } from "react";
 import { P, srcColor } from "../theme";
 import type { TreeNode } from "../types";
 import type { OpenFile } from "./FileViewer";
+import { usePersistentToggle } from "../hooks/usePersistentToggle";
 
 interface Ctx {
   selectedNoteId: string | null;
@@ -31,7 +31,9 @@ function Chevron({ open }: { open: boolean }) {
 }
 
 function Entry({ node, depth, ctx }: { node: TreeNode; depth: number; ctx: Ctx }) {
-  const [openState, setOpenState] = useState(depth < 1);
+  // Sections start folded (it's a lot at a glance); the user's choice per folder
+  // is remembered across reloads. While filtering, force everything open.
+  const [openState, toggleOpen] = usePersistentToggle(`prism.tree.dir:${node.path}/${node.name}`, false);
   const open = ctx.filter ? true : openState;
   const padLeft = 8 + depth * 13;
 
@@ -39,7 +41,7 @@ function Entry({ node, depth, ctx }: { node: TreeNode; depth: number; ctx: Ctx }
     return (
       <div>
         <div
-          onClick={() => setOpenState((o) => !o)}
+          onClick={toggleOpen}
           style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 8px", paddingLeft: padLeft, cursor: "pointer", color: P.mid }}
         >
           <Chevron open={open} />

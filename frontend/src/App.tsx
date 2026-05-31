@@ -157,7 +157,14 @@ export default function App() {
       const res = await api.find(q);
       if (!res.configured) setToast("Semantic search is not configured.");
       else if (res.results.length === 0) setToast(`No matches for “${q}”.`);
-      else selectNote(res.results[0].id);
+      else {
+        // Light up every match in the graph (like a tag filter) instead of
+        // jumping straight into the first hit.
+        setSourceFilter(null);
+        setActiveTag(null);
+        setHighlight(new Set(res.results.map((r) => r.id)));
+        setToast(`${res.results.length} match${res.results.length === 1 ? "" : "es"} for “${q}”`);
+      }
     } catch (e) {
       setToast(String(e));
     } finally {
@@ -418,6 +425,7 @@ export default function App() {
           onEditTags={onEditTags}
           onEditTitle={onEditTitle}
           onSetStatus={onSetStatus}
+          onSelectTag={onSelectTag}
         />
 
         {ask.open && (
