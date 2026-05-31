@@ -4,6 +4,7 @@ import type { GraphPayload, Stats, TagCount, TreeNode } from "../types";
 import { FileTree } from "./FileTree";
 import type { OpenFile } from "./FileViewer";
 import { ResizeHandle } from "./ResizeHandle";
+import { usePersistentToggle } from "../hooks/usePersistentToggle";
 
 const KNOWN_SOURCES = ["paper", "github", "huggingface", "youtube", "pdf", "website"];
 
@@ -93,7 +94,7 @@ export function TreePane({
   onSelectTag: (t: string) => void;
 }) {
   const [query, setQuery] = useState("");
-  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [filtersOpen, toggleFilters] = usePersistentToggle("prism.tree.filters", false);
 
   if (!open) {
     return (
@@ -139,7 +140,7 @@ export function TreePane({
       <div style={{ flex: 1, overflowY: "auto" }}>
         <FileTree root={tree} filter={query} selectedNoteId={selectedNoteId} noteKind={noteKind} onSelectNote={onSelectNote} onOpenIdea={onOpenIdea} onOpenFile={onOpenFile} />
 
-        <SectionHead open={filtersOpen} onClick={() => setFiltersOpen((o) => !o)}>Filters</SectionHead>
+        <SectionHead open={filtersOpen} onClick={toggleFilters}>Filters</SectionHead>
         {filtersOpen && (
           <div style={{ padding: "0 4px 8px" }}>
             <FilterRow glyph="◇" label="All notes" active={!sourceFilter && !activeTag} onClick={() => onSelectSource(null)} />
