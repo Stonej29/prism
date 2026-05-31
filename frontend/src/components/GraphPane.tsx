@@ -2,9 +2,16 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { P, SRC, srcColor } from "../theme";
 import type { GraphPayload } from "../types";
 import { nodeRadius, useGraphSimulation, type LayoutMode, type SimNode } from "../hooks/useGraphSimulation";
+import { convexHull, expandHull, roundedPath } from "../lib/hull";
 
 function Mono({ children, s = 11, c = P.mid }: { children: React.ReactNode; s?: number; c?: string }) {
   return <span style={{ fontFamily: P.mono, fontSize: s, color: c }}>{children}</span>;
+}
+
+// Deterministic, well-spread colour per topic cluster for the hull overlay.
+function topicColor(topic: number): string {
+  if (topic < 0) return P.line;
+  return `hsl(${(topic * 67) % 360} 60% 62%)`;
 }
 
 export function GraphPane({
@@ -56,7 +63,58 @@ export function GraphPane({
   }, [graph, sourceFilter]);
 
   const { sim, tick, simRef } = useGraphSimulation(nodes, edges, size.w, size.h, layout);
-  void tick; // re-render trigger
+
+  // Toggleable topic "hulls": dashed regions + labels behind the nodes. Pure
+  // overlay — never touches the force simulation. Persisted across reloads.
+  const [showHulls, setShowHulls] = useState(() => {
+    try { return localStorage.getItem("prism.graph.hulls") === "1"; } catch { return false; }
+  });
+  const toggleHulls = () =>
+    setShowHulls((v) => {
+      const next = !v;
+      try { localStorage.setItem("prism.graph.hulls", next ? "1" : "0"); } catch { /* ignore */ }
+      return next;
+    });
+
+  const hulls = useMemo(() => {
+    if (!showHulls) return [] as { topic: number; d: string; cx: number; cy: number; label: string }[];
+    const groups = new Map<number, SimNode[]>();
+    for (const n of sim.nodes) {
+      if (n.topic < 0) continue;
+      const g = groups.get(n.topic);
+      if (g) g.push(n);
+      else groups.set(n.topic, [n]);
+    }
+    const out: { topic: number; d: string; cx: number; cy: number; label: string }[] = [];
+    for (const [topic, members] of groups) {
+      if (members.length < 2) continue;
+      const hull = expandHull(convexHull(members.map((m) => ({ x: m.x, y: m.y }))), 30);
+      const cx = hull.reduce((s, p) => s + p.x, 0) / hull.length;
+      const cy = Math.min(...hull.map((p) => p.y)) - 8;
+      out.push({ topic, d: roundedPath(hull), cx, cy, label: graph?.topic_labels?.[String(topic)] ?? `topic ${topic + 1}` });
+    }
+    return out;
+    // tick drives recompute as the layout settles; sim.nodes mutates in place.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showHulls, tick, graph, sim.nodes]);
+
+  // Entrance animation for newly added nodes (e.g. just-saved notes).
+  const seenRef = useRef<Set<string>>(new Set());
+  const [entering, setEntering] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    const fresh = nodes.filter((n) => !seenRef.current.has(n.id)).map((n) => n.id);
+    if (fresh.length === 0) return;
+    fresh.forEach((id) => seenRef.current.add(id));
+    setEntering((prev) => new Set([...prev, ...fresh]));
+    const t = setTimeout(() => {
+      setEntering((prev) => {
+        const next = new Set(prev);
+        fresh.forEach((id) => next.delete(id));
+        return next;
+      });
+    }, 700);
+    return () => clearTimeout(t);
+  }, [nodes]);
 
   // Keep nodes screen-stable when the LEFT panel folds (its width change moves the
   // graph's left origin); compensate the pan so the graph doesn't appear to jump.
@@ -218,6 +276,21 @@ export function GraphPane({
               {label}
             </span>
           ))}
+          <span
+            onClick={toggleHulls}
+            title="Toggle topic regions (dashed hulls + labels)"
+            style={{
+              fontFamily: P.mono,
+              fontSize: 11,
+              color: showHulls ? P.accent : P.mid,
+              padding: "4px 9px",
+              borderRadius: 6,
+              background: showHulls ? P.accentDim : "transparent",
+              cursor: "pointer",
+            }}
+          >
+            hulls
+          </span>
         </div>
       </div>
 
@@ -230,7 +303,16 @@ export function GraphPane({
         onClick={onBgClick}
         style={{ display: "block", cursor: panRef.current ? "grabbing" : "grab" }}
       >
+        <style>{`@keyframes prismNodeEnter { from { opacity: 0; transform: scale(0.3); } to { opacity: 1; transform: scale(1); } }`}</style>
         <g transform={`translate(${transform.x},${transform.y}) scale(${transform.k})`}>
+          {hulls.map((h) => (
+            <g key={`hull-${h.topic}`} style={{ pointerEvents: "none" }}>
+              <path d={h.d} fill={topicColor(h.topic)} fillOpacity={0.06} stroke={topicColor(h.topic)} strokeOpacity={0.5} strokeWidth={1.2} strokeDasharray="6 5" />
+              <text x={h.cx} y={h.cy} textAnchor="middle" fontFamily={P.mono} fontSize={11} fill={topicColor(h.topic)} opacity={0.9}>
+                {h.label}
+              </text>
+            </g>
+          ))}
           {sim.links.map((l, i) => {
             const active = !!highlightIds;
             const on = active && highlightIds.has(l.source.id) && highlightIds.has(l.target.id);
@@ -273,6 +355,7 @@ export function GraphPane({
                   fill={srcColor(n.source_kind)}
                   stroke={selected ? P.hi : lit ? P.hi : P.bg0}
                   strokeWidth={selected ? 2 : lit ? 1.8 : 1.5}
+                  style={entering.has(n.id) ? { animation: "prismNodeEnter 650ms ease-out", transformBox: "fill-box", transformOrigin: "center" } : undefined}
                 />
                 {showLabel && (
                   <text
