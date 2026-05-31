@@ -3,6 +3,7 @@ import { P } from "../theme";
 import type { NoteDetail } from "../types";
 import { SourceBadge } from "./SourceBadge";
 import { Spinner } from "./Spinner";
+import { NoteSkeleton } from "./Skeleton";
 import { ResizeHandle } from "./ResizeHandle";
 
 const REVIEW_STATUSES = ["unreviewed", "reviewed", "archived"] as const;
@@ -81,6 +82,7 @@ export function NotePane({
   note,
   loading,
   busy,
+  reprocessing,
   open,
   onToggle,
   width,
@@ -96,6 +98,7 @@ export function NotePane({
   note: NoteDetail | null;
   loading: boolean;
   busy: boolean;
+  reprocessing: boolean;
   open: boolean;
   onToggle: () => void;
   width: number;
@@ -146,7 +149,7 @@ export function NotePane({
     );
   }
 
-  if (loading) return wrap(<div style={{ padding: 24 }}><Spinner label="Loading note…" /></div>);
+  if (loading || reprocessing) return wrap(<NoteSkeleton />);
   if (!note)
     return wrap(
       <div style={{ padding: 24, fontFamily: P.sans, fontSize: 13, color: P.faint }}>

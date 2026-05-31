@@ -46,6 +46,7 @@ export default function App() {
   const [note, setNote] = useState<NoteDetail | null>(null);
   const [noteLoading, setNoteLoading] = useState(false);
   const [paneBusy, setPaneBusy] = useState(false);
+  const [reprocessing, setReprocessing] = useState(false);
 
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(false);
@@ -206,6 +207,7 @@ export default function App() {
 
   const onReprocess = async (id: string) => {
     setPaneBusy(true);
+    setReprocessing(true);
     try {
       const res = await api.reprocess(id);
       setNote(res.note);
@@ -215,6 +217,7 @@ export default function App() {
       setToast(String(e));
     } finally {
       setPaneBusy(false);
+      setReprocessing(false);
     }
   };
 
@@ -407,6 +410,7 @@ export default function App() {
           note={note}
           loading={noteLoading}
           busy={paneBusy}
+          reprocessing={reprocessing}
           open={rightOpen}
           onToggle={() => setRightOpen((o) => !o)}
           width={rightWidth}
