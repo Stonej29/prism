@@ -299,16 +299,39 @@ def _assistant_content(response: dict[str, Any]) -> str:
     return content
 
 
+def _scoring_rubric() -> str:
+    return (
+        "SCORING: relevance, novelty, credibility, actionability, interest, and overall are "
+        "integers 1-10. confidence is your 0-1 confidence in this note's accuracy. "
+        "Score each dimension HONESTLY and INDEPENDENTLY on an absolute scale. Most items are "
+        "ordinary, so most scores should land in the middle. Do NOT default to 8 — that is the "
+        "single most common mistake. Force a spread: across many notes the full range should be "
+        "used, with only a few items above 8.\n"
+        "Anchored bands (apply to every 1-10 dimension):\n"
+        "- 1-2: trivial, derivative, or irrelevant; little reason to revisit.\n"
+        "- 3-4: marginal; minor or niche value.\n"
+        "- 5-6: solid and useful but unremarkable — the DEFAULT for competent, ordinary work.\n"
+        "- 7-8: clearly strong; notably useful, novel, or rigorous.\n"
+        "- 9-10: exceptional / foundational; reserve for the genuine best, seen only rarely.\n"
+        "Per-dimension meaning: relevance = fit to the user's profile and interests; "
+        "novelty = how new/original vs prior art; credibility = rigor and trustworthiness of the source; "
+        "actionability = how directly the user can build on or apply it; interest = how engaging it is. "
+        "overall is a holistic judgement, NOT a mechanical average, but must stay consistent with the "
+        "others — never give a high overall when every dimension is mediocre."
+    )
+
+
 def _system_prompt() -> str:
     return (
         "You generate dense, practical, technical Obsidian notes for PRISM. "
         "Return only a valid JSON object. Required fields: title, quick_summary, "
         "detailed_summary, key_claims, limitations, technical_details, why_it_matters, "
         "personal_relevance, project_ideas, tags, relevance, novelty, credibility, "
-        "actionability, interest, overall, confidence, related_notes. Scores are numeric 1-10. "
+        "actionability, interest, overall, confidence, related_notes. "
         "related_notes must be a list of objects with id, title, and reason selected only from related_candidates. "
         "Use direct language, preserve uncertainty, and favor a healthy mix of "
-        "buildable ideas, research novelty, and practical tool value."
+        "buildable ideas, research novelty, and practical tool value.\n"
+        + _scoring_rubric()
     )
 
 
@@ -337,8 +360,9 @@ def _merge_system_prompt() -> str:
         "Return only a valid JSON object with these fields: title, quick_summary, detailed_summary, "
         "key_claims, limitations, technical_details, why_it_matters, personal_relevance, project_ideas, "
         "tags, relevance, novelty, credibility, actionability, interest, overall, confidence. "
-        "Scores are numeric 1-10. Use direct language and preserve uncertainty. "
-        "The title should describe the unified topic of both sources."
+        "Use direct language and preserve uncertainty. "
+        "The title should describe the unified topic of both sources.\n"
+        + _scoring_rubric()
     )
 
 
