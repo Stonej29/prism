@@ -84,6 +84,14 @@ def reprocess(note_id: str, notes: NoteService = Depends(get_notes)) -> dict:
     return {"ok": result.ok, "message": result.message, "note": note_to_dto(result.record)}
 
 
+@router.post("/{note_id}/research")
+def research_note(note_id: str, notes: NoteService = Depends(get_notes)) -> dict:
+    result = notes.research_note(note_id)
+    if not result.record:
+        raise HTTPException(status_code=404, detail=result.message)
+    return {"ok": result.ok, "message": result.message, "note": note_to_dto(result.record)}
+
+
 @router.delete("/{note_id}")
 def delete_note(note_id: str, notes: NoteService = Depends(get_notes)) -> dict:
     result = notes.delete_note(note_id)

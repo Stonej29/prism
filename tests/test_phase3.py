@@ -118,6 +118,35 @@ class Phase3LLMClientTests(unittest.TestCase):
 
         self.assertEqual(generation.data["title"], "Generated Title")
 
+    def test_generate_note_web_mode_enables_openrouter_plugin(self) -> None:
+        calls: list[dict[str, object]] = []
+
+        class FakeClient:
+            def __init__(self, timeout) -> None:
+                self.timeout = timeout
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb) -> None:
+                return None
+
+            def post(self, url, headers, json):
+                calls.append(json)
+                return httpx.Response(
+                    200,
+                    request=httpx.Request("POST", url),
+                    json={"model": "model-a", "choices": [{"message": {"content": json_module.dumps(structured())}}]},
+                )
+
+        import json as json_module
+
+        with patch("prism.llm.httpx.Client", FakeClient):
+            generation = LLMClient(LLMConfig("https://llm.example", "key", "model-a")).generate_note({"title": "T"}, "profile", web=True)
+
+        self.assertEqual(generation.data["title"], "Generated Title")
+        self.assertEqual(calls[0]["plugins"], [{"id": "web"}])
+
 
 class LLMRetryTests(unittest.TestCase):
     def _client(self) -> LLMClient:
@@ -325,6 +354,37 @@ class Phase3NoteServiceTests(unittest.TestCase):
             self.assertEqual(result.record.llm_status, "generated")
             self.assertIn("Generated Title", note_path.read_text(encoding="utf-8"))
             self.assertEqual(db.find_by_note_id("abc123").title, "Generated Title")
+
+
+    def test_research_note_uses_web_generation_and_records_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = PrismDatabase(root / "prism.sqlite3")
+            service = NoteService(root / "vault", db, root / "archives", LLMConfig("https://llm.example", "key", "model-a"))
+            archive = root / "archives" / "abc123"
+            archive.mkdir(parents=True)
+            (archive / "extracted.txt").write_text("Archived text", encoding="utf-8")
+            note_path = root / "vault" / "notes" / "a.md"
+            note_path.parent.mkdir(parents=True, exist_ok=True)
+            note_path.write_text("old", encoding="utf-8")
+            record = NoteRecord(
+                note_id="abc123", source_url="https://a", resolved_url="https://a", note_path="notes/a.md",
+                date_saved="2026-01-01T00:00:00Z", status="unreviewed", title="A", summary="A",
+                fetch_status="fetched", source_kind="website", local_archive=str(archive), metadata_json="{}"
+            )
+            db.insert_note(record)
+
+            with patch("prism.notes.LLMClient.generate_note", return_value=LLMGeneration(structured(), "model-a")) as generate:
+                result = service.research_note("abc123")
+
+            self.assertTrue(result.ok)
+            self.assertTrue(generate.call_args.kwargs["web"])
+            self.assertIn("research_request", generate.call_args.args[0])
+            saved = db.find_by_note_id("abc123")
+            self.assertIsNotNone(saved)
+            metadata = json.loads(saved.metadata_json)
+            self.assertEqual(metadata["research_status"], "generated")
+            self.assertIn("researched_at", metadata)
 
     def test_reprocess_recovers_empty_website_extraction_from_raw_html(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

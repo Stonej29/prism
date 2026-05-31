@@ -209,6 +209,26 @@ class WebApiTest(unittest.TestCase):
         self.assertEqual(self.client.get("/api/notes/aaa111").status_code, 404)
         self.assertEqual(self.client.delete("/api/notes/aaa111").status_code, 404)
 
+    def test_research_note_graceful_when_llm_unconfigured(self) -> None:
+        import dataclasses
+
+        archive = self.vault.parent / "archives" / "aaa111"
+        archive.mkdir(parents=True)
+        (archive / "extracted.txt").write_text("Archived text", encoding="utf-8")
+        note_path = self.vault / "notes" / "aaa111.md"
+        note_path.parent.mkdir(parents=True, exist_ok=True)
+        note_path.write_text("old", encoding="utf-8")
+        self.db.insert_note(dataclasses.replace(make_note("aaa111"), local_archive=str(archive), metadata_json="{}"))
+
+        resp = self.client.post("/api/notes/aaa111/research")
+        body = resp.json()
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(body["ok"])
+        self.assertIn("LLM", body["message"])
+        self.assertEqual(body["note"]["research_status"], "failed")
+        self.assertIn("not configured", body["note"]["research_error"])
+        self.assertEqual(self.client.post("/api/notes/missing/research").status_code, 404)
+
     def test_idea_rating(self) -> None:
         self.db.insert_idea(
             IdeaRecord(idea_id="idea01", created_at="2026-05-29T00:00:00Z", title="Test Idea", summary="A pitch")

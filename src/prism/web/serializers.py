@@ -40,6 +40,7 @@ def note_summary_dto(record: NoteRecord) -> dict[str, Any]:
 
 def note_to_dto(record: NoteRecord) -> dict[str, Any]:
     """Full note detail for the right-hand pane."""
+    metadata = _json_object(record.metadata_json)
     return {
         "id": record.note_id,
         "title": record.title,
@@ -56,6 +57,9 @@ def note_to_dto(record: NoteRecord) -> dict[str, Any]:
         "llm_model": record.llm_model,
         "embedding_status": record.embedding_status,
         "embedding_dimensions": record.embedding_dimensions,
+        "research_status": metadata.get("research_status"),
+        "researched_at": metadata.get("researched_at"),
+        "research_error": metadata.get("research_error"),
         "scores": scores_for_record(record),
         "tags": tags_for_record(record),
         "structured_summary": structured_summary(record),

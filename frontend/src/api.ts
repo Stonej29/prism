@@ -58,6 +58,9 @@ export const api = {
   reprocess: (id: string) =>
     req<{ ok: boolean; message: string; note: NoteDetail }>(`/notes/${id}/reprocess`, { method: "POST" }),
 
+  research: (id: string) =>
+    req<{ ok: boolean; message: string; note: NoteDetail }>(`/notes/${id}/research`, { method: "POST" }),
+
   retryFailed: () =>
     req<{ total: number; retried: number; repaired: number; failed: number; skipped: number; messages: string[] }>(
       `/notes/retry-failed`,
