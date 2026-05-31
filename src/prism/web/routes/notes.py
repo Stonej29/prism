@@ -6,13 +6,21 @@ from dataclasses import replace
 from fastapi import APIRouter, Depends, HTTPException
 
 from prism.db import PrismDatabase
-from prism.notes import NoteService, _tags
+from prism.notes import NOTE_STATUSES, NoteService, _tags
 from prism.web.deps import get_db, get_notes
 from prism.web.routes import gather_all_notes
-from prism.web.schemas import EditTagsBody, RenameBody, SaveUrlBody, SetStatusBody
+from prism.web.schemas import BulkStatusBody, EditTagsBody, RenameBody, SaveUrlBody, SetStatusBody
 from prism.web.serializers import note_summary_dto, note_to_dto
 
 router = APIRouter(prefix="/notes", tags=["notes"])
+
+
+def _status_match(record, status: str | None) -> bool:
+    if status is None:
+        return record.status != "archived"
+    if status == "all":
+        return True
+    return record.status == status
 
 
 @router.get("")
@@ -20,19 +28,20 @@ def list_notes(
     source: str | None = None,
     input_source: str | None = None,
     tag: str | None = None,
+    status: str | None = None,
     limit: int = 50,
     offset: int = 0,
     db: PrismDatabase = Depends(get_db),
 ) -> dict:
     if tag:
-        records = db.list_notes_by_tag(tag, limit, offset)
+        records = db.list_notes_by_tag(tag, limit, offset, status)
     elif input_source:
-        records = db.list_notes_by_input_source(input_source, limit, offset)
+        records = db.list_notes_by_input_source(input_source, limit, offset, status)
     elif source:
-        filtered = [r for r in gather_all_notes(db) if r.source_kind == source]
+        filtered = [r for r in gather_all_notes(db) if r.source_kind == source and _status_match(r, status)]
         records = filtered[offset : offset + limit]
     else:
-        records = db.list_recent_notes(limit, offset)
+        records = db.list_recent_notes(limit, offset, status)
     return {"items": [note_summary_dto(r) for r in records], "limit": limit, "offset": offset}
 
 
@@ -116,3 +125,18 @@ def set_status(note_id: str, body: SetStatusBody, db: PrismDatabase = Depends(ge
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return note_to_dto(updated)
+
+
+@router.put("/status")
+def set_status_bulk(body: BulkStatusBody, db: PrismDatabase = Depends(get_db), notes: NoteService = Depends(get_notes)) -> dict:
+    if body.status not in NOTE_STATUSES:
+        raise HTTPException(status_code=400, detail=f"Status must be one of {', '.join(NOTE_STATUSES)}")
+    results = []
+    for note_id in body.ids:
+        record = db.find_by_note_id(note_id.strip().lower())
+        if not record:
+            results.append({"id": note_id, "ok": False})
+            continue
+        updated = notes.set_status(record, body.status)
+        results.append({"id": updated.note_id, "ok": True, "status": updated.status})
+    return {"status": body.status, "results": results}

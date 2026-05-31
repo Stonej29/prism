@@ -13,6 +13,7 @@ TUI_COMMANDS: list[tuple[str, str, str]] = [
     ("find", "find <query>", "Semantic search of your notes"),
     ("related", "related <query-or-id>", "Find notes related to a query or note id"),
     ("recent", "recent", "Browse recent notes"),
+    ("inbox", "inbox", "Browse unreviewed notes (review queue)"),
     ("tags", "tags [tag]", "Browse tags, or notes for a tag"),
     ("more", "more <id>", "Show the full detail of a note"),
     ("idea", "idea [topic]", "Generate a project idea, then rate it"),
@@ -42,7 +43,7 @@ def help_markdown() -> str:
         "## Keys",
         "- `1` `2` `3` `4` — notes / ideas / tags / proposals",
         "- `/` — focus command bar",
-        "- `r` rate idea · `d` delete · `a`/`x` approve/reject proposal · `g` reprocess",
+        "- `r` rate idea · `d` delete · `a`/`x` approve/reject proposal · `g` reprocess · `f` cycle status filter",
         "- `?` help · `q` quit",
     ]
     return "\n".join(lines)

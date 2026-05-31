@@ -17,6 +17,9 @@ class NoteStats:
     embedding_indexed: int
     embedding_failed: int
     embedding_skipped: int
+    unreviewed: int = 0
+    reviewed: int = 0
+    archived: int = 0
 
 
 @dataclass(frozen=True)
@@ -271,11 +274,12 @@ class PrismDatabase:
                 """).fetchall()
         return [_row_to_record(row) for row in rows]
 
-    def list_recent_notes(self, limit: int, offset: int = 0) -> list[NoteRecord]:
+    def list_recent_notes(self, limit: int, offset: int = 0, status: str | None = None) -> list[NoteRecord]:
+        clause, params = _status_clause(status)
         with self.connect() as conn:
             rows = conn.execute(
-                f"SELECT {_NOTE_COLUMNS} FROM notes ORDER BY date_saved DESC LIMIT ? OFFSET ?",
-                (limit, offset),
+                f"SELECT {_NOTE_COLUMNS} FROM notes WHERE {clause} ORDER BY date_saved DESC LIMIT ? OFFSET ?",
+                (*params, limit, offset),
             ).fetchall()
         return [_row_to_record(row) for row in rows]
 
@@ -306,7 +310,10 @@ class PrismDatabase:
                     SUM(CASE WHEN llm_status = 'skipped' THEN 1 ELSE 0 END) as llm_skipped,
                     SUM(CASE WHEN embedding_status = 'indexed' THEN 1 ELSE 0 END) as embedding_indexed,
                     SUM(CASE WHEN embedding_status = 'failed' THEN 1 ELSE 0 END) as embedding_failed,
-                    SUM(CASE WHEN embedding_status = 'skipped' THEN 1 ELSE 0 END) as embedding_skipped
+                    SUM(CASE WHEN embedding_status = 'skipped' THEN 1 ELSE 0 END) as embedding_skipped,
+                    SUM(CASE WHEN status = 'unreviewed' THEN 1 ELSE 0 END) as unreviewed,
+                    SUM(CASE WHEN status = 'reviewed' THEN 1 ELSE 0 END) as reviewed,
+                    SUM(CASE WHEN status = 'archived' THEN 1 ELSE 0 END) as archived
                 FROM notes
             """).fetchone()
         return NoteStats(
@@ -317,26 +324,31 @@ class PrismDatabase:
             embedding_indexed=row["embedding_indexed"] or 0,
             embedding_failed=row["embedding_failed"] or 0,
             embedding_skipped=row["embedding_skipped"] or 0,
+            unreviewed=row["unreviewed"] or 0,
+            reviewed=row["reviewed"] or 0,
+            archived=row["archived"] or 0,
         )
 
-    def list_notes_by_tag(self, tag: str, limit: int, offset: int = 0) -> list[NoteRecord]:
+    def list_notes_by_tag(self, tag: str, limit: int, offset: int = 0, status: str | None = None) -> list[NoteRecord]:
+        clause, params = _status_clause(status)
         with self.connect() as conn:
             rows = conn.execute(
                 f"""SELECT {_NOTE_COLUMNS} FROM notes
-                    WHERE llm_status = 'generated' AND tags_json LIKE ?
+                    WHERE llm_status = 'generated' AND {clause} AND tags_json LIKE ?
                     ORDER BY date_saved DESC LIMIT ? OFFSET ?""",
-                (f'%"{tag}"%', limit, offset),
+                (*params, f'%"{tag}"%', limit, offset),
             ).fetchall()
         records = [_row_to_record(row) for row in rows]
         return [r for r in records if tag in _parse_tags_json(r.tags_json)]
 
-    def list_notes_by_input_source(self, input_source: str, limit: int, offset: int = 0) -> list[NoteRecord]:
+    def list_notes_by_input_source(self, input_source: str, limit: int, offset: int = 0, status: str | None = None) -> list[NoteRecord]:
+        clause, params = _status_clause(status)
         with self.connect() as conn:
             rows = conn.execute(
                 f"""SELECT {_NOTE_COLUMNS} FROM notes
-                    WHERE input_source = ?
+                    WHERE input_source = ? AND {clause}
                     ORDER BY date_saved DESC LIMIT ? OFFSET ?""",
-                (input_source, limit, offset),
+                (input_source, *params, limit, offset),
             ).fetchall()
         return [_row_to_record(row) for row in rows]
 
@@ -748,6 +760,18 @@ def _row_to_idea(row: sqlite3.Row) -> IdeaRecord:
         rating=row["rating"],
         rated_at=row["rated_at"],
     )
+
+
+def _status_clause(status: str | None) -> tuple[str, list[str]]:
+    """SQL fragment + params for filtering note lists by review status.
+
+    None  -> active view (hide archived); "all" -> no filter; else exact match.
+    """
+    if status is None:
+        return "status != 'archived'", []
+    if status == "all":
+        return "1=1", []
+    return "status = ?", [status]
 
 
 def _parse_tags_json(raw: str | None) -> list[str]:

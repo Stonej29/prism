@@ -9,12 +9,14 @@ export function TopBar({
   saving,
   ideaStatus,
   pendingProposals,
+  unreviewed,
   ingesting,
   maintaining,
   onAsk,
   onFind,
   onSave,
   onLightbulb,
+  onInbox,
   onProposals,
   onPullFeeds,
   onRunMaintenance,
@@ -23,12 +25,14 @@ export function TopBar({
   saving: boolean;
   ideaStatus: IdeaStatus;
   pendingProposals: number;
+  unreviewed: number;
   ingesting: boolean;
   maintaining: boolean;
   onAsk: (q: string) => void;
   onFind: (q: string) => void;
   onSave: (url: string) => void;
   onLightbulb: () => void;
+  onInbox: () => void;
   onProposals: () => void;
   onPullFeeds: () => void;
   onRunMaintenance: () => void;
@@ -93,6 +97,36 @@ export function TopBar({
           style={iconBtnStyle(maintaining, maintaining)}
         >
           {maintaining ? <Spinner size={14} /> : "⚙"}
+        </span>
+        <span
+          onClick={onInbox}
+          title="Highlight unreviewed notes in the graph"
+          style={{ ...iconBtnStyle(false, unreviewed > 0), position: "relative" }}
+        >
+          📥
+          {unreviewed > 0 && (
+            <span
+              style={{
+                position: "absolute",
+                top: -6,
+                right: -6,
+                minWidth: 15,
+                height: 15,
+                padding: "0 3px",
+                borderRadius: 8,
+                background: P.accent,
+                color: P.bg0,
+                fontFamily: P.mono,
+                fontSize: 9,
+                fontWeight: 700,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              {unreviewed}
+            </span>
+          )}
         </span>
         <span
           onClick={onProposals}

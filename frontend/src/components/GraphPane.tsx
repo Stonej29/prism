@@ -252,13 +252,14 @@ export function GraphPane({
             const selected = n.id === selectedId;
             const lit = !!highlightIds && highlightIds.has(n.id);
             const dim = !!highlightIds && !lit;
+            const archived = n.status === "archived";
             const showLabel = selected || lit || hover === n.id;
             return (
               <g
                 key={n.id}
                 transform={`translate(${n.x},${n.y})`}
                 style={{ cursor: "pointer" }}
-                opacity={dim ? 0.12 : 1}
+                opacity={dim ? 0.12 : archived ? 0.4 : 1}
                 onPointerDown={(e) => onNodeDown(e, n)}
                 onClick={(e) => {
                   e.stopPropagation();

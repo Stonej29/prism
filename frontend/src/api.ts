@@ -75,6 +75,12 @@ export const api = {
   setStatus: (id: string, status: string) =>
     req<NoteDetail>(`/notes/${id}/status`, { method: "PUT", body: JSON.stringify({ status }) }),
 
+  setStatusBulk: (ids: string[], status: string) =>
+    req<{ status: string; results: { id: string; ok: boolean; status?: string }[] }>(`/notes/status`, {
+      method: "PUT",
+      body: JSON.stringify({ ids, status }),
+    }),
+
   tags: () => req<{ items: TagCount[] }>(`/tags`),
 
   tree: () => req<TreeNode>(`/tree`),

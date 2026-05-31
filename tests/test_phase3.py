@@ -342,6 +342,19 @@ class NoteEditTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 service.set_status(record, "bogus")
 
+    def test_search_keyword_only_without_indexer(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = PrismDatabase(root / "prism.sqlite3")
+            service = NoteService(root / "vault", db, root / "archives")  # no indexer
+            db.insert_note(NoteRecord(
+                note_id="abc123", source_url="https://a", resolved_url="https://a", note_path="notes/a.md",
+                date_saved="2026-01-01T00:00:00Z", status="unreviewed", title="Diffusion models survey",
+                summary="a survey of diffusion", source_kind="paper", llm_status="generated",
+            ))
+            results = service.search("diffusion")
+            self.assertTrue(any(c.note_id == "abc123" for c in results))
+
 
 class Phase3RenderTests(unittest.TestCase):
     def test_renderer_handles_missing_structured_fields(self) -> None:

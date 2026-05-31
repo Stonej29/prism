@@ -86,9 +86,10 @@ Open Telegram, find your bot, and send a link.
 | *(upload a PDF)* | Save and process a PDF document directly |
 | `/more <id>` | Structured detailed view of a note or idea |
 | `/ask <question>` | Answer a question grounded only in your saved notes |
-| `/find <query>` | Semantic search by free-text query |
+| `/find <query>` | Hybrid search (semantic + keyword; works even without embeddings) |
 | `/related <query-or-id> [n]` | Semantic search for related notes |
-| `/recent` | Browse recent notes (◀/▶ paged) |
+| `/recent` | Browse recent notes (◀/▶ paged; hides archived) |
+| `/inbox` | Browse unreviewed notes (the review queue) |
 | `/tags [tag]` | Browse tag counts, or notes for a tag (◀/▶ paged) |
 | `/idea [topic]` | Generate a project idea from your notes |
 | `/ideas` | Browse generated ideas with their ratings (◀/▶ paged) |
@@ -97,7 +98,7 @@ Open Telegram, find your bot, and send a link.
 | `/traverse` | Run graph maintenance now (refresh links, normalize tags, propose merges) |
 | `/status` | Note / LLM / embedding counts and index state |
 | `/rename <id> <title>` | Rename a note (re-embeds; updates the vault frontmatter) |
-| `/status_set <id> <status>` | Set a note's review status (`unreviewed` / `reviewed` / `archived`) |
+| `/status_set <id> <status>` | Set a note's review status (`unreviewed` / `reviewed` / `archived`); archived notes drop out of the default lists |
 | `/reprocess <id>` | Re-run LLM generation from archived text |
 | `/retry_failed [n]` | Retry failed LLM or embedding work for up to `n` notes |
 | `/delete <id>` | Delete a note or idea (inline yes/no confirmation) |

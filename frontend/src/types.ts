@@ -42,6 +42,7 @@ export interface GraphNode {
   id: string;
   title: string;
   source_kind: string;
+  status: string;
   overall: number | null;
   tags: string[];
   topic: number;
@@ -85,6 +86,9 @@ export interface Stats {
     embedding_indexed: number;
     embedding_failed: number;
     embedding_skipped: number;
+    unreviewed: number;
+    reviewed: number;
+    archived: number;
   };
   tags: number;
   index_configured: boolean;

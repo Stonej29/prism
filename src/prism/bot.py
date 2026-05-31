@@ -50,6 +50,7 @@ COMMANDS = [
     ("find", "Semantic search of your notes"),
     ("related", "Find notes related to a query or note id"),
     ("recent", "Browse recent notes"),
+    ("inbox", "Browse unreviewed notes (review queue)"),
     ("tags", "Browse tags, or notes for a tag"),
     ("more", "Show the full detail of a note"),
     ("idea", "Generate a project idea, then rate it"),
@@ -472,6 +473,16 @@ class PrismBot:
         text, keyboard = self._page_view("recent", 0)
         await message.reply_text(text or "No notes saved yet.", reply_markup=keyboard, parse_mode=HTML_PARSE_MODE)
 
+    async def handle_inbox(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        del context
+        if not await self._is_allowed(update):
+            return
+        message = update.effective_message
+        if not message:
+            return
+        text, keyboard = self._page_view("inbox", 0)
+        await message.reply_text(text or "Inbox zero — no unreviewed notes.", reply_markup=keyboard, parse_mode=HTML_PARSE_MODE)
+
     async def handle_tags(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._is_allowed(update):
             return
@@ -505,21 +516,20 @@ class PrismBot:
         if not query:
             await message.reply_text("Usage: /find <query>")
             return
-        indexer = self.notes.indexer
-        if not indexer or not indexer.is_configured:
-            await message.reply_text("Semantic search is not configured. Set EMBEDDING_API_KEY and EMBEDDING_MODEL.")
-            return
         await message.reply_text(f'Searching for "{_shorten(query, 60)}"...')
         asyncio.create_task(self._find_task(query, message))
 
     async def _find_task(self, query: str, message) -> None:
+        # Hybrid search (semantic + keyword); degrades to keyword-only when
+        # embeddings are unconfigured, so /find always works.
         try:
-            results = await asyncio.to_thread(self.notes.indexer.search_text, query, limit=MAX_SEMANTIC_RESULTS)
+            results = await asyncio.to_thread(self.notes.search, query, limit=MAX_SEMANTIC_RESULTS)
         except Exception as exc:
             await message.reply_text(f"Search failed: {type(exc).__name__}: {exc}")
             return
         if not results:
-            if self.notes.indexer.index_is_empty():
+            indexer = self.notes.indexer
+            if indexer and indexer.is_configured and indexer.index_is_empty():
                 await message.reply_text("The semantic index is empty. Run: PYTHONPATH=src python -m prism.index rebuild")
             else:
                 await message.reply_text("No results found.")
@@ -776,6 +786,10 @@ class PrismBot:
         offset = max(0, offset)
         if kind == "recent":
             rows = self.database.list_recent_notes(PAGE_SIZE + 1, offset)
+            page, more = rows[:PAGE_SIZE], len(rows) > PAGE_SIZE
+            text = _recent_reply(page) if page else None
+        elif kind == "inbox":
+            rows = self.database.list_recent_notes(PAGE_SIZE + 1, offset, status="unreviewed")
             page, more = rows[:PAGE_SIZE], len(rows) > PAGE_SIZE
             text = _recent_reply(page) if page else None
         elif kind == "ideas":
@@ -1183,6 +1197,7 @@ def build_application(settings: Settings) -> Application:
     application.add_handler(CommandHandler("related", bot.handle_related))
     application.add_handler(CommandHandler("status", bot.handle_status))
     application.add_handler(CommandHandler("recent", bot.handle_recent))
+    application.add_handler(CommandHandler("inbox", bot.handle_inbox))
     application.add_handler(CommandHandler("tags", bot.handle_tags))
     application.add_handler(CommandHandler("find", bot.handle_find))
     application.add_handler(CommandHandler("ask", bot.handle_ask))

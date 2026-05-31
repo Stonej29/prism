@@ -46,10 +46,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("recent", help="Browse recent notes")
     p.add_argument("-n", "--limit", type=int, default=10)
+    p.add_argument("--status", choices=[*NOTE_STATUSES, "all"], default=None,
+                   help="Filter by review status (default: hide archived)")
 
     p = sub.add_parser("tags", help="List tags, or notes for a tag")
     p.add_argument("tag", nargs="?")
     p.add_argument("-n", "--limit", type=int, default=20)
+    p.add_argument("--status", choices=[*NOTE_STATUSES, "all"], default=None,
+                   help="Filter notes-for-a-tag by review status (default: hide archived)")
 
     p = sub.add_parser("more", help="Show the full detail of a note")
     p.add_argument("note_id")
@@ -75,9 +79,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("note_id")
     p.add_argument("title", nargs="+")
 
-    p = sub.add_parser("set-status", help="Set a note's review status")
-    p.add_argument("note_id")
+    p = sub.add_parser("set-status", help="Set review status for one or more notes")
     p.add_argument("status", choices=NOTE_STATUSES)
+    p.add_argument("note_id", nargs="+")
 
     sub.add_parser("reprocess", help="Re-run LLM generation for a note").add_argument("note_id")
     sub.add_parser("retry-failed", help="Retry failed LLM and embedding work").add_argument(
@@ -151,14 +155,14 @@ def _related(core: CliCore, args) -> int:
 
 
 def _recent(core: CliCore, args) -> int:
-    for record in core.recent_notes(args.limit):
+    for record in core.recent_notes(args.limit, status=args.status):
         print(note_line(record))
     return 0
 
 
 def _tags(core: CliCore, args) -> int:
     if args.tag:
-        records = core.notes_by_tag(args.tag, args.limit)
+        records = core.notes_by_tag(args.tag, args.limit, status=args.status)
         if not records:
             print(f"No notes tagged {args.tag!r}.")
         for record in records:
@@ -255,9 +259,12 @@ def _rename(core: CliCore, args) -> int:
 
 
 def _set_status(core: CliCore, args) -> int:
-    result = core.set_status(args.note_id, args.status)
-    print(result.message)
-    return 0 if result.ok else 1
+    results = core.set_status_bulk(args.note_id, args.status)
+    ok = True
+    for result in results:
+        print(result.message)
+        ok = ok and result.ok
+    return 0 if ok else 1
 
 
 def _reprocess(core: CliCore, args) -> int:

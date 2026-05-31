@@ -157,6 +157,35 @@ class WebApiTest(unittest.TestCase):
         again = self.client.get("/api/notes/aaa111").json()
         self.assertEqual(again["tags"], ["new-tag", "vision"])
 
+    def test_list_notes_status_filter(self) -> None:
+        self.db.insert_note(make_note("aaa111"))
+        self.db.insert_note(make_note("bbb222"))
+        self.client.put("/api/notes/bbb222/status", json={"status": "archived"})
+        active = {n["id"] for n in self.client.get("/api/notes").json()["items"]}
+        self.assertEqual(active, {"aaa111"})
+        all_ids = {n["id"] for n in self.client.get("/api/notes", params={"status": "all"}).json()["items"]}
+        self.assertEqual(all_ids, {"aaa111", "bbb222"})
+        archived = {n["id"] for n in self.client.get("/api/notes", params={"status": "archived"}).json()["items"]}
+        self.assertEqual(archived, {"bbb222"})
+
+    def test_bulk_set_status(self) -> None:
+        self.db.insert_note(make_note("aaa111"))
+        self.db.insert_note(make_note("bbb222"))
+        resp = self.client.put("/api/notes/status", json={"ids": ["aaa111", "bbb222", "missing"], "status": "reviewed"})
+        self.assertEqual(resp.status_code, 200)
+        results = resp.json()["results"]
+        self.assertEqual([r["ok"] for r in results], [True, True, False])
+        self.assertEqual(self.client.get("/api/notes/aaa111").json()["status"], "reviewed")
+        bad = self.client.put("/api/notes/status", json={"ids": ["aaa111"], "status": "bogus"})
+        self.assertEqual(bad.status_code, 400)
+
+    def test_stats_includes_status_counts(self) -> None:
+        self.db.insert_note(make_note("aaa111"))
+        self.client.put("/api/notes/aaa111/status", json={"status": "reviewed"})
+        notes = self.client.get("/api/stats").json()["notes"]
+        self.assertEqual(notes["reviewed"], 1)
+        self.assertEqual(notes["unreviewed"], 0)
+
     def test_rename_note(self) -> None:
         self.db.insert_note(make_note("aaa111", title="Old Title"))
         resp = self.client.put("/api/notes/aaa111/title", json={"title": "A Better Title"})

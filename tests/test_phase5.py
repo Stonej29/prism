@@ -522,15 +522,18 @@ class Phase5BotTests(unittest.TestCase):
 
         self.assertEqual(update.effective_message.replies[-1], "Usage: /find <query>")
 
-    def test_find_unconfigured_reports_not_configured(self) -> None:
+    def test_find_task_reports_no_results_when_empty(self) -> None:
+        # find now falls back to keyword search; with no matches and no usable
+        # index it reports "No results found." rather than a config error.
         bot = PrismBot.__new__(PrismBot)
-        bot._is_allowed = AsyncMock(return_value=True)
-        bot.notes = Mock(indexer=Mock(is_configured=False))
-        update = _update()
+        bot.notes = Mock()
+        bot.notes.search.return_value = []
+        bot.notes.indexer = Mock(is_configured=False)
+        message = _Message()
 
-        asyncio.run(bot.handle_find(update, _context(["robotics manipulation"])))
+        asyncio.run(bot._find_task("robotics manipulation", message))
 
-        self.assertIn("not configured", update.effective_message.replies[-1])
+        self.assertIn("No results found", message.replies[-1])
 
     def test_find_valid_query_acks_and_spawns_task(self) -> None:
         bot = PrismBot.__new__(PrismBot)
@@ -623,7 +626,7 @@ class Phase5BotTests(unittest.TestCase):
     def test_find_task_paginates_semantic_results(self) -> None:
         bot = PrismBot.__new__(PrismBot)
         bot.notes = Mock()
-        bot.notes.indexer.search_text.return_value = [
+        bot.notes.search.return_value = [
             RelatedCandidate(f"id{i}", f"Title {i}", "Summary", f"notes/{i}.md", "https://example.com", [], 0.9)
             for i in range(PAGE_SIZE + 1)
         ]

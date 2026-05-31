@@ -48,6 +48,7 @@ def build_graph(records: list[NoteRecord], vectors: dict[str, list[float]] | Non
             "id": r.note_id,
             "title": r.title,
             "source_kind": r.source_kind,
+            "status": r.status,
             "overall": scores.get("overall"),
             "tags": tags_by_id[r.note_id],
             "topic": topic.get(r.note_id, -1),

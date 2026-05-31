@@ -135,6 +135,12 @@ export default function App() {
     setHighlight(neighbors);
   };
 
+  // Inbox: highlight unreviewed notes in the graph (clearing re-clicks).
+  const onInbox = () => {
+    const unreviewed = new Set((graph?.nodes ?? []).filter((n) => n.status === "unreviewed").map((n) => n.id));
+    setHighlight((cur) => (cur && cur.size === unreviewed.size && [...unreviewed].every((id) => cur.has(id)) ? null : unreviewed));
+  };
+
   const onAsk = async (question: string) => {
     setAsk({ open: true, question, result: null, loading: true });
     try {
@@ -354,12 +360,14 @@ export default function App() {
         saving={saving}
         ideaStatus={ideaJob.status}
         pendingProposals={proposals.pending}
+        unreviewed={stats?.notes.unreviewed ?? 0}
         ingesting={proposals.runningJob === "ingest"}
         maintaining={proposals.runningJob === "traverse"}
         onAsk={onAsk}
         onFind={onFind}
         onSave={onSave}
         onLightbulb={onLightbulb}
+        onInbox={onInbox}
         onProposals={openProposals}
         onPullFeeds={runIngest}
         onRunMaintenance={runTraverse}

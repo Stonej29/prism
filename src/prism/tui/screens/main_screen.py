@@ -45,13 +45,18 @@ class AtlasScreen(Screen):
         ("a", "approve_selected", "Approve"),
         ("x", "reject_selected", "Reject"),
         ("g", "reprocess_selected", "Reprocess"),
+        ("f", "cycle_status", "Filter"),
         ("question_mark", "help", "Help"),
         ("q", "quit", "Quit"),
     ]
 
+    # Status filter for the notes list: None = active (hide archived).
+    _STATUS_CYCLE = (None, "unreviewed", "reviewed", "archived", "all")
+
     def __init__(self) -> None:
         super().__init__()
         self.selected: ListEntry | None = None
+        self.note_status: str | None = None
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -137,6 +142,15 @@ class AtlasScreen(Screen):
             self.set_status(f"Reprocessing {entry.entry_id}…")
             self._run(lambda: self._op_reprocess(entry.entry_id))
 
+    def action_cycle_status(self) -> None:
+        idx = self._STATUS_CYCLE.index(self.note_status)
+        self.note_status = self._STATUS_CYCLE[(idx + 1) % len(self._STATUS_CYCLE)]
+        self.set_status(f"Notes filter: {self.note_status or 'active'}")
+        if self.sidebar.mode == "notes":
+            self.load_list("notes")
+        else:
+            self.sidebar.mode = "notes"
+
     def _require(self, kind: str) -> ListEntry | None:
         if self.selected is None or self.selected.kind != kind:
             self.set_status(f"Select a {kind} first.")
@@ -195,7 +209,17 @@ class AtlasScreen(Screen):
         elif first == "more":
             self._dispatch_blocking(rest, "Usage: more <id>", lambda q: self._op_more(q), "Loading…")
         elif first == "recent":
-            self.sidebar.mode = "notes"
+            self.note_status = None
+            if self.sidebar.mode == "notes":
+                self.load_list("notes")
+            else:
+                self.sidebar.mode = "notes"
+        elif first == "inbox":
+            self.note_status = "unreviewed"
+            if self.sidebar.mode == "notes":
+                self.load_list("notes")
+            else:
+                self.sidebar.mode = "notes"
         elif first == "ideas":
             self.sidebar.mode = "ideas"
         elif first == "proposals":
@@ -435,9 +459,10 @@ class AtlasScreen(Screen):
             proposals = self.core.pending_proposals()
             items = [ListEntry(p.proposal_id, _truncate(describe_proposal(p)), "proposal", p) for p in proposals]
             return f"Proposals ({len(items)})", items
-        notes = self.core.recent_notes(LIST_LIMIT)
+        notes = self.core.recent_notes(LIST_LIMIT, status=self.note_status)
         items = [ListEntry(n.note_id, _truncate(n.title), "note", n) for n in notes]
-        return f"Notes ({len(items)})", items
+        label = "Notes" if self.note_status is None else f"Notes [{self.note_status}]"
+        return f"{label} ({len(items)})", items
 
     # Result handlers (UI thread) ------------------------------------------
     def on_list_result(self, message: ListResult) -> None:

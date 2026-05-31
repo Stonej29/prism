@@ -32,3 +32,8 @@ class RenameBody(BaseModel):
 
 class SetStatusBody(BaseModel):
     status: str = Field(..., min_length=1)
+
+
+class BulkStatusBody(BaseModel):
+    ids: list[str] = Field(..., min_length=1)
+    status: str = Field(..., min_length=1)

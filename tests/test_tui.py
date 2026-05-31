@@ -138,13 +138,15 @@ class TuiAppTest(unittest.IsolatedAsyncioTestCase):
             screen.on_list_view_selected(_FakeSelected(entry))
             self.assertIn("Attention Is All You Need", screen.query_one(DetailPane).last_markdown)
 
-    async def test_find_unconfigured_reports_status(self) -> None:
+    async def test_find_unconfigured_falls_back_to_keyword(self) -> None:
+        # No embeddings + empty corpus: find no longer errors with "not
+        # configured"; it keyword-searches and reports nothing found.
         app = PrismApp(self.core)
         async with app.run_test() as pilot:
             await self._settle(app, pilot)
             app.screen.dispatch_command("find diffusion models")
             await self._settle(app, pilot)
-            self.assertIn("not configured", app.screen.query_one(CommandBar).last_status)
+            self.assertIn("No results", app.screen.query_one(CommandBar).last_status)
 
     async def test_status_set_command(self) -> None:
         self.core.database.insert_note(make_note("aaa111"))
@@ -163,6 +165,15 @@ class TuiAppTest(unittest.IsolatedAsyncioTestCase):
             app.screen.dispatch_command("rename aaa111 A Better Title")
             await self._settle(app, pilot)
             self.assertEqual(self.core.note("aaa111").title, "A Better Title")
+
+    async def test_inbox_command_sets_status_filter(self) -> None:
+        self.core.database.insert_note(make_note("aaa111"))
+        app = PrismApp(self.core)
+        async with app.run_test() as pilot:
+            await self._settle(app, pilot)
+            app.screen.dispatch_command("inbox")
+            await self._settle(app, pilot)
+            self.assertEqual(app.screen.note_status, "unreviewed")
 
     async def test_delete_flow(self) -> None:
         self.core.database.insert_note(make_note("aaa111"))

@@ -456,6 +456,29 @@ class NoteService:
         self.profile_path.write_text(profile, encoding="utf-8")
         return ProfileResult(ok=True, message=f"Profile {mode} complete.", profile=profile)
 
+    def search(self, query: str, limit: int = 20) -> list[RelatedCandidate]:
+        """Hybrid note search: semantic (when configured) blended with keyword.
+
+        Degrades to keyword-only when embeddings are unconfigured or semantic
+        search fails, so it always returns useful results and never raises on a
+        missing index. Used by /find across all front-ends; /ask reuses it for
+        candidate gathering.
+        """
+        query = query.strip()
+        if not query:
+            return []
+        semantic: list[RelatedCandidate] = []
+        if self.indexer and self.indexer.is_configured:
+            try:
+                semantic = self.indexer.search_text(query, limit=limit)
+            except Exception:  # noqa: BLE001 - fall back to keyword search
+                semantic = []
+        keyword = [
+            _candidate_from_record(record, score=0.55)
+            for record in self.database.search_notes_keyword(query, limit=limit)
+        ]
+        return _merge_candidates(semantic, keyword, limit=limit)
+
     def ask(self, question: str, limit: int = 6) -> AskResult:
         question = question.strip()
         if not question:
@@ -465,16 +488,7 @@ class NoteService:
         if not self.llm_config.is_configured:
             return AskResult(answer="", sources=[], ok=False, message="/ask needs LLM_API_KEY and LLM_MODEL.")
 
-        try:
-            semantic_candidates = self.indexer.search_text(question, limit=limit)
-        except Exception as exc:
-            return AskResult(answer="", sources=[], ok=False, message=f"Search failed: {type(exc).__name__}: {exc}")
-
-        keyword_candidates = [
-            _candidate_from_record(record, score=0.55)
-            for record in self.database.search_notes_keyword(question, limit=limit)
-        ]
-        candidates = _merge_candidates(semantic_candidates, keyword_candidates, limit=limit)
+        candidates = self.search(question, limit=limit)
 
         if not candidates:
             if self.indexer.index_is_empty():

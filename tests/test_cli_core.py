@@ -89,11 +89,15 @@ class CliCoreTest(unittest.TestCase):
         graph_notes = self.core.notes_by_tag("graph", 10)
         self.assertEqual([n.note_id for n in graph_notes], ["aaa111"])
 
-    def test_find_and_related_guard_when_unconfigured(self) -> None:
+    def test_find_falls_back_to_keyword_when_unconfigured(self) -> None:
+        # find no longer hard-stops on missing embeddings; with no matching
+        # notes it simply reports nothing found (keyword search, empty corpus).
         find = self.core.find("anything")
         self.assertFalse(find.ok)
-        self.assertIn("not configured", find.message)
+        self.assertIn("No results", find.message)
 
+    def test_related_guard_when_unconfigured(self) -> None:
+        # related is still semantic-only and guards on configuration.
         related = self.core.related("anything")
         self.assertFalse(related.ok)
         self.assertIn("not configured", related.message)
@@ -153,6 +157,38 @@ class CliCoreTest(unittest.TestCase):
         bad = self.core.set_status("aaa111", "bogus")
         self.assertFalse(bad.ok)
         self.assertIn("Status must be one of", bad.message)
+
+    def test_status_filter_hides_archived_by_default(self) -> None:
+        self.core.database.insert_note(make_note("aaa111"))
+        self.core.database.insert_note(make_note("bbb222"))
+        self.core.set_status("bbb222", "archived")
+        self.assertEqual({r.note_id for r in self.core.recent_notes(10)}, {"aaa111"})
+        self.assertEqual({r.note_id for r in self.core.recent_notes(10, status="all")}, {"aaa111", "bbb222"})
+        self.assertEqual({r.note_id for r in self.core.recent_notes(10, status="archived")}, {"bbb222"})
+
+    def test_status_counts_in_status_info(self) -> None:
+        self.core.database.insert_note(make_note("aaa111"))
+        self.core.set_status("aaa111", "reviewed")
+        info = self.core.status()
+        self.assertEqual(info.stats.reviewed, 1)
+        self.assertEqual(info.stats.unreviewed, 0)
+        self.assertEqual(info.stats.archived, 0)
+
+    def test_set_status_bulk(self) -> None:
+        self.core.database.insert_note(make_note("aaa111"))
+        self.core.database.insert_note(make_note("bbb222"))
+        results = self.core.set_status_bulk(["aaa111", "missing", "bbb222"], "reviewed")
+        self.assertEqual([r.ok for r in results], [True, False, True])
+        self.assertEqual(self.core.note("aaa111").status, "reviewed")
+        self.assertEqual(self.core.note("bbb222").status, "reviewed")
+
+    def test_find_keyword_fallback_without_embeddings(self) -> None:
+        # The fixture's indexer is unconfigured; /find should still work (keyword-only).
+        self.assertFalse(self.core.search_ready())
+        self.core.database.insert_note(make_note("aaa111"))
+        result = self.core.find("aaa111")
+        self.assertTrue(result.ok)
+        self.assertTrue(any(c.note_id == "aaa111" for c in result.candidates))
 
     def test_ingest_without_feeds(self) -> None:
         result = self.core.ingest()

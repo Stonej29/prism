@@ -110,14 +110,14 @@ class CliCore:
         return self.notes.llm_config.is_configured
 
     # Cheap DB reads --------------------------------------------------------
-    def recent_notes(self, limit: int, offset: int = 0) -> list[NoteRecord]:
-        return self.database.list_recent_notes(limit, offset)
+    def recent_notes(self, limit: int, offset: int = 0, status: str | None = None) -> list[NoteRecord]:
+        return self.database.list_recent_notes(limit, offset, status)
 
     def tags(self) -> list[tuple[str, int]]:
         return self.database.list_tags_with_counts()
 
-    def notes_by_tag(self, tag: str, limit: int, offset: int = 0) -> list[NoteRecord]:
-        return self.database.list_notes_by_tag(tag, limit, offset)
+    def notes_by_tag(self, tag: str, limit: int, offset: int = 0, status: str | None = None) -> list[NoteRecord]:
+        return self.database.list_notes_by_tag(tag, limit, offset, status)
 
     def recent_ideas(self, limit: int, offset: int = 0) -> list[IdeaRecord]:
         return self.database.list_recent_ideas(limit, offset)
@@ -153,12 +153,9 @@ class CliCore:
         query = query.strip()
         if not query:
             return SearchResult(ok=False, message="Enter a search query.", candidates=[])
-        if not self.search_ready():
-            return SearchResult(ok=False, message="Semantic search is not configured.", candidates=[])
-        try:
-            results = self.indexer.search_text(query, limit=limit)
-        except Exception as exc:  # noqa: BLE001 - surface as message
-            return SearchResult(ok=False, message=f"Search failed: {type(exc).__name__}: {exc}", candidates=[])
+        # Hybrid search: semantic when configured, always blended with keyword,
+        # so /find still works (keyword-only) when embeddings are unconfigured.
+        results = self.notes.search(query, limit=limit)
         return self._search_outcome(results)
 
     def related(self, query: str, limit: int = 20) -> SearchResult:
@@ -180,7 +177,7 @@ class CliCore:
     def _search_outcome(self, results: list[RelatedCandidate]) -> SearchResult:
         if results:
             return SearchResult(ok=True, message="", candidates=results)
-        if self.indexer.index_is_empty():
+        if self.search_ready() and self.indexer.index_is_empty():
             return SearchResult(
                 ok=False,
                 message="The semantic index is empty. Run: PYTHONPATH=src python -m prism.index rebuild",
@@ -222,6 +219,9 @@ class CliCore:
         except ValueError as exc:
             return EditResult(ok=False, message=str(exc))
         return EditResult(ok=True, message=f"Set {updated.note_id} status to {updated.status}", record=updated)
+
+    def set_status_bulk(self, note_ids: list[str], status: str) -> list[EditResult]:
+        return [self.set_status(note_id, status) for note_id in note_ids]
 
     def delete_note(self, note_id: str) -> DeleteResult:
         return self.notes.delete_note(note_id)
