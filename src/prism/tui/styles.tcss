@@ -1,0 +1,70 @@
+/* Three-pane Atlas layout: sidebar | detail, with a command bar below. */
+
+#main {
+    height: 1fr;
+}
+
+#sidebar {
+    width: 1fr;
+    min-width: 28;
+    border-right: solid $primary;
+}
+
+#sidebar-header {
+    padding: 0 1;
+    color: $text-muted;
+    text-style: bold;
+}
+
+#sidebar-list {
+    height: 1fr;
+}
+
+#detail {
+    width: 3fr;
+    padding: 0 1;
+}
+
+#commandbar {
+    height: auto;
+    dock: bottom;
+    border-top: solid $primary;
+}
+
+#status-line {
+    padding: 0 1;
+    color: $text-muted;
+    height: auto;
+}
+
+#command-input {
+    border: none;
+}
+
+/* Modal dialogs */
+#dialog {
+    width: 60;
+    height: auto;
+    max-height: 80%;
+    padding: 1 2;
+    background: $surface;
+    border: thick $primary;
+    align: center middle;
+}
+
+#dialog-prompt {
+    padding-bottom: 1;
+}
+
+#dialog-buttons {
+    height: auto;
+    align-horizontal: center;
+}
+
+#dialog-buttons Button {
+    margin: 1 1 0 1;
+}
+
+ConfirmScreen, WipeConfirmScreen, RatingScreen, HelpScreen {
+    align: center middle;
+}

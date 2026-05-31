@@ -22,12 +22,18 @@ dependencies = [
   "APScheduler>=3.10,<4",
   "feedparser>=6.0,<7",
   "tzdata>=2024.1",
+  "textual>=0.80,<1",
 ]
 
 [project.scripts]
 prism-bot = "prism.bot:main"
 prism-web = "prism.web.__main__:main"
 prism-worker = "prism.worker.__main__:main"
+prism-tui = "prism.tui.__main__:main"
+prism-cli = "prism.cli.__main__:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"prism.tui" = ["*.tcss"]

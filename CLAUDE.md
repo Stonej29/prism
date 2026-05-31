@@ -47,6 +47,18 @@ Build the frontend bundle (type-checked):
 cd frontend && npm run build   # outputs frontend/dist, served by FastAPI in prod
 ```
 
+Run the terminal UI (full-screen Textual three-pane interface) or the scriptable CLI — both share the same `runtime/`:
+```sh
+# Full-screen TUI
+PYTHONPATH=src SQLITE_PATH=runtime/prism.sqlite3 LANCEDB_PATH=runtime/lancedb \
+  VAULT_PATH=runtime/research-vault ARCHIVE_PATH=runtime/archives \
+  PRISM_FEEDS_PATH=runtime/feeds.yaml python -m prism.tui
+# Scriptable CLI (same env vars); maps 1:1 to bot commands
+PYTHONPATH=src ... python -m prism.cli recent
+PYTHONPATH=src ... python -m prism.cli find "state space models"
+PYTHONPATH=src ... python -m prism.cli status
+```
+
 Run the background worker (scheduled feed ingestion + graph maintenance) via Docker:
 ```sh
 docker compose build prism-worker
@@ -135,6 +147,14 @@ A separate FastAPI service (entry point `prism-web` / `python -m prism.web`) put
 - `web/graph.py` builds the graph payload: nodes = notes, edges = deduped undirected pairs from each note's `related_notes_json` (dangling refs dropped), clusters = `source_kind`.
 - Endpoints live under `/api` (`web/routes/`): notes (list/detail/save/reprocess/retry/delete/edit-tags), graph, tags, stats, find, ask, ideas (list/generate/rate/delete). In production `app.py` mounts the built `frontend/dist` as a SPA at `/` (via `PRISM_WEB_STATIC`, default `/app/static` in Docker).
 - API tests: `tests/test_web.py` (FastAPI `TestClient` against a seeded temp DB with unconfigured LLM/indexer).
+
+### Terminal UI + CLI (`src/prism/tui/`, `src/prism/cli/`, `src/prism/cli_core.py`)
+
+Two more front-ends over the same service layer, sharing the same `runtime/` (the bot/web/worker are untouched).
+
+- `cli_core.py` — a synchronous, UI-agnostic `CliCore` facade that **both** the TUI and CLI call, so orchestration lives in one place. `CliCore.from_settings(load_settings(require_telegram=False))` builds the shared `Services` and a `ProposalService(database, notes)` alongside it. It owns the bits the bot did inline: the `related` query-vs-note-id branch, feed loading for `ingest` (`load_worker_config` → `run_feed_ingestion`), `traverse` (`run_graph_traversal`), and capability gates (`search_ready`/`llm_ready`). Methods return the existing frozen result types (`SaveResult`, `AskResult`, `IngestionSummary`, …) plus small wrappers (`SearchResult`, `IngestResult`, `StatusInfo`). It never imports Textual/argparse. Tested in `tests/test_cli_core.py`.
+- `tui/` — a **Textual** app (`prism-tui` / `python -m prism.tui`). `AtlasScreen` is a three-pane layout: a mode-switchable sidebar (`SourceList`: notes/ideas/tags/proposals) · a Markdown `DetailPane` · a `CommandBar`. **All blocking service calls run on `@work(thread=True)` workers** via the generic `_run` helper, which catches exceptions and posts a typed `WorkerResult` (or `ListResult`) back to the UI thread — the event loop never blocks. Rendering reuses the `notes.py` helpers (`render.py`), never re-parsing `*_json`. Destructive actions use modal screens (`ConfirmScreen`, typed-code `WipeConfirmScreen`, `RatingScreen`). `tui/commands.py` is the single command vocabulary, mirroring the bot's `COMMANDS` 1:1 (plus `save`); `tests/test_tui.py` includes a **parity test** that fails if a future bot command isn't reachable in the TUI, plus `App.run_test()`/`Pilot` tests. `styles.tcss` is shipped via `[tool.setuptools.package-data]`.
+- `cli/` — a thin argparse front-end (`prism-cli` / `python -m prism.cli`) over the same `CliCore`; subcommands map 1:1 to facade methods with plain-text output for piping. `wipe-all` requires `--yes`.
 
 ## Environment
 
