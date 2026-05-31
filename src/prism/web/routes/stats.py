@@ -23,3 +23,16 @@ def get_stats(
         "index_configured": indexer.is_configured,
         "embedding_model": indexer.embedding_config.model,
     }
+
+
+@router.get("/usage")
+def get_usage(db: PrismDatabase = Depends(get_db)) -> dict:
+    u = db.get_token_usage()
+    return {
+        "total_tokens": u.total_tokens,
+        "prompt_tokens": u.prompt_tokens,
+        "completion_tokens": u.completion_tokens,
+        "calls": u.calls,
+        "today_total_tokens": u.today_total_tokens,
+        "today_calls": u.today_calls,
+    }

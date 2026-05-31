@@ -8,6 +8,8 @@ from typing import Any
 
 import httpx
 
+from prism.usage import record_usage
+
 LOGGER = logging.getLogger("prism.llm")
 
 LLM_TIMEOUT_SECONDS = 90.0
@@ -286,6 +288,7 @@ def _log_usage(data: dict[str, Any], fallback_model: str | None) -> None:
             data.get("model") or fallback_model,
             usage.get("prompt_tokens"), usage.get("completion_tokens"), usage.get("total_tokens"),
         )
+        record_usage("llm", usage.get("prompt_tokens"), usage.get("completion_tokens"), usage.get("total_tokens"))
 
 
 def _assistant_content(response: dict[str, Any]) -> str:

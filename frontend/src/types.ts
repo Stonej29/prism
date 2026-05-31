@@ -43,6 +43,7 @@ export interface GraphNode {
   title: string;
   source_kind: string;
   status: string;
+  date_saved: string;
   overall: number | null;
   tags: string[];
   topic: number;
@@ -93,6 +94,15 @@ export interface Stats {
   tags: number;
   index_configured: boolean;
   embedding_model: string | null;
+}
+
+export interface Usage {
+  total_tokens: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  calls: number;
+  today_total_tokens: number;
+  today_calls: number;
 }
 
 export interface Candidate {

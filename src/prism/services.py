@@ -15,6 +15,7 @@ from prism.ideas import IdeaService
 from prism.index import NoteIndexer
 from prism.llm import LLMConfig
 from prism.notes import NoteService
+from prism.usage import set_usage_sink
 
 
 @dataclass(frozen=True)
@@ -28,6 +29,9 @@ class Services:
 
 def build_services(settings: Settings) -> Services:
     database = PrismDatabase(settings.sqlite_path)
+    # Persist token usage from every LLM/embedding call into the shared DB so all
+    # processes (bot/web/worker) contribute to one running total.
+    set_usage_sink(lambda _kind, prompt, completion, total: database.add_token_usage(prompt, completion, total))
     llm_config = LLMConfig(settings.llm_base_url, settings.llm_api_key, settings.llm_model)
     indexer = NoteIndexer(
         settings.lancedb_path,

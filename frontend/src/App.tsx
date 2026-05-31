@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "./api";
 import { P, srcLabel } from "./theme";
-import type { AskResult, GraphPayload, Idea, NoteDetail, Proposal, Stats, TagCount, TreeNode } from "./types";
+import type { AskResult, GraphPayload, Idea, NoteDetail, Proposal, Stats, TagCount, TreeNode, Usage } from "./types";
 import { TopBar } from "./components/TopBar";
 import { TreePane } from "./components/TreePane";
 import { GraphPane } from "./components/GraphPane";
@@ -41,6 +41,7 @@ export default function App() {
   const [tags, setTags] = useState<TagCount[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
   const [tree, setTree] = useState<TreeNode | null>(null);
+  const [usage, setUsage] = useState<Usage | null>(null);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [note, setNote] = useState<NoteDetail | null>(null);
@@ -55,6 +56,9 @@ export default function App() {
   const [sourceFilter, setSourceFilter] = useState<string | null>(null);
   const [activeTag, setActiveTag] = useState<string | null>(null);
   const [highlight, setHighlight] = useState<Set<string> | null>(null);
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [minScore, setMinScore] = useState(0); // 0 = no score filter
 
   const [busy, setBusy] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -71,11 +75,19 @@ export default function App() {
   }, [graph]);
 
   const refreshData = useCallback(async () => {
-    const [g, t, s, tr, pr] = await Promise.all([api.graph(), api.tags(), api.stats(), api.tree(), api.proposals()]);
+    const [g, t, s, tr, pr, u] = await Promise.all([
+      api.graph(),
+      api.tags(),
+      api.stats(),
+      api.tree(),
+      api.proposals(),
+      api.usage(),
+    ]);
     setGraph(g);
     setTags(t.items);
     setStats(s);
     setTree(tr);
+    setUsage(u);
     setProposals((p) => ({ ...p, items: pr.items, pending: pr.pending }));
   }, []);
 
@@ -393,15 +405,25 @@ export default function App() {
           stats={stats}
           sourceFilter={sourceFilter}
           activeTag={activeTag}
+          dateFrom={dateFrom}
+          dateTo={dateTo}
+          minScore={minScore}
+          usage={usage}
           onSelectNote={selectNote}
           onOpenIdea={onOpenIdeaById}
           onOpenFile={setOpenFile}
           onSelectSource={onSelectSource}
           onSelectTag={onSelectTag}
+          onDateFrom={setDateFrom}
+          onDateTo={setDateTo}
+          onMinScore={setMinScore}
         />
         <GraphPane
           graph={graph}
           sourceFilter={sourceFilter}
+          dateFrom={dateFrom}
+          dateTo={dateTo}
+          minScore={minScore}
           onSourceFilter={onSelectSource}
           selectedId={selectedId}
           highlightIds={highlight}

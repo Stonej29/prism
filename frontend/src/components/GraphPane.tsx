@@ -10,6 +10,9 @@ function Mono({ children, s = 11, c = P.mid }: { children: React.ReactNode; s?: 
 export function GraphPane({
   graph,
   sourceFilter,
+  dateFrom,
+  dateTo,
+  minScore,
   onSourceFilter,
   selectedId,
   highlightIds,
@@ -20,6 +23,9 @@ export function GraphPane({
 }: {
   graph: GraphPayload | null;
   sourceFilter: string | null;
+  dateFrom: string;
+  dateTo: string;
+  minScore: number;
   onSourceFilter: (s: string | null) => void;
   selectedId: string | null;
   highlightIds: Set<string> | null;
@@ -55,13 +61,23 @@ export function GraphPane({
 
   const { nodes, edges } = useMemo(() => {
     if (!graph) return { nodes: [], edges: [] };
-    if (!sourceFilter) return { nodes: graph.nodes, edges: graph.edges };
-    const keep = new Set(graph.nodes.filter((n) => n.source_kind === sourceFilter).map((n) => n.id));
+    const passes = (n: GraphPayload["nodes"][number]) => {
+      if (sourceFilter && n.source_kind !== sourceFilter) return false;
+      const day = (n.date_saved ?? "").slice(0, 10);
+      if (dateFrom && day < dateFrom) return false;
+      if (dateTo && day > dateTo) return false;
+      if (minScore > 0 && !(n.overall != null && n.overall >= minScore)) return false;
+      return true;
+    };
+    if (!sourceFilter && !dateFrom && !dateTo && minScore <= 0) {
+      return { nodes: graph.nodes, edges: graph.edges };
+    }
+    const keep = new Set(graph.nodes.filter(passes).map((n) => n.id));
     return {
       nodes: graph.nodes.filter((n) => keep.has(n.id)),
       edges: graph.edges.filter((e) => keep.has(e.source) && keep.has(e.target)),
     };
-  }, [graph, sourceFilter]);
+  }, [graph, sourceFilter, dateFrom, dateTo, minScore]);
 
   const { sim, tick, simRef } = useGraphSimulation(nodes, edges, size.w, size.h, layout);
   void tick; // re-render trigger

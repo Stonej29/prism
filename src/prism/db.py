@@ -5,6 +5,7 @@ import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
 
@@ -20,6 +21,16 @@ class NoteStats:
     unreviewed: int = 0
     reviewed: int = 0
     archived: int = 0
+
+
+@dataclass(frozen=True)
+class TokenUsage:
+    total_tokens: int = 0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    calls: int = 0
+    today_total_tokens: int = 0
+    today_calls: int = 0
 
 
 @dataclass(frozen=True)
@@ -608,6 +619,56 @@ class PrismDatabase:
                 """
             )
             _add_missing_proposal_columns(conn)
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS token_usage (
+                    day TEXT PRIMARY KEY,
+                    prompt_tokens INTEGER NOT NULL DEFAULT 0,
+                    completion_tokens INTEGER NOT NULL DEFAULT 0,
+                    total_tokens INTEGER NOT NULL DEFAULT 0,
+                    calls INTEGER NOT NULL DEFAULT 0
+                )
+                """
+            )
+
+    def add_token_usage(self, prompt_tokens: int, completion_tokens: int, total_tokens: int, day: str | None = None) -> None:
+        """Accumulate one call's token usage into the per-day running totals."""
+        day = day or datetime.now(UTC).date().isoformat()
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO token_usage (day, prompt_tokens, completion_tokens, total_tokens, calls)
+                VALUES (?, ?, ?, ?, 1)
+                ON CONFLICT(day) DO UPDATE SET
+                    prompt_tokens = prompt_tokens + excluded.prompt_tokens,
+                    completion_tokens = completion_tokens + excluded.completion_tokens,
+                    total_tokens = total_tokens + excluded.total_tokens,
+                    calls = calls + 1
+                """,
+                (day, prompt_tokens, completion_tokens, total_tokens),
+            )
+            conn.commit()
+
+    def get_token_usage(self) -> "TokenUsage":
+        """Return cumulative and today's running token totals."""
+        today = datetime.now(UTC).date().isoformat()
+        with self.connect() as conn:
+            total = conn.execute(
+                "SELECT COALESCE(SUM(prompt_tokens),0) p, COALESCE(SUM(completion_tokens),0) c, "
+                "COALESCE(SUM(total_tokens),0) t, COALESCE(SUM(calls),0) n FROM token_usage"
+            ).fetchone()
+            day = conn.execute(
+                "SELECT prompt_tokens p, completion_tokens c, total_tokens t, calls n FROM token_usage WHERE day = ?",
+                (today,),
+            ).fetchone()
+        return TokenUsage(
+            total_tokens=total["t"] or 0,
+            prompt_tokens=total["p"] or 0,
+            completion_tokens=total["c"] or 0,
+            calls=total["n"] or 0,
+            today_total_tokens=(day["t"] if day else 0) or 0,
+            today_calls=(day["n"] if day else 0) or 0,
+        )
 
 
 _NOTE_COLUMNS = """

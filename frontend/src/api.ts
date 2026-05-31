@@ -14,6 +14,7 @@ import type {
   TagCount,
   TraverseSummary,
   TreeNode,
+  Usage,
 } from "./types";
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
@@ -96,6 +97,8 @@ export const api = {
   },
 
   stats: () => req<Stats>(`/stats`),
+
+  usage: () => req<Usage>(`/usage`),
 
   find: (q: string, limit = 20) =>
     req<{ results: Candidate[]; configured: boolean; error?: string }>(
