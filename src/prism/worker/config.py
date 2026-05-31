@@ -24,6 +24,8 @@ import yaml
 
 DEFAULT_INGESTION_CRON = "0 7 * * *"
 DEFAULT_TRAVERSAL_CRON = "0 5 * * 1"  # weekly, Monday 05:00
+DEFAULT_BACKUP_CRON = "0 2 * * *"  # daily 02:00
+DEFAULT_REEMBED_CRON = "0 3 * * 0"  # weekly, Sunday 03:00
 DEFAULT_TIMEZONE = "Europe/Copenhagen"
 DEFAULT_MAX_ITEMS = 10
 
@@ -42,8 +44,12 @@ class WorkerConfig:
     feeds: list[FeedSpec] = field(default_factory=list)
     ingestion_cron: str = DEFAULT_INGESTION_CRON
     traversal_cron: str = DEFAULT_TRAVERSAL_CRON
+    backup_cron: str = DEFAULT_BACKUP_CRON
+    reembed_cron: str = DEFAULT_REEMBED_CRON
     timezone: str = DEFAULT_TIMEZONE
     traversal_enabled: bool = False
+    backup_enabled: bool = False
+    reembed_enabled: bool = False
 
 
 def feeds_path_from_env() -> Path:
@@ -70,8 +76,12 @@ def parse_worker_config(raw: dict) -> WorkerConfig:
         feeds=feeds,
         ingestion_cron=_str(schedule.get("ingestion"), DEFAULT_INGESTION_CRON),
         traversal_cron=_str(schedule.get("traversal"), DEFAULT_TRAVERSAL_CRON),
+        backup_cron=_str(schedule.get("backup"), DEFAULT_BACKUP_CRON),
+        reembed_cron=_str(schedule.get("reembed"), DEFAULT_REEMBED_CRON),
         timezone=_str(schedule.get("timezone"), DEFAULT_TIMEZONE),
         traversal_enabled=bool(raw.get("traversal_enabled", False)),
+        backup_enabled=bool(raw.get("backup_enabled", False)),
+        reembed_enabled=bool(raw.get("reembed_enabled", False)),
     )
 
 

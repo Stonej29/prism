@@ -74,6 +74,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("ingest", help="Pull configured feeds now")
     sub.add_parser("traverse", help="Run graph maintenance now")
+    sub.add_parser("reembed", help="Re-embed notes whose index text changed")
+    sub.add_parser("backup", help="Commit the vault and snapshot the SQLite DB")
 
     p = sub.add_parser("rename", help="Rename a note")
     p.add_argument("note_id")
@@ -267,6 +269,20 @@ def _set_status(core: CliCore, args) -> int:
     return 0 if ok else 1
 
 
+def _reembed(core: CliCore, args) -> int:
+    s = core.reembed()
+    print(f"{s.checked} checked, {s.stale} stale, {s.reindexed} reindexed, {s.failed} failed")
+    return 0
+
+
+def _backup(core: CliCore, args) -> int:
+    s = core.backup()
+    print(f"vault committed: {s.vault_committed}; snapshot: {s.snapshot_path or 'none'}; pruned {s.pruned}")
+    for err in s.errors or []:
+        print(f"  ! {err}", file=sys.stderr)
+    return 0 if not s.errors else 1
+
+
 def _reprocess(core: CliCore, args) -> int:
     result = core.reprocess(args.note_id)
     print(result.message)
@@ -345,6 +361,8 @@ _HANDLERS = {
     "reject": _reject,
     "ingest": _ingest,
     "traverse": _traverse,
+    "reembed": _reembed,
+    "backup": _backup,
     "rename": _rename,
     "set-status": _set_status,
     "reprocess": _reprocess,

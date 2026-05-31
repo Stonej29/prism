@@ -167,6 +167,8 @@ An optional third container, `prism-worker`, runs scheduled jobs against the sam
 
 - **Feed ingestion** (default daily 07:00) — pulls configured feeds and saves new items through the normal pipeline, tagged `input_source: ai_search`; dedup keeps re-polling cheap. Two feed types: `rss` saves each entry's own link (one note per entry), while `digest` handles roundup newsletters — it follows each post's **"Read more"** links to the underlying repos/papers/project pages and saves *those* as individual notes (one tech per note), not the digest post itself.
 - **Graph maintenance** (default weekly, Monday 05:00) — applied automatically: refreshes each note's semantic related-links (recomputed each run, so they stay current instead of piling up) and normalizes near-duplicate tags corpus-wide (e.g. `foundation-model` / `foundation-models`). Near-duplicate *notes* are flagged as **merge proposals** for you to approve or reject via `/proposals` or the web UI. Approving a merge has the LLM **synthesize one consolidated note** from both (unioning their tags and links and re-pointing backlinks) before removing the duplicate — nothing is deleted without your approval, and no content is lost.
+- **Backup** (opt-in `backup_enabled`, default daily 02:00) — commits the vault git repo (locally, no push) and writes a timestamped SQLite snapshot under `runtime/backups/`, keeping the most recent 14.
+- **Re-embed** (opt-in `reembed_enabled`, default weekly Sunday 03:00) — re-embeds only notes whose index text changed since they were last embedded (cheaper than a full index rebuild), so edits and merges don't leave stale vectors.
 
 Schedules use the `timezone` in `feeds.yaml` (default `Europe/Copenhagen`, DST-aware). Both jobs can also be triggered on demand without the worker container — from Telegram (`/ingest`, `/traverse`) or the web UI (buttons in the proposals panel), or via `docker compose run --rm prism-worker python -m prism.worker ingest`.
 
@@ -177,7 +179,7 @@ cp feeds.example.yaml runtime/feeds.yaml   # edit feeds + cron schedules
 docker compose build prism-worker
 docker compose up -d prism-worker
 # Run a job once, without waiting for the schedule:
-docker compose run --rm prism-worker python -m prism.worker ingest
+docker compose run --rm prism-worker python -m prism.worker ingest    # also: backup | reembed
 ```
 
 ## Stack

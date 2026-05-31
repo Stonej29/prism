@@ -5,6 +5,8 @@ graph traversal) on cron schedules from `feeds.yaml`.
 
 One-shot CLI for manual runs / testing:
     python -m prism.worker ingest      # run feed ingestion once and exit
+    python -m prism.worker backup      # commit the vault + snapshot SQLite once
+    python -m prism.worker reembed     # re-embed notes with stale embeddings once
 """
 from __future__ import annotations
 
@@ -41,6 +43,20 @@ def run_ingestion_once() -> None:
     run_feed_ingestion(services.notes, config.feeds)
 
 
+def run_backup_once() -> None:
+    from prism.worker.backup import run_backup
+
+    services, _ = _build()
+    run_backup(services)
+
+
+def run_reembed_once() -> None:
+    from prism.worker.reembed import run_reembed
+
+    services, _ = _build()
+    run_reembed(services)
+
+
 def run_scheduler() -> None:
     from apscheduler.schedulers.blocking import BlockingScheduler
     from apscheduler.triggers.cron import CronTrigger
@@ -62,6 +78,12 @@ def run_scheduler() -> None:
     # Graph traversal (3b) registers here once enabled.
     if config.traversal_enabled:
         _register_traversal(scheduler, services, config)
+
+    if config.backup_enabled:
+        _register_backup(scheduler, services, config)
+
+    if config.reembed_enabled:
+        _register_reembed(scheduler, services, config)
 
     if os.getenv("PRISM_WORKER_RUN_AT_START") == "1":
         LOGGER.info("PRISM_WORKER_RUN_AT_START=1: running feed ingestion now")
@@ -93,6 +115,38 @@ def _register_traversal(scheduler, services: Services, config: WorkerConfig) -> 
     LOGGER.info("Scheduled graph traversal (%s %s)", config.traversal_cron, config.timezone)
 
 
+def _register_backup(scheduler, services: Services, config: WorkerConfig) -> None:
+    from apscheduler.triggers.cron import CronTrigger
+
+    from prism.worker.backup import run_backup
+
+    scheduler.add_job(
+        lambda: run_backup(services),
+        CronTrigger.from_crontab(config.backup_cron, timezone=_timezone(config.timezone)),
+        id="backup",
+        name="backup",
+        max_instances=1,
+        coalesce=True,
+    )
+    LOGGER.info("Scheduled backup (%s %s)", config.backup_cron, config.timezone)
+
+
+def _register_reembed(scheduler, services: Services, config: WorkerConfig) -> None:
+    from apscheduler.triggers.cron import CronTrigger
+
+    from prism.worker.reembed import run_reembed
+
+    scheduler.add_job(
+        lambda: run_reembed(services),
+        CronTrigger.from_crontab(config.reembed_cron, timezone=_timezone(config.timezone)),
+        id="reembed",
+        name="reembed",
+        max_instances=1,
+        coalesce=True,
+    )
+    LOGGER.info("Scheduled re-embed (%s %s)", config.reembed_cron, config.timezone)
+
+
 def _timezone(name: str):
     try:
         from zoneinfo import ZoneInfo
@@ -111,8 +165,14 @@ def main(argv: list[str] | None = None) -> None:
     if args and args[0] == "ingest":
         run_ingestion_once()
         return
+    if args and args[0] == "backup":
+        run_backup_once()
+        return
+    if args and args[0] == "reembed":
+        run_reembed_once()
+        return
     if args and args[0] not in {"run", "serve"}:
-        print("Usage: prism-worker [run|ingest]")
+        print("Usage: prism-worker [run|ingest|backup|reembed]")
         raise SystemExit(2)
     run_scheduler()
 

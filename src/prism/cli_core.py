@@ -29,8 +29,10 @@ from prism.notes import (
 )
 from prism.proposals import ProposalActionResult, ProposalService
 from prism.services import Services, build_services
+from prism.worker.backup import BackupSummary, run_backup
 from prism.worker.config import load_worker_config
 from prism.worker.ingest import IngestionSummary, run_feed_ingestion
+from prism.worker.reembed import ReembedSummary, run_reembed
 from prism.worker.traversal import TraversalSummary, run_graph_traversal
 
 INPUT_SOURCE = "cli"
@@ -250,3 +252,9 @@ class CliCore:
 
     def traverse(self) -> TraversalSummary:
         return run_graph_traversal(self.services)
+
+    def reembed(self) -> ReembedSummary:
+        return run_reembed(self.services)
+
+    def backup(self) -> BackupSummary:
+        return run_backup(self.services)

@@ -23,9 +23,19 @@ schedule:
   timezone: Europe/Copenhagen
   ingestion: "0 7 * * *"   # daily 07:00 — pull feeds
   traversal: "0 5 * * 1"   # weekly Monday 05:00 — graph maintenance
+  backup: "0 2 * * *"      # daily 02:00 — commit vault + snapshot SQLite
+  reembed: "0 3 * * 0"     # weekly Sunday 03:00 — re-embed stale notes
 
 # Graph traversal each run:
 #   * recomputes automatic related-note links (bounded; never piles up)
 #   * normalizes near-duplicate tags corpus-wide (e.g. foundation-model(s)) — auto
 #   * proposes near-duplicate note merges for review via /proposals (not auto-applied)
 traversal_enabled: true
+
+# Backup: git-commit the vault (local, no push) and snapshot the SQLite DB to
+# <sqlite_dir>/backups/, keeping the most recent 14 snapshots.
+backup_enabled: false
+
+# Re-embed: recompute each note's index-text hash and re-embed only those that
+# changed since last embedded (cheaper than a full `python -m prism.index rebuild`).
+reembed_enabled: false
