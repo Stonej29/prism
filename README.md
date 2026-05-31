@@ -2,7 +2,7 @@
 
 **Personal Research Interlinked System** — a self-hosted research memory (a Telegram bot plus a web UI) that turns links into a structured, searchable knowledge base.
 
-Send a URL and PRISM fetches it, archives the source, generates a rich LLM summary, embeds it into a semantic index, and saves an Obsidian-compatible Markdown note with tags, evaluation scores, and backlinks to related notes. Over time it becomes a personal research memory you can browse, search, and ask questions against — and generate new project ideas from. Drive it from Telegram, or from a graph-based [web interface](#web-interface).
+Send a URL and PRISM fetches it, archives the source, generates a rich LLM summary, embeds it into a semantic index, and saves an Obsidian-compatible Markdown note with tags, evaluation scores, and backlinks to related notes. Over time it becomes a personal research memory you can browse, search, and ask questions against — and generate new project ideas from. Drive it from Telegram, from a graph-based [web interface](#web-interface), or from the [terminal](#terminal-interface) (full-screen TUI or scriptable CLI).
 
 Supported source types: arXiv papers, GitHub repos, Hugging Face models/datasets/papers, YouTube videos (title + transcript), PDFs (by URL or uploaded directly to the bot), and general websites.
 
@@ -135,6 +135,27 @@ cd frontend && npm install && npm run dev
 
 The web service ignores the Telegram env vars; optional knobs: `PRISM_WEB_HOST`, `PRISM_WEB_PORT`, `PRISM_WEB_RELOAD`, `PRISM_WEB_STATIC`.
 
+## Terminal interface
+
+PRISM also runs in the terminal — over the same vault, database, and index, with full feature parity with the bot. Two front-ends share one logic layer:
+
+- **TUI** (`prism-tui`) — a full-screen [Textual](https://textual.textualize.io/) three-pane app: a mode-switchable sidebar (notes · ideas · tags · proposals), a Markdown detail pane, and a command bar. Use `1`–`4` to switch the list, `/` to type a command (`find …`, `ask …`, paste a URL to save), `r`/`d`/`a`/`x`/`g` to rate/delete/approve/reject/reprocess the selection, and `?` for the full command list. Network work runs off the UI thread, so it never blocks.
+- **CLI** (`prism-cli`) — a scriptable, pipe-friendly front-end whose subcommands map 1:1 to the bot's commands (`save`, `find`, `ask`, `recent`, `idea`, `ingest`, `status`, …) with plain-text output.
+
+Both read the same env vars as the bot/worker and need no Telegram token:
+
+```sh
+# Full-screen TUI
+PYTHONPATH=src SQLITE_PATH=runtime/prism.sqlite3 LANCEDB_PATH=runtime/lancedb \
+  VAULT_PATH=runtime/research-vault ARCHIVE_PATH=runtime/archives \
+  PRISM_FEEDS_PATH=runtime/feeds.yaml python -m prism.tui
+
+# Scriptable CLI (same env vars)
+PYTHONPATH=src ... python -m prism.cli recent
+PYTHONPATH=src ... python -m prism.cli find "state space models"
+PYTHONPATH=src ... python -m prism.cli status
+```
+
 ## Background worker
 
 An optional third container, `prism-worker`, runs scheduled jobs against the same `runtime/`:
@@ -156,7 +177,7 @@ docker compose run --rm prism-worker python -m prism.worker ingest
 
 ## Stack
 
-Python · `python-telegram-bot` · FastAPI · React + Vite (TypeScript) · Obsidian-compatible Markdown vault · SQLite · LanceDB · OpenAI-compatible LLM and embedding APIs. Requires Python ≥ 3.12 (and Node ≥ 18 to build the web UI); runs via Docker Compose.
+Python · `python-telegram-bot` · FastAPI · React + Vite (TypeScript) · Textual (TUI) · Obsidian-compatible Markdown vault · SQLite · LanceDB · OpenAI-compatible LLM and embedding APIs. Requires Python ≥ 3.12 (and Node ≥ 18 to build the web UI); runs via Docker Compose.
 
 ## Runtime data
 
@@ -198,7 +219,7 @@ See `CLAUDE.md` for the full architecture, data flow, and design decisions.
 
 ## Planned
 
-- [ ] Terminal interface
+- [x] Terminal interface (TUI + CLI)
 - [x] Web interface
 - [x] Direct PDF uploads, YouTube, and Hugging Face sources
 - [x] Scheduled feed ingestion + AI graph maintenance (background worker)
