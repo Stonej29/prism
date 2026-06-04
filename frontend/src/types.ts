@@ -15,6 +15,7 @@ export interface RelatedNote {
   title: string;
   reason: string;
   path: string;
+  origin: "auto" | "llm" | "manual" | "unknown" | string;
 }
 
 export interface NoteDetail {
@@ -59,13 +60,14 @@ export interface GraphEdge {
   source: string;
   target: string;
   reason: string;
+  origin: "auto" | "llm" | "manual" | "unknown" | string;
 }
 
 export interface GraphPayload {
   nodes: GraphNode[];
   edges: GraphEdge[];
   topic_labels: Record<string, string>;
-  counts: { notes: number; links: number; topics: number; communities: number };
+  counts: { notes: number; links: number; topics: number; communities: number; links_by_origin?: Record<string, number> };
 }
 
 export interface TagCount {
@@ -193,6 +195,9 @@ export interface TraverseSummary {
   notes_retagged: number;
   duplicates_proposed: number;
   pending_proposals: number;
+  settings?: MaintenanceSettings;
+  links_by_origin_before?: Record<string, number>;
+  links_by_origin_after?: Record<string, number>;
 }
 
 export interface MaintenanceSettings {
@@ -218,6 +223,23 @@ export interface MaintenanceEvent {
   links_added?: number;
   links_removed?: number;
   tags?: string[];
+  origin?: string;
+  settings?: MaintenanceSettings;
+  counts?: Record<string, number>;
+}
+
+export interface ActivityEntry {
+  id: number;
+  at: string;
+  action: string;
+  status: string;
+  message: string;
+  details: Record<string, unknown>;
+}
+
+export interface ActivityPayload {
+  items: ActivityEntry[];
+  limit: number;
 }
 
 export interface MaintenanceStatus {

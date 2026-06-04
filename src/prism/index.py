@@ -110,9 +110,15 @@ class NoteIndexer:
         if table is None:
             return {}
         try:
-            rows = table.to_arrow().to_pylist()
+            # LanceDB 0.18's table.to_arrow() can return only a small default
+            # batch. The underlying Lance dataset returns the full table, which
+            # graph maintenance needs for corpus-wide auto links.
+            rows = table.to_lance().to_table().to_pylist()
         except Exception:
-            return {}
+            try:
+                rows = table.to_arrow().to_pylist()
+            except Exception:
+                return {}
         out: dict[str, list[float]] = {}
         for row in rows:
             nid = row.get("note_id")

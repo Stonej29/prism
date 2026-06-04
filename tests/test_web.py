@@ -11,11 +11,13 @@ from prism.config import Settings
 from prism.db import IdeaRecord, NoteRecord, PrismDatabase
 from prism.embedding import EmbeddingConfig
 from prism.ideas import IdeaService
-from prism.index import NoteIndexer
+from prism.index import NoteIndexer, RelatedCandidate
 from prism.llm import LLMConfig
 from prism.notes import NoteService
 from prism.proposals import ProposalService
+from prism.web.activity import clear_activity
 from prism.web.app import create_app
+from prism.web.clustering import cluster_labels
 from prism.web.deps import get_db, get_ideas, get_indexer, get_notes, get_proposals, get_settings
 
 
@@ -63,8 +65,31 @@ def _settings(vault: Path) -> Settings:
     )
 
 
+class _FakeIndexer:
+    is_configured = True
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, int]] = []
+
+    def search_text(self, query: str, *, limit: int = 5, exclude_note_id: str | None = None) -> list[RelatedCandidate]:
+        self.calls.append((query, limit))
+        return [
+            RelatedCandidate(
+                note_id=f"note{i}",
+                title=f"Note {i}",
+                summary="summary",
+                note_path=f"notes/note{i}.md",
+                source_url=f"https://example.com/{i}",
+                tags=["tag"],
+                score=1.0 - (i * 0.01),
+            )
+            for i in range(limit)
+        ]
+
+
 class WebApiTest(unittest.TestCase):
     def setUp(self) -> None:
+        clear_activity()
         self._tmp = tempfile.TemporaryDirectory()
         root = Path(self._tmp.name)
         self.db = PrismDatabase(root / "prism.sqlite3")
@@ -168,6 +193,9 @@ class WebApiTest(unittest.TestCase):
             self.assertEqual(saved["link_threshold"], 0.8)
             self.assertEqual(saved["max_auto_links"], 4)
             self.assertEqual(saved["dup_threshold"], 0.92)  # untouched field preserved
+            activity = self.client.get("/api/activity").json()["items"]
+            self.assertEqual(activity[0]["action"], "maintenance settings")
+            self.assertEqual(activity[0]["status"], "ok")
 
             # Persisted to the YAML and reloaded.
             again = self.client.get("/api/maintenance/settings").json()
@@ -213,10 +241,53 @@ class WebApiTest(unittest.TestCase):
         self.assertEqual(graph["counts"]["notes"], 2)
         self.assertEqual(graph["counts"]["links"], 1)
         self.assertEqual(sorted(graph["edges"][0][k] for k in ("source", "target")), ["aaa111", "bbb222"])
+        self.assertEqual(graph["edges"][0]["origin"], "llm")
+        self.assertEqual(graph["counts"]["links_by_origin"]["llm"], 1)
         # the two linked notes form one community; nodes carry topic + community
         self.assertEqual(graph["counts"]["communities"], 1)
         self.assertEqual({n["community"] for n in graph["nodes"]}, {0})
         self.assertTrue(all("topic" in n for n in graph["nodes"]))
+
+    def test_graph_communities_prefer_auto_links_when_present(self) -> None:
+        import dataclasses
+
+        def link(note_id: str, origin: str | None = None) -> dict[str, str]:
+            item = {"id": note_id, "title": f"Note {note_id}", "reason": "related", "path": f"notes/{note_id}.md"}
+            if origin:
+                item["origin"] = origin
+            return item
+
+        self.db.insert_note(dataclasses.replace(
+            make_note("aaa111"),
+            related_notes_json=json.dumps([link("bbb222", "auto")]),
+        ))
+        self.db.insert_note(dataclasses.replace(
+            make_note("bbb222"),
+            related_notes_json=json.dumps([link("ccc333")]),
+        ))
+        self.db.insert_note(make_note("ccc333"))
+
+        graph = self.client.get("/api/graph").json()
+        communities = {n["id"]: n["community"] for n in graph["nodes"]}
+        self.assertEqual(communities["aaa111"], communities["bbb222"])
+        self.assertNotEqual(communities["aaa111"], communities["ccc333"])
+        self.assertEqual(graph["counts"]["communities"], 2)
+        self.assertEqual(graph["counts"]["links_by_origin"]["auto"], 1)
+        self.assertEqual(graph["counts"]["links_by_origin"]["llm"], 1)
+
+    def test_cluster_labels_prefer_distinctive_tags(self) -> None:
+        labels = cluster_labels(
+            {"a": 0, "b": 0, "c": 1},
+            {
+                "a": ["open-source", "robotics", "control"],
+                "b": ["open-source", "robotics"],
+                "c": ["open-source", "ocr"],
+            },
+        )
+
+        self.assertTrue(labels[0].startswith("robotics"))
+        self.assertFalse(labels[0].startswith("open-source"))
+        self.assertTrue(labels[1].startswith("ocr"))
 
     def test_tags_and_stats(self) -> None:
         self.db.insert_note(make_note("aaa111", tags=["graph", "rag"]))
@@ -383,7 +454,14 @@ class WebApiTest(unittest.TestCase):
         status = self.client.get("/api/maintenance/status").json()
         self.assertEqual(status["status"], "complete")
         self.assertEqual(status["summary"]["notes_retagged"], res["notes_retagged"])
+        self.assertIn("settings", status["summary"])
+        self.assertIn("links_by_origin_before", status["summary"])
+        self.assertTrue(any(event["kind"] == "settings" for event in status["events"]))
+        self.assertTrue(any(event["kind"] == "link_origins" and event["phase"] == "before" for event in status["events"]))
         self.assertTrue(any(event["kind"] == "note_retagged" for event in status["events"]))
+        activity = self.client.get("/api/activity").json()["items"]
+        self.assertEqual(activity[0]["action"], "maintenance run")
+        self.assertEqual(activity[0]["status"], "ok")
 
     def test_ask_graceful_when_unconfigured(self) -> None:
         result = self.client.post("/api/ask", json={"question": "what is rag?"}).json()
@@ -399,6 +477,29 @@ class WebApiTest(unittest.TestCase):
         result = self.client.get("/api/find", params={"q": "graph"}).json()
         self.assertFalse(result["configured"])
         self.assertEqual(result["results"], [])
+
+    def test_find_defaults_to_one_result(self) -> None:
+        fake = _FakeIndexer()
+        self.client.app.dependency_overrides[get_indexer] = lambda: fake
+
+        result = self.client.get("/api/find", params={"q": "whole body control"}).json()
+
+        self.assertTrue(result["configured"])
+        self.assertEqual(result["query"], "whole body control")
+        self.assertEqual(result["limit"], 1)
+        self.assertEqual(fake.calls, [("whole body control", 1)])
+        self.assertEqual(len(result["results"]), 1)
+
+    def test_find_trailing_integer_sets_result_count(self) -> None:
+        fake = _FakeIndexer()
+        self.client.app.dependency_overrides[get_indexer] = lambda: fake
+
+        result = self.client.get("/api/find", params={"q": "whole body control 4"}).json()
+
+        self.assertEqual(result["query"], "whole body control")
+        self.assertEqual(result["limit"], 4)
+        self.assertEqual(fake.calls, [("whole body control", 4)])
+        self.assertEqual(len(result["results"]), 4)
 
     def test_tree_nests_and_maps_note_ids(self) -> None:
         self.db.insert_note(make_note("aaa111"))  # note_path = notes/aaa111.md

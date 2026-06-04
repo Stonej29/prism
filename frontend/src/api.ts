@@ -1,4 +1,5 @@
 import type {
+  ActivityPayload,
   AskResult,
   Candidate,
   GraphPayload,
@@ -108,10 +109,11 @@ export const api = {
 
   usage: () => req<Usage>(`/usage`),
 
-  find: (q: string, limit = 20) =>
-    req<{ results: Candidate[]; configured: boolean; error?: string }>(
-      `/find?q=${encodeURIComponent(q)}&limit=${limit}`,
-    ),
+  find: (q: string, limit?: number) => {
+    const params = new URLSearchParams({ q });
+    if (limit != null) params.set("limit", String(limit));
+    return req<{ results: Candidate[]; configured: boolean; query: string; limit: number; error?: string }>(`/find?${params.toString()}`);
+  },
 
   ask: (question: string, limit = 6) =>
     req<AskResult>(`/ask`, { method: "POST", body: JSON.stringify({ question, limit }) }),
@@ -145,6 +147,8 @@ export const api = {
 
   saveMaintenanceSettings: (body: MaintenanceSettings) =>
     req<MaintenanceSettings>(`/maintenance/settings`, { method: "PUT", body: JSON.stringify(body) }),
+
+  activity: () => req<ActivityPayload>(`/activity`),
 };
 
 export type { Proposal };

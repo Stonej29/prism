@@ -12,16 +12,27 @@ router = APIRouter(tags=["search"])
 
 
 @router.get("/find")
-def find(q: str, limit: int = 20, indexer: NoteIndexer = Depends(get_indexer)) -> dict:
-    if not q.strip():
-        return {"results": [], "configured": indexer.is_configured}
+def find(q: str, limit: int | None = None, indexer: NoteIndexer = Depends(get_indexer)) -> dict:
+    query, result_limit = parse_find_query(q, limit)
+    if not query:
+        return {"results": [], "configured": indexer.is_configured, "query": query, "limit": result_limit}
     if not indexer.is_configured:
-        return {"results": [], "configured": False}
+        return {"results": [], "configured": False, "query": query, "limit": result_limit}
     try:
-        results = indexer.search_text(q, limit=limit)
+        results = indexer.search_text(query, limit=result_limit)
     except Exception as exc:  # noqa: BLE001 - surface as empty + message
-        return {"results": [], "configured": True, "error": f"{type(exc).__name__}: {exc}"}
-    return {"results": [candidate_dto(c) for c in results], "configured": True}
+        return {"results": [], "configured": True, "query": query, "limit": result_limit, "error": f"{type(exc).__name__}: {exc}"}
+    return {"results": [candidate_dto(c) for c in results], "configured": True, "query": query, "limit": result_limit}
+
+
+def parse_find_query(q: str, limit: int | None = None) -> tuple[str, int]:
+    parts = q.strip().split()
+    requested = limit
+    if len(parts) > 1 and parts[-1].isdigit():
+        requested = int(parts[-1])
+        parts = parts[:-1]
+    result_limit = max(1, min(20, int(requested or 1)))
+    return " ".join(parts), result_limit
 
 
 @router.post("/ask")

@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from prism.db import PrismDatabase
 from prism.notes import NOTE_STATUSES, NoteService, _tags
+from prism.web.activity import log_activity
 from prism.web.deps import get_db, get_notes
 from prism.web.routes import filter_notes, gather_all_notes
 from prism.web.schemas import BulkStatusBody, EditTagsBody, JobFlagBody, RenameBody, SaveUrlBody, SetStatusBody
@@ -59,7 +60,15 @@ def get_note(note_id: str, db: PrismDatabase = Depends(get_db)) -> dict:
 
 @router.post("")
 def save_url(body: SaveUrlBody, notes: NoteService = Depends(get_notes)) -> dict:
-    result = notes.save_url(body.url.strip(), body.input_source.strip() or "web_ui")
+    url = body.url.strip()
+    try:
+        result = notes.save_url(url, body.input_source.strip() or "web_ui")
+    except Exception as exc:
+        log_activity("save url", "failed", f"{type(exc).__name__}: {exc}", url=url)
+        raise
+    status = "ok" if result.created else "duplicate"
+    message = f"Saved {result.record.title}" if result.created else f"Already saved {result.record.title}"
+    log_activity("save url", status, message, note_id=result.record.note_id, url=url, duplicate_reason=result.duplicate_reason)
     return {
         "created": result.created,
         "duplicate_reason": result.duplicate_reason,
@@ -82,17 +91,29 @@ def retry_failed(limit: int = 25, notes: NoteService = Depends(get_notes)) -> di
 
 @router.post("/{note_id}/reprocess")
 def reprocess(note_id: str, notes: NoteService = Depends(get_notes)) -> dict:
-    result = notes.reprocess(note_id)
+    try:
+        result = notes.reprocess(note_id)
+    except Exception as exc:
+        log_activity("reprocess", "failed", f"{type(exc).__name__}: {exc}", note_id=note_id)
+        raise
     if not result.record:
+        log_activity("reprocess", "failed", result.message, note_id=note_id)
         raise HTTPException(status_code=404, detail=result.message)
+    log_activity("reprocess", "ok" if result.ok else "failed", result.message, note_id=result.record.note_id)
     return {"ok": result.ok, "message": result.message, "note": note_to_dto(result.record)}
 
 
 @router.post("/{note_id}/research")
 def research_note(note_id: str, notes: NoteService = Depends(get_notes)) -> dict:
-    result = notes.research_note(note_id)
+    try:
+        result = notes.research_note(note_id)
+    except Exception as exc:
+        log_activity("research", "failed", f"{type(exc).__name__}: {exc}", note_id=note_id)
+        raise
     if not result.record:
+        log_activity("research", "failed", result.message, note_id=note_id)
         raise HTTPException(status_code=404, detail=result.message)
+    log_activity("research", "ok" if result.ok else "failed", result.message, note_id=result.record.note_id)
     return {"ok": result.ok, "message": result.message, "note": note_to_dto(result.record)}
 
 

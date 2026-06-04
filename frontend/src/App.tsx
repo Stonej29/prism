@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api";
 import { P, srcLabel } from "./theme";
-import type { AskResult, GraphPayload, Idea, MaintenanceStatus, NoteDetail, Proposal, Stats, TagCount, TreeNode, Usage } from "./types";
+import type { ActivityEntry, AskResult, GraphPayload, Idea, MaintenanceStatus, NoteDetail, Proposal, Stats, TagCount, TreeNode, Usage } from "./types";
 import { TopBar } from "./components/TopBar";
 import { TreePane } from "./components/TreePane";
 import { GraphPane } from "./components/GraphPane";
@@ -10,6 +10,7 @@ import { AskOverlay } from "./components/AskOverlay";
 import { ProposalsOverlay } from "./components/ProposalsOverlay";
 import { IdeaView } from "./components/IdeaView";
 import { FileViewer, type OpenFile } from "./components/FileViewer";
+import { ActivityLog } from "./components/ActivityLog";
 import type { IdeaStatus } from "./components/Lightbulb";
 
 interface AskState {
@@ -32,6 +33,11 @@ interface ProposalsState {
   busyId: string | null;
   runningJob: "ingest" | "traverse" | null;
 }
+interface ActivityState {
+  open: boolean;
+  loading: boolean;
+  items: ActivityEntry[];
+}
 
 const LEFT_CLOSED_W = 32;
 const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
@@ -47,15 +53,16 @@ export default function App() {
   const [note, setNote] = useState<NoteDetail | null>(null);
   const [noteLoading, setNoteLoading] = useState(false);
   const [paneBusy, setPaneBusy] = useState(false);
-  const [reprocessing, setReprocessing] = useState(false);
+  const [processingNote, setProcessingNote] = useState<{ noteId: string; action: "reprocess" | "research" } | null>(null);
 
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(false);
   const [leftWidth, setLeftWidth] = useState(264);
   const [rightWidth, setRightWidth] = useState(392);
 
-  const [sourceFilter, setSourceFilter] = useState<string | null>(null);
-  const [activeTag, setActiveTag] = useState<string | null>(null);
+  const [sourceFilters, setSourceFilters] = useState<string[]>([]);
+  const [tagFilters, setTagFilters] = useState<string[]>([]);
+  const [flagFilters, setFlagFilters] = useState<string[]>([]);
   const [highlight, setHighlight] = useState<Set<string> | null>(null);
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
@@ -69,6 +76,14 @@ export default function App() {
   const [toast, setToast] = useState<string | null>(null);
   const [proposals, setProposals] = useState<ProposalsState>({ open: false, items: [], pending: 0, loading: false, busyId: null, runningJob: null });
   const [maintenanceStatus, setMaintenanceStatus] = useState<MaintenanceStatus | null>(null);
+  const [activity, setActivity] = useState<ActivityState>({ open: false, loading: false, items: [] });
+  const selectedIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    selectedIdRef.current = selectedId;
+  }, [selectedId]);
+
+  const selectedProcessing = processingNote?.noteId === selectedId ? processingNote : null;
 
   const noteKind = useMemo(() => {
     const m: Record<string, string> = {};
@@ -142,21 +157,54 @@ export default function App() {
     setHighlight(null);
   }, []);
 
-  const onSelectSource = (s: string | null) => {
-    setSourceFilter(s);
-    setActiveTag(null);
+  const clearFanoutFilters = () => {
+    setSourceFilters([]);
+    setTagFilters([]);
+    setFlagFilters([]);
     setHighlight(null);
   };
 
-  const onSelectTag = async (tag: string) => {
-    setActiveTag(tag);
-    setSourceFilter(null);
-    try {
-      const res = await api.notes({ tag, limit: 200 });
-      setHighlight(new Set(res.items.map((n) => n.id)));
-    } catch (e) {
-      setToast(String(e));
+  const clearAllFilters = () => {
+    clearFanoutFilters();
+    setDateFrom("");
+    setDateTo("");
+    setMinScore(0);
+  };
+
+  const selectSource = (source: string, additive = false) => {
+    setHighlight(null);
+    if (!additive) {
+      const selected = sourceFilters.length === 1 && sourceFilters[0] === source && tagFilters.length === 0 && flagFilters.length === 0;
+      setSourceFilters(selected ? [] : [source]);
+      setTagFilters([]);
+      setFlagFilters([]);
+      return;
     }
+    setSourceFilters((prev) => (prev.includes(source) ? prev.filter((s) => s !== source) : [...prev, source]));
+  };
+
+  const selectTag = (tag: string, additive = false) => {
+    setHighlight(null);
+    if (!additive) {
+      const selected = tagFilters.length === 1 && tagFilters[0] === tag && sourceFilters.length === 0 && flagFilters.length === 0;
+      setTagFilters(selected ? [] : [tag]);
+      setSourceFilters([]);
+      setFlagFilters([]);
+      return;
+    }
+    setTagFilters((prev) => (prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]));
+  };
+
+  const toggleFlagFilter = (flag: string, additive = false) => {
+    setHighlight(null);
+    if (!additive) {
+      const selected = flagFilters.length === 1 && flagFilters[0] === flag && sourceFilters.length === 0 && tagFilters.length === 0;
+      setFlagFilters(selected ? [] : [flag]);
+      setSourceFilters([]);
+      setTagFilters([]);
+      return;
+    }
+    setFlagFilters((prev) => (prev.includes(flag) ? prev.filter((f) => f !== flag) : [...prev, flag]));
   };
 
   const onShowRelated = (id: string) => {
@@ -166,12 +214,6 @@ export default function App() {
       else if (e.target === id) neighbors.add(e.source);
     }
     setHighlight(neighbors);
-  };
-
-  // Inbox: highlight unreviewed notes in the graph (clearing re-clicks).
-  const onInbox = () => {
-    const unreviewed = new Set((graph?.nodes ?? []).filter((n) => n.status === "unreviewed").map((n) => n.id));
-    setHighlight((cur) => (cur && cur.size === unreviewed.size && [...unreviewed].every((id) => cur.has(id)) ? null : unreviewed));
   };
 
   const onAsk = async (question: string) => {
@@ -188,15 +230,15 @@ export default function App() {
     setBusy(true);
     try {
       const res = await api.find(q);
+      const searched = res.query || q;
       if (!res.configured) setToast("Semantic search is not configured.");
-      else if (res.results.length === 0) setToast(`No matches for “${q}”.`);
+      else if (res.results.length === 0) setToast(`No matches for “${searched}”.`);
       else {
         // Light up every match in the graph (like a tag filter) instead of
         // jumping straight into the first hit.
-        setSourceFilter(null);
-        setActiveTag(null);
+        clearFanoutFilters();
         setHighlight(new Set(res.results.map((r) => r.id)));
-        setToast(`${res.results.length} match${res.results.length === 1 ? "" : "es"} for “${q}”`);
+        setToast(`${res.results.length} match${res.results.length === 1 ? "" : "es"} for “${searched}”`);
       }
     } catch (e) {
       setToast(String(e));
@@ -219,14 +261,14 @@ export default function App() {
     }
   };
 
-  // Idea topic follows the active filter: tag → source kind, else topic-less.
-  const ideaTopic = (): string => activeTag || (sourceFilter ? srcLabel(sourceFilter) : "");
+  // Idea topic follows the active filter: first tag -> first source kind, else topic-less.
+  const ideaTopic = (): string => tagFilters[0] || (sourceFilters[0] ? srcLabel(sourceFilters[0]) : "");
 
   const generateIdea = async () => {
     const topic = ideaTopic();
     setIdeaJob((j) => ({ ...j, status: "loading", topic }));
     try {
-      const res = await api.generateIdea(topic || undefined);
+      const res = await api.generateIdea(topic || undefined, flagFilters.includes("job"));
       if (!res.ok) {
         setToast(res.message);
         setIdeaJob((j) => ({ ...j, status: "idle" }));
@@ -245,32 +287,30 @@ export default function App() {
   };
 
   const onReprocess = async (id: string) => {
-    setPaneBusy(true);
-    setReprocessing(true);
+    setProcessingNote({ noteId: id, action: "reprocess" });
     try {
       const res = await api.reprocess(id);
-      setNote(res.note);
+      setNote((current) => (selectedIdRef.current === id ? res.note : current));
       setToast(res.message);
       await refreshData();
     } catch (e) {
       setToast(String(e));
     } finally {
-      setPaneBusy(false);
-      setReprocessing(false);
+      setProcessingNote((current) => (current?.noteId === id && current.action === "reprocess" ? null : current));
     }
   };
 
   const onResearch = async (id: string) => {
-    setPaneBusy(true);
+    setProcessingNote({ noteId: id, action: "research" });
     try {
       const res = await api.research(id);
-      setNote(res.note);
+      setNote((current) => (selectedIdRef.current === id ? res.note : current));
       setToast(res.message);
       await refreshData();
     } catch (e) {
       setToast(String(e));
     } finally {
-      setPaneBusy(false);
+      setProcessingNote((current) => (current?.noteId === id && current.action === "research" ? null : current));
     }
   };
 
@@ -339,16 +379,6 @@ export default function App() {
     }
   };
 
-  // Job: highlight job-relevant notes in the graph (clearing re-clicks).
-  const onJob = () => {
-    const flagged = new Set((graph?.nodes ?? []).filter((n) => n.job_relevant).map((n) => n.id));
-    if (flagged.size === 0) {
-      setToast("No notes flagged as job-relevant yet (use the ☆ on a note).");
-      return;
-    }
-    setHighlight((cur) => (cur && cur.size === flagged.size && [...flagged].every((id) => cur.has(id)) ? null : flagged));
-  };
-
   const onRate = async (id: string, rating: number) => {
     try {
       const updated = await api.rateIdea(id, rating);
@@ -405,6 +435,17 @@ export default function App() {
     }
   };
 
+  const openActivityLog = async () => {
+    setActivity((a) => ({ ...a, open: true, loading: true }));
+    try {
+      const res = await api.activity();
+      setActivity({ open: true, loading: false, items: res.items });
+    } catch (e) {
+      setToast(String(e));
+      setActivity((a) => ({ ...a, loading: false }));
+    }
+  };
+
   const runTraverse = async () => {
     setProposals((p) => ({ ...p, runningJob: "traverse" }));
     setMaintenanceStatus(null);
@@ -433,6 +474,7 @@ export default function App() {
         setAsk((a) => ({ ...a, open: false }));
         setIdeaJob((j) => ({ ...j, open: false }));
         setProposals((p) => ({ ...p, open: false }));
+        setActivity((a) => ({ ...a, open: false }));
         setOpenFile(null);
       }
     };
@@ -446,18 +488,12 @@ export default function App() {
         busy={busy || ask.loading}
         saving={saving}
         ideaStatus={ideaJob.status}
-        pendingProposals={proposals.pending}
-        unreviewed={stats?.notes.unreviewed ?? 0}
         ingesting={proposals.runningJob === "ingest"}
-        maintaining={proposals.runningJob === "traverse"}
         onAsk={onAsk}
         onFind={onFind}
         onSave={onSave}
         onLightbulb={onLightbulb}
-        onInbox={onInbox}
-        onProposals={openProposals}
         onPullFeeds={runIngest}
-        onRunMaintenance={runTraverse}
       />
       <div style={{ flex: 1, display: "flex", minHeight: 0, position: "relative" }}>
         <TreePane
@@ -471,8 +507,9 @@ export default function App() {
           graph={graph}
           tags={tags}
           stats={stats}
-          sourceFilter={sourceFilter}
-          activeTag={activeTag}
+          sourceFilters={sourceFilters}
+          tagFilters={tagFilters}
+          flagFilters={flagFilters}
           dateFrom={dateFrom}
           dateTo={dateTo}
           minScore={minScore}
@@ -480,34 +517,44 @@ export default function App() {
           onSelectNote={selectNote}
           onOpenIdea={onOpenIdeaById}
           onOpenFile={setOpenFile}
-          onSelectSource={onSelectSource}
-          onSelectTag={onSelectTag}
+          pendingProposals={proposals.pending}
+          maintaining={proposals.runningJob === "traverse"}
+          onSelectSource={selectSource}
+          onSelectTag={selectTag}
+          onToggleFlagFilter={toggleFlagFilter}
+          onClearFilters={clearAllFilters}
+          onRunMaintenance={runTraverse}
+          onReviewProposals={openProposals}
+          onOpenLog={openActivityLog}
           onDateFrom={setDateFrom}
           onDateTo={setDateTo}
           onMinScore={setMinScore}
-          onJob={onJob}
         />
         <GraphPane
           graph={graph}
-          sourceFilter={sourceFilter}
+          sourceFilters={sourceFilters}
+          tagFilters={tagFilters}
+          flagFilters={flagFilters}
           dateFrom={dateFrom}
           dateTo={dateTo}
           minScore={minScore}
-          onSourceFilter={onSelectSource}
           selectedId={selectedId}
           highlightIds={highlight}
           onSelect={selectNote}
           onDeselect={deselect}
           onClearHighlight={() => setHighlight(null)}
+          onClearFilters={clearAllFilters}
           leftPanelWidth={leftOpen ? leftWidth : LEFT_CLOSED_W}
+          processingNodeId={processingNote?.noteId ?? null}
           maintenanceStatus={maintenanceStatus}
           maintenanceEvents={maintenanceStatus?.events ?? []}
         />
         <NotePane
           note={note}
           loading={noteLoading}
-          busy={paneBusy}
-          reprocessing={reprocessing}
+          busy={paneBusy || selectedProcessing != null}
+          reprocessing={selectedProcessing?.action === "reprocess"}
+          researching={selectedProcessing?.action === "research"}
           open={rightOpen}
           onToggle={() => setRightOpen((o) => !o)}
           width={rightWidth}
@@ -520,7 +567,7 @@ export default function App() {
           onEditTags={onEditTags}
           onEditTitle={onEditTitle}
           onSetStatus={onSetStatus}
-          onSelectTag={onSelectTag}
+          onSelectTag={(tag) => selectTag(tag)}
           onSetJobFlag={onSetJobFlag}
         />
 
@@ -553,6 +600,13 @@ export default function App() {
             onClose={() => setProposals((p) => ({ ...p, open: false }))}
             onApprove={(id) => resolveProposal(id, "approve")}
             onReject={(id) => resolveProposal(id, "reject")}
+          />
+        )}
+        {activity.open && (
+          <ActivityLog
+            entries={activity.items}
+            loading={activity.loading}
+            onClose={() => setActivity((a) => ({ ...a, open: false }))}
           />
         )}
         {openFile && <FileViewer file={openFile} onClose={() => setOpenFile(null)} />}

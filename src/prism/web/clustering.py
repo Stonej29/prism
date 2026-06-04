@@ -9,6 +9,19 @@ import math
 from collections import Counter
 
 
+GENERIC_LABEL_TAGS = frozenset({
+    "open-source",
+    "apache-2-0",
+    "mit-license",
+    "github",
+    "python",
+    "self-hosted",
+    "dataset",
+    "benchmark",
+    "web-demo",
+})
+
+
 def auto_k(n: int) -> int:
     """Heuristic cluster count ~ sqrt(n/2), clamped to [1, 8]."""
     if n <= 1:
@@ -73,12 +86,48 @@ def link_communities(node_ids: list[str], edges: list[tuple[str, str]]) -> dict[
 
 
 def cluster_labels(assignment: dict[str, int], tags_by_id: dict[str, list[str]]) -> dict[int, str]:
-    """Label each cluster by its most common member tags."""
+    """Label clusters with frequent, distinctive member tags."""
     groups: dict[int, Counter] = {}
+    cluster_presence: dict[str, set[int]] = {}
     for nid, c in assignment.items():
-        groups.setdefault(c, Counter()).update(tags_by_id.get(nid, []))
+        tags = tags_by_id.get(nid, [])
+        groups.setdefault(c, Counter()).update(tags)
+        for tag in set(tags):
+            cluster_presence.setdefault(tag, set()).add(c)
+
     labels: dict[int, str] = {}
+    cluster_count = max(len(groups), 1)
     for c, counter in groups.items():
-        top = [t for t, _ in counter.most_common(2)]
+        top = _rank_cluster_tags(counter, cluster_presence, cluster_count, allow_generic=False)[:2]
+        if len(top) < 2:
+            for tag in _rank_cluster_tags(counter, cluster_presence, cluster_count, allow_generic=True):
+                if tag not in top:
+                    top.append(tag)
+                if len(top) >= 2:
+                    break
         labels[c] = " · ".join(top) if top else f"cluster {c + 1}"
     return labels
+
+
+def _rank_cluster_tags(
+    counter: Counter,
+    cluster_presence: dict[str, set[int]],
+    cluster_count: int,
+    *,
+    allow_generic: bool,
+) -> list[str]:
+    scored: list[tuple[float, int, int, str]] = []
+    for tag, count in counter.items():
+        if not tag:
+            continue
+        generic = tag in GENERIC_LABEL_TAGS
+        if generic and not allow_generic:
+            continue
+        spread = len(cluster_presence.get(tag, set())) or 1
+        specificity = max(0.0, math.log((cluster_count + 1) / (spread + 0.5)))
+        score = float(count) * (1.0 + specificity)
+        if generic:
+            score *= 0.2
+        scored.append((-score, spread, -int(count), tag))
+    scored.sort()
+    return [tag for _, _, _, tag in scored]

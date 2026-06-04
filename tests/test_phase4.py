@@ -158,7 +158,7 @@ class Phase4RelatedRenderTests(unittest.TestCase):
     def test_related_note_normalization_tolerates_malformed_values(self) -> None:
         candidates = [RelatedCandidate("def456", "Related Title", "Summary", "notes/related-title.md", "https://b", ["robotics"], 0.9)]
         related = normalize_related_notes(["bad", {"id": "def456", "reason": "Same robot stack"}, {"id": "def456"}], candidates)
-        self.assertEqual(related, [{"id": "def456", "title": "Related Title", "reason": "Same robot stack", "path": "notes/related-title.md"}])
+        self.assertEqual(related, [{"id": "def456", "title": "Related Title", "reason": "Same robot stack", "path": "notes/related-title.md", "origin": "llm"}])
         self.assertEqual(normalize_related_notes({"id": "bad"}, candidates), [])
 
     def test_generated_note_renders_related_frontmatter_and_obsidian_links(self) -> None:

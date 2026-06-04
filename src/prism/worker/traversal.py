@@ -138,10 +138,10 @@ def _refresh_related_links(
         summary.links_removed += len(removed)
         summary.notes_relinked += 1
         for target_id in sorted(added):
-            _emit(emit_event, "edge_added", source=note_id, target=target_id)
+            _emit(emit_event, "edge_added", source=note_id, target=target_id, origin=AUTO_ORIGIN)
         for target_id in sorted(removed):
-            _emit(emit_event, "edge_removed", source=note_id, target=target_id)
-        _emit(emit_event, "note_relinked", note_id=note_id, links_added=len(added), links_removed=len(removed))
+            _emit(emit_event, "edge_removed", source=note_id, target=target_id, origin=AUTO_ORIGIN)
+        _emit(emit_event, "note_relinked", note_id=note_id, origin=AUTO_ORIGIN, links_added=len(added), links_removed=len(removed))
 
 
 # --- auto: tag normalization ------------------------------------------------

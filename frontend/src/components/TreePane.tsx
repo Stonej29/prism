@@ -3,6 +3,7 @@ import { P, srcColor, srcLabel } from "../theme";
 import type { GraphPayload, Stats, TagCount, TreeNode, Usage } from "../types";
 import { FileTree } from "./FileTree";
 import type { OpenFile } from "./FileViewer";
+import { MaintenancePanel } from "./MaintenancePanel";
 import { ResizeHandle } from "./ResizeHandle";
 import { usePersistentToggle } from "../hooks/usePersistentToggle";
 
@@ -45,7 +46,7 @@ function SectionHead({ children, open, onClick }: { children: React.ReactNode; o
   );
 }
 
-function FilterRow({ label, count, color, glyph, active, onClick }: { label: string; count?: number; color?: string; glyph?: string; active?: boolean; onClick?: () => void }) {
+function FilterRow({ label, count, color, glyph, active, onClick }: { label: string; count?: number; color?: string; glyph?: string; active?: boolean; onClick?: (e: React.MouseEvent<HTMLDivElement>) => void }) {
   return (
     <div
       onClick={onClick}
@@ -54,13 +55,15 @@ function FilterRow({ label, count, color, glyph, active, onClick }: { label: str
       {color ? (
         <span style={{ width: 7, height: 7, borderRadius: "50%", background: color, flexShrink: 0 }} />
       ) : (
-        <span style={{ fontFamily: P.mono, fontSize: 11, color: P.lo, width: 7, textAlign: "center" }}>{glyph}</span>
+        <span style={{ fontFamily: P.mono, fontSize: 11, color: active ? P.hi : P.lo, width: 7, textAlign: "center" }}>{glyph}</span>
       )}
       <span style={{ fontFamily: P.sans, fontSize: 13, flex: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{label}</span>
       {count != null && <span style={{ fontFamily: P.mono, fontSize: 11, color: P.lo }}>{count}</span>}
     </div>
   );
 }
+
+const additive = (e: React.MouseEvent) => e.ctrlKey || e.metaKey;
 
 export function TreePane({
   open,
@@ -73,21 +76,28 @@ export function TreePane({
   graph,
   tags,
   stats,
-  sourceFilter,
-  activeTag,
+  sourceFilters,
+  tagFilters,
+  flagFilters,
   dateFrom,
   dateTo,
   minScore,
   usage,
+  pendingProposals,
+  maintaining,
   onSelectNote,
   onOpenIdea,
   onOpenFile,
   onSelectSource,
   onSelectTag,
+  onToggleFlagFilter,
+  onClearFilters,
+  onRunMaintenance,
+  onReviewProposals,
+  onOpenLog,
   onDateFrom,
   onDateTo,
   onMinScore,
-  onJob,
 }: {
   open: boolean;
   onToggle: () => void;
@@ -99,24 +109,31 @@ export function TreePane({
   graph: GraphPayload | null;
   tags: TagCount[];
   stats: Stats | null;
-  sourceFilter: string | null;
-  activeTag: string | null;
+  sourceFilters: string[];
+  tagFilters: string[];
+  flagFilters: string[];
   dateFrom: string;
   dateTo: string;
   minScore: number;
   usage: Usage | null;
+  pendingProposals: number;
+  maintaining: boolean;
   onSelectNote: (id: string) => void;
   onOpenIdea: (id: string) => void;
   onOpenFile: (f: OpenFile) => void;
-  onSelectSource: (s: string | null) => void;
-  onSelectTag: (t: string) => void;
+  onSelectSource: (s: string, additive?: boolean) => void;
+  onSelectTag: (t: string, additive?: boolean) => void;
+  onToggleFlagFilter: (flag: string, additive?: boolean) => void;
+  onClearFilters: () => void;
+  onRunMaintenance: () => void | Promise<void>;
+  onReviewProposals: () => void;
+  onOpenLog: () => void;
   onDateFrom: (v: string) => void;
   onDateTo: (v: string) => void;
   onMinScore: (v: number) => void;
-  onJob: () => void;
 }) {
   const [query, setQuery] = useState("");
-  const [filtersOpen, toggleFilters] = usePersistentToggle("prism.tree.filters", false);
+  const [filtersOpen, toggleFilters] = usePersistentToggle("prism.tree.filters", true);
 
   if (!open) {
     return (
@@ -133,6 +150,7 @@ export function TreePane({
   const indexed = stats?.notes.embedding_indexed ?? 0;
   const healthy = stats?.index_configured && (stats?.notes.embedding_failed ?? 0) === 0;
   const filtering = query.trim().length > 0;
+  const fanoutActive = sourceFilters.length > 0 || tagFilters.length > 0 || flagFilters.length > 0 || !!dateFrom || !!dateTo || minScore > 0;
   const fieldStyle: React.CSSProperties = {
     flex: 1,
     minWidth: 0,
@@ -163,11 +181,11 @@ export function TreePane({
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Filter files by name…"
+            placeholder="Filter files by name..."
             style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: P.hi, fontFamily: P.sans, fontSize: 12.5 }}
           />
           {filtering && (
-            <span onClick={() => setQuery("")} title="Clear" style={{ fontFamily: P.mono, fontSize: 11, color: P.lo, cursor: "pointer" }}>×</span>
+            <span onClick={() => setQuery("")} title="Clear" style={{ fontFamily: P.mono, fontSize: 11, color: P.lo, cursor: "pointer" }}>x</span>
           )}
         </div>
       </div>
@@ -178,8 +196,13 @@ export function TreePane({
         <SectionHead open={filtersOpen} onClick={toggleFilters}>Filters</SectionHead>
         {filtersOpen && (
           <div style={{ padding: "0 4px 8px" }}>
-            <FilterRow glyph="◇" label="All notes" active={!sourceFilter && !activeTag} onClick={() => onSelectSource(null)} />
-            <FilterRow glyph="★" label="Job-relevant" count={(graph?.nodes ?? []).filter((n) => n.job_relevant).length} onClick={onJob} />
+            <div style={{ display: "flex", alignItems: "center", padding: "0 10px 4px 14px" }}>
+              <span style={{ fontFamily: P.mono, fontSize: 10, color: P.faint, flex: 1 }}>Ctrl-click to combine</span>
+              {fanoutActive && <span onClick={onClearFilters} style={{ fontFamily: P.mono, fontSize: 10, color: P.mid, cursor: "pointer" }}>clear</span>}
+            </div>
+            <FilterRow glyph="◇" label="All notes" active={!fanoutActive} onClick={onClearFilters} />
+            <FilterRow glyph="★" label="Job-relevant" count={(graph?.nodes ?? []).filter((n) => n.job_relevant).length} active={flagFilters.includes("job")} onClick={(e) => onToggleFlagFilter("job", additive(e))} />
+            <FilterRow glyph="?" label="Unreviewed" count={stats?.notes.unreviewed ?? 0} active={flagFilters.includes("unreviewed")} onClick={(e) => onToggleFlagFilter("unreviewed", additive(e))} />
             <div style={{ fontFamily: P.mono, fontSize: 9, letterSpacing: 1, color: P.faint, padding: "8px 12px 4px" }}>BY SOURCE</div>
             {KNOWN_SOURCES.map((kind) => (
               <FilterRow
@@ -187,13 +210,13 @@ export function TreePane({
                 color={srcColor(kind)}
                 label={srcLabel(kind)}
                 count={counts[kind] ?? 0}
-                active={sourceFilter === kind}
-                onClick={() => onSelectSource(sourceFilter === kind ? null : kind)}
+                active={sourceFilters.includes(kind)}
+                onClick={(e) => onSelectSource(kind, additive(e))}
               />
             ))}
             <div style={{ fontFamily: P.mono, fontSize: 9, letterSpacing: 1, color: P.faint, padding: "8px 12px 4px" }}>TAGS</div>
             {tags.slice(0, 12).map((t) => (
-              <FilterRow key={t.tag} glyph="≈" label={t.tag} count={t.count} active={activeTag === t.tag} onClick={() => onSelectTag(t.tag)} />
+              <FilterRow key={t.tag} glyph="#" label={t.tag} count={t.count} active={tagFilters.includes(t.tag)} onClick={(e) => onSelectTag(t.tag, additive(e))} />
             ))}
             {tags.length === 0 && <div style={{ padding: "4px 14px", fontFamily: P.sans, fontSize: 12, color: P.faint }}>No tags yet.</div>}
 
@@ -205,20 +228,19 @@ export function TreePane({
 
             <div style={{ fontFamily: P.mono, fontSize: 9, letterSpacing: 1, color: P.faint, padding: "10px 12px 4px" }}>MIN SCORE</div>
             <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "2px 14px 4px" }}>
-              <input type="range" min={0} max={10} step={1} value={minScore} onChange={(e) => onMinScore(Number(e.target.value))} style={{ flex: 1, accentColor: P.accent }} />
-              <span style={{ fontFamily: P.mono, fontSize: 11, color: minScore > 0 ? P.hi : P.lo, width: 30, textAlign: "right" }}>{minScore > 0 ? `≥${minScore}` : "off"}</span>
+              <input type="range" min={0} max={10} step={1} value={minScore} onChange={(e) => onMinScore(Number(e.target.value))} style={{ flex: 1, accentColor: P.mid }} />
+              <span style={{ fontFamily: P.mono, fontSize: 11, color: minScore > 0 ? P.hi : P.lo, width: 30, textAlign: "right" }}>{minScore > 0 ? `>=${minScore}` : "off"}</span>
             </div>
-
-            {(dateFrom || dateTo || minScore > 0) && (
-              <div
-                onClick={() => { onDateFrom(""); onDateTo(""); onMinScore(0); }}
-                style={{ padding: "6px 14px", fontFamily: P.mono, fontSize: 11, color: P.accent, cursor: "pointer" }}
-              >
-                × clear date/score
-              </div>
-            )}
           </div>
         )}
+
+        <MaintenancePanel
+          pendingProposals={pendingProposals}
+          maintaining={maintaining}
+          onRunMaintenance={onRunMaintenance}
+          onReviewProposals={onReviewProposals}
+          onOpenLog={onOpenLog}
+        />
       </div>
 
       <div style={{ padding: "12px 14px", borderTop: `1px solid ${P.line}`, display: "flex", flexDirection: "column", gap: 6 }}>

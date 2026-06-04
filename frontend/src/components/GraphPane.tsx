@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { P, SRC, srcColor } from "../theme";
+import { P, srcColor } from "../theme";
 import type { GraphPayload, MaintenanceEvent, MaintenanceStatus } from "../types";
 import { nodeRadius, useGraphSimulation, type LayoutMode, type SimNode } from "../hooks/useGraphSimulation";
 import { convexHull, expandHull, roundedPath } from "../lib/hull";
@@ -28,41 +28,60 @@ function eventNodeIds(event: MaintenanceEvent): string[] {
   return ids;
 }
 
+type LinkLayer = "auto" | "llm" | "manual";
+
+function edgeOrigin(origin: string | undefined): LinkLayer {
+  if (origin === "auto" || origin === "llm") return origin;
+  return "manual";
+}
+
+function originVisible(origin: string | undefined, layers: Record<LinkLayer, boolean>): boolean {
+  return layers[edgeOrigin(origin)];
+}
+
 
 export function GraphPane({
   graph,
-  sourceFilter,
+  sourceFilters,
+  tagFilters,
+  flagFilters,
   dateFrom,
   dateTo,
   minScore,
-  onSourceFilter,
   selectedId,
   highlightIds,
   onSelect,
   onDeselect,
   onClearHighlight,
+  onClearFilters,
   leftPanelWidth,
+  processingNodeId,
   maintenanceStatus,
   maintenanceEvents = [],
 }: {
   graph: GraphPayload | null;
-  sourceFilter: string | null;
+  sourceFilters: string[];
+  tagFilters: string[];
+  flagFilters: string[];
   dateFrom: string;
   dateTo: string;
   minScore: number;
-  onSourceFilter: (s: string | null) => void;
   selectedId: string | null;
   highlightIds: Set<string> | null;
   onSelect: (id: string) => void;
   onDeselect: () => void;
   onClearHighlight: () => void;
+  onClearFilters: () => void;
   leftPanelWidth: number;
+  processingNodeId?: string | null;
   maintenanceStatus?: MaintenanceStatus | null;
   maintenanceEvents?: MaintenanceEvent[];
 }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 800, h: 600 });
-  const [layout, setLayout] = useState<LayoutMode>("force");
+  const [layout, setLayout] = useState<LayoutMode>("topic");
+  const [linkLayers, setLinkLayers] = useState<Record<LinkLayer, boolean>>({ auto: true, llm: false, manual: false });
+  const [repaintKey, setRepaintKey] = useState(0);
   const [hover, setHover] = useState<string | null>(null);
   const [transform, setTransform] = useState({ k: 1, x: 0, y: 0 });
   const transformRef = useRef(transform);
@@ -71,39 +90,52 @@ export function GraphPane({
   useEffect(() => {
     const el = wrapRef.current;
     if (!el) return;
-    // Ignore transient 0-size measurements (e.g. when the tab/window is
-    // backgrounded or the layout briefly collapses). Setting the SVG to 0×0
-    // blanks it to the bare background and it stays dark until a reload.
+    // Ignore transient 0-size measurements and retry after tab/window return;
+    // otherwise some browsers can leave the SVG painted as a blank dark rect.
     const measure = () => {
       const w = el.clientWidth;
       const h = el.clientHeight;
-      if (w > 0 && h > 0) setSize({ w, h });
+      if (w > 0 && h > 0) {
+        setSize({ w, h });
+        return true;
+      }
+      return false;
     };
-    const ro = new ResizeObserver(measure);
+    const measureSoon = () => {
+      if (!measure()) requestAnimationFrame(() => requestAnimationFrame(measure));
+    };
+    const ro = new ResizeObserver(measureSoon);
     ro.observe(el);
-    measure();
-    return () => ro.disconnect();
+    measureSoon();
+    window.addEventListener("resize", measureSoon);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", measureSoon);
+    };
   }, []);
 
   const { nodes, edges } = useMemo(() => {
     if (!graph) return { nodes: [], edges: [] };
     const passes = (n: GraphPayload["nodes"][number]) => {
-      if (sourceFilter && n.source_kind !== sourceFilter) return false;
+      if (sourceFilters.length > 0 && !sourceFilters.includes(n.source_kind)) return false;
+      if (tagFilters.length > 0 && !tagFilters.some((tag) => n.tags.includes(tag))) return false;
+      if (flagFilters.includes("job") && !n.job_relevant) return false;
+      if (flagFilters.includes("unreviewed") && n.status !== "unreviewed") return false;
       const day = (n.date_saved ?? "").slice(0, 10);
       if (dateFrom && day < dateFrom) return false;
       if (dateTo && day > dateTo) return false;
       if (minScore > 0 && !(n.overall != null && n.overall >= minScore)) return false;
       return true;
     };
-    if (!sourceFilter && !dateFrom && !dateTo && minScore <= 0) {
-      return { nodes: graph.nodes, edges: graph.edges };
-    }
+    const visibleEdges = graph.edges.filter((e) => originVisible(e.origin, linkLayers));
+    const hasFilters = sourceFilters.length > 0 || tagFilters.length > 0 || flagFilters.length > 0 || !!dateFrom || !!dateTo || minScore > 0;
+    if (!hasFilters) return { nodes: graph.nodes, edges: visibleEdges };
     const keep = new Set(graph.nodes.filter(passes).map((n) => n.id));
     return {
       nodes: graph.nodes.filter((n) => keep.has(n.id)),
-      edges: graph.edges.filter((e) => keep.has(e.source) && keep.has(e.target)),
+      edges: visibleEdges.filter((e) => keep.has(e.source) && keep.has(e.target)),
     };
-  }, [graph, sourceFilter, dateFrom, dateTo, minScore]);
+  }, [graph, sourceFilters, tagFilters, flagFilters, dateFrom, dateTo, minScore, linkLayers]);
 
   const { sim, tick, simRef } = useGraphSimulation(nodes, edges, size.w, size.h, layout);
 
@@ -165,15 +197,22 @@ export function GraphPane({
     const onReturn = () => {
       if (document.visibilityState !== "visible") return;
       const el = wrapRef.current;
-      if (el && el.clientWidth > 0 && el.clientHeight > 0) {
-        setSize({ w: el.clientWidth, h: el.clientHeight });
-      }
-      simRef.current?.alpha(0.05).restart();
+      const measure = () => {
+        if (el && el.clientWidth > 0 && el.clientHeight > 0) {
+          setSize({ w: el.clientWidth, h: el.clientHeight });
+          setRepaintKey((k) => k + 1);
+        }
+      };
+      measure();
+      requestAnimationFrame(() => requestAnimationFrame(measure));
+      simRef.current?.alpha(0.12).restart();
     };
     window.addEventListener("focus", onReturn);
+    window.addEventListener("pageshow", onReturn);
     document.addEventListener("visibilitychange", onReturn);
     return () => {
       window.removeEventListener("focus", onReturn);
+      window.removeEventListener("pageshow", onReturn);
       document.removeEventListener("visibilitychange", onReturn);
     };
   }, [simRef]);
@@ -243,6 +282,11 @@ export function GraphPane({
     if (!movedRef.current) onDeselect();
   };
 
+  const cycleLayout = () => setLayout((m) => (m === "topic" ? "force" : m === "force" ? "link" : "topic"));
+  const layoutLabel = layout === "topic" ? "topics" : layout === "force" ? "force" : "links";
+  const toggleLinkLayer = (layer: LinkLayer) => setLinkLayers((layers) => ({ ...layers, [layer]: !layers[layer] }));
+  const filterCount = sourceFilters.length + tagFilters.length + flagFilters.length + (dateFrom ? 1 : 0) + (dateTo ? 1 : 0) + (minScore > 0 ? 1 : 0);
+
   const zoomBy = (factor: number) => {
     const t = transformRef.current;
     const cx = size.w / 2;
@@ -296,6 +340,10 @@ export function GraphPane({
           0% { opacity: 0.95; stroke-width: 3; }
           100% { opacity: 0; stroke-width: 1; }
         }
+        @keyframes prism-node-working {
+          0%, 100% { fill: var(--node-color); opacity: 1; }
+          48%, 58% { fill: #6f7780; opacity: 0.58; }
+        }
         .prism-maintenance-node-pulse {
           transform-box: fill-box;
           transform-origin: center;
@@ -306,6 +354,9 @@ export function GraphPane({
           animation: prism-maintenance-edge-pulse 1.8s ease-out forwards;
           pointer-events: none;
         }
+        .prism-node-working {
+          animation: prism-node-working 1.25s ease-in-out infinite;
+        }
       `}</style>
 
       {/* toolbar */}
@@ -313,86 +364,50 @@ export function GraphPane({
         style={{
           position: "absolute",
           top: 0,
-          left: 0,
           right: 0,
-          height: 46,
           zIndex: 6,
           display: "flex",
           alignItems: "center",
-          gap: 8,
-          padding: "0 16px",
-          borderBottom: `1px solid ${P.line}`,
+          gap: 10,
+          padding: "10px 16px",
           background: `${P.bg0}cc`,
+          borderBottomLeftRadius: 8,
           backdropFilter: "blur(8px)",
         }}
       >
-        <Mono c={P.mid}>filter</Mono>
-        {Object.entries(SRC)
-          .filter(([k]) => k !== "unknown")
-          .map(([k, s]) => {
-            const active = sourceFilter === k;
-            return (
-              <span
-                key={k}
-                onClick={() => onSourceFilter(active ? null : k)}
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 6,
-                  fontFamily: P.mono,
-                  fontSize: 11,
-                  color: active ? P.hi : P.mid,
-                  padding: "4px 9px",
-                  borderRadius: 6,
-                  border: `1px solid ${active ? P.accent : P.line}`,
-                  background: active ? P.accentDim : "transparent",
-                  cursor: "pointer",
-                }}
-              >
-                <span style={{ width: 6, height: 6, borderRadius: "50%", background: s.color }} />
-                {s.label}
-              </span>
-            );
-          })}
-        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
-          <Mono c={P.mid}>layout</Mono>
-          {([["force", "force"], ["topic", "topics"], ["link", "links"]] as [LayoutMode, string][]).map(([m, label]) => (
-            <span
-              key={m}
-              onClick={() => setLayout(m)}
-              title={m === "topic" ? "Group by embedding similarity" : m === "link" ? "Group by related-note links" : "Force-directed"}
-              style={{
-                fontFamily: P.mono,
-                fontSize: 11,
-                color: layout === m ? P.accent : P.mid,
-                padding: "4px 9px",
-                borderRadius: 6,
-                background: layout === m ? P.accentDim : "transparent",
-                cursor: "pointer",
-              }}
-            >
-              {label}
-            </span>
-          ))}
+        <span
+          onClick={cycleLayout}
+          title="Cycle layout: topics -> force -> links"
+          style={{ fontFamily: P.mono, fontSize: 11, color: P.mid, cursor: "pointer" }}
+        >
+          {layoutLabel}
+        </span>
+        <span
+          onClick={toggleHulls}
+          title="Toggle topic regions"
+          style={{ fontFamily: P.mono, fontSize: 11, color: showHulls ? P.hi : P.mid, cursor: "pointer" }}
+        >
+          hulls
+        </span>
+        <span style={{ fontFamily: P.mono, fontSize: 11, color: P.faint }}>links</span>
+        {([
+          ["auto", "auto", "Automatic semantic links"],
+          ["llm", "llm", "Preserved LLM suggestions"],
+          ["manual", "manual", "Manual or unknown links"],
+        ] as [LinkLayer, string, string][]).map(([layer, label, title]) => (
           <span
-            onClick={toggleHulls}
-            title="Toggle topic regions (dashed hulls + labels)"
-            style={{
-              fontFamily: P.mono,
-              fontSize: 11,
-              color: showHulls ? P.accent : P.mid,
-              padding: "4px 9px",
-              borderRadius: 6,
-              background: showHulls ? P.accentDim : "transparent",
-              cursor: "pointer",
-            }}
+            key={layer}
+            onClick={() => toggleLinkLayer(layer)}
+            title={title}
+            style={{ fontFamily: P.mono, fontSize: 11, color: linkLayers[layer] ? P.hi : P.mid, cursor: "pointer" }}
           >
-            hulls
+            {label}
           </span>
-        </div>
+        ))}
       </div>
 
       <svg
+        key={repaintKey}
         width={size.w}
         height={size.h}
         onPointerDown={onBgDown}
@@ -423,7 +438,8 @@ export function GraphPane({
                 y2={l.target.y}
                 stroke={on ? P.hi : P.line}
                 strokeWidth={on ? 1.5 : 1}
-                opacity={active ? (on ? 0.95 : 0.05) : 0.7}
+                strokeDasharray={l.origin === "llm" ? "4 4" : edgeOrigin(l.origin) === "manual" ? "2 4" : undefined}
+                opacity={active ? (on ? 0.95 : 0.05) : l.origin === "auto" ? 0.7 : 0.55}
               />
             );
           })}
@@ -456,6 +472,8 @@ export function GraphPane({
             const archived = n.status === "archived";
             const showLabel = selected || lit || hover === n.id;
             const maintenancePulse = maintenanceNodeIds.has(n.id);
+            const processing = n.id === processingNodeId;
+            const nodeColor = srcColor(n.source_kind);
             return (
               <g
                 key={n.id}
@@ -481,10 +499,11 @@ export function GraphPane({
                 )}
                 <circle
                   r={r}
-                  fill={srcColor(n.source_kind)}
-                  stroke={selected ? P.hi : lit ? P.hi : P.bg0}
-                  strokeWidth={selected ? 2 : lit ? 1.8 : 1.5}
-                  style={entering.has(n.id) ? { animation: "prismNodeEnter 650ms ease-out", transformBox: "fill-box", transformOrigin: "center" } : undefined}
+                  fill={nodeColor}
+                  stroke={processing ? "#8d949b" : selected ? P.hi : lit ? P.hi : P.bg0}
+                  strokeWidth={processing ? 2.2 : selected ? 2 : lit ? 1.8 : 1.5}
+                  className={processing ? "prism-node-working" : undefined}
+                  style={processing ? ({ "--node-color": nodeColor } as React.CSSProperties) : entering.has(n.id) ? { animation: "prismNodeEnter 650ms ease-out", transformBox: "fill-box", transformOrigin: "center" } : undefined}
                 />
                 {showLabel && (
                   <text
@@ -545,11 +564,15 @@ export function GraphPane({
       <div style={{ position: "absolute", bottom: 16, left: 16, zIndex: 6, display: "flex", gap: 8 }}>
         <div style={{ background: `${P.bg1}dd`, border: `1px solid ${P.line}`, borderRadius: 8, padding: "7px 12px" }}>
           <Mono>
-            {sim.nodes.length} notes · {sim.links.length} links ·{" "}
-            {new Set(nodes.map((n) => (layout === "link" ? n.community : n.topic))).size}{" "}
-            {layout === "link" ? "communities" : "topics"}
+            {sim.nodes.length} notes · {sim.links.length} links · {new Set(nodes.map((n) => (layout === "link" ? n.community : n.topic))).size} {layout === "link" ? "communities" : "topics"}
           </Mono>
         </div>
+        {filterCount > 0 && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, background: `${P.bg1}dd`, border: `1px solid ${P.line}`, borderRadius: 8, padding: "7px 12px" }}>
+            <Mono c={P.mid}>{filterCount} filter{filterCount === 1 ? "" : "s"}</Mono>
+            <span onClick={onClearFilters} style={{ fontFamily: P.mono, fontSize: 11, color: P.mid, cursor: "pointer" }}>clear filters</span>
+          </div>
+        )}
         {maintenanceStatus && maintenanceStatus.status !== "idle" && (
           <div style={{ background: maintenanceStatus.status === "running" ? P.accentDim : `${P.bg1}dd`, border: `1px solid ${maintenanceStatus.status === "failed" ? P.arxiv : maintenanceStatus.status === "running" ? P.accent : P.line}`, borderRadius: 8, padding: "7px 12px" }}>
             <Mono c={maintenanceStatus.status === "failed" ? P.arxiv : maintenanceStatus.status === "running" ? P.accent : P.mid}>

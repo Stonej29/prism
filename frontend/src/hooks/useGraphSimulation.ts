@@ -22,6 +22,7 @@ export interface SimLink extends SimulationLinkDatum<SimNode> {
   source: SimNode;
   target: SimNode;
   reason: string;
+  origin: string;
 }
 
 export type LayoutMode = "force" | "topic" | "link";
@@ -58,7 +59,7 @@ export function useGraphSimulation(
     });
     const byId = new Map(simNodes.map((n) => [n.id, n]));
     const simLinks = edges
-      .map((e) => ({ source: byId.get(e.source)!, target: byId.get(e.target)!, reason: e.reason }))
+      .map((e) => ({ source: byId.get(e.source)!, target: byId.get(e.target)!, reason: e.reason, origin: e.origin }))
       .filter((l) => l.source && l.target);
 
     stateRef.current = { nodes: simNodes, links: simLinks };

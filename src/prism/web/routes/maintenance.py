@@ -13,7 +13,10 @@ from prism.ideas import IdeaService
 from prism.index import NoteIndexer
 from prism.notes import NoteService
 from prism.services import Services
+from prism.web.activity import log_activity
 from prism.web.deps import get_db, get_ideas, get_indexer, get_notes, get_settings
+from prism.web.graph import link_origin_counts
+from prism.web.routes import gather_all_notes
 from prism.web.schemas import TraversalSettingsBody
 from prism.worker.config import TraversalSettings, load_worker_config, save_traversal_settings
 from prism.worker.ingest import run_feed_ingestion
@@ -51,8 +54,22 @@ def _settings_dto(s: TraversalSettings) -> dict:
 @router.post("/ingest")
 def trigger_ingest(notes: NoteService = Depends(get_notes)) -> dict:
     config = load_worker_config()
-    summary = run_feed_ingestion(notes, config.feeds)
-    return {"ok": True, "feeds_configured": len(config.feeds), **dataclasses.asdict(summary)}
+    try:
+        summary = run_feed_ingestion(notes, config.feeds)
+    except Exception as exc:
+        log_activity("feed ingest", "failed", f"{type(exc).__name__}: {exc}", feeds_configured=len(config.feeds))
+        raise
+    payload = {"ok": True, "feeds_configured": len(config.feeds), **dataclasses.asdict(summary)}
+    log_activity(
+        "feed ingest",
+        "ok" if summary.failed == 0 else "failed",
+        f"{summary.created} created, {summary.duplicates} duplicates, {summary.failed} failed",
+        feeds_configured=len(config.feeds),
+        created=summary.created,
+        duplicates=summary.duplicates,
+        failed=summary.failed,
+    )
+    return payload
 
 
 @router.post("/traverse")
@@ -63,19 +80,43 @@ def trigger_traverse(
     indexer: NoteIndexer = Depends(get_indexer),
     ideas: IdeaService = Depends(get_ideas),
 ) -> dict:
+    traversal_settings = load_worker_config().traversal
+    settings_payload = _settings_dto(traversal_settings)
     run_id = _start_run()
     services = Services(settings=settings, database=db, indexer=indexer, notes=notes, ideas=ideas)
+    links_before = link_origin_counts(gather_all_notes(db))
+    _append_event(run_id, {"kind": "settings", "message": "Using graph maintenance settings", "settings": settings_payload})
+    _append_event(run_id, {"kind": "link_origins", "phase": "before", "message": "Link origins before maintenance", "counts": links_before})
     try:
         summary = run_graph_traversal(
             services,
-            load_worker_config().traversal,
+            traversal_settings,
             emit_event=lambda event: _append_event(run_id, event),
         )
-        payload = {"ok": True, "pending_proposals": db.count_proposals("pending"), **dataclasses.asdict(summary)}
+        links_after = link_origin_counts(gather_all_notes(db))
+        _append_event(run_id, {"kind": "link_origins", "phase": "after", "message": "Link origins after maintenance", "counts": links_after})
+        payload = {
+            "ok": True,
+            "pending_proposals": db.count_proposals("pending"),
+            "settings": settings_payload,
+            "links_by_origin_before": links_before,
+            "links_by_origin_after": links_after,
+            **dataclasses.asdict(summary),
+        }
     except Exception as exc:
-        _finish_run(run_id, status="failed", error=f"{type(exc).__name__}: {exc}")
+        error = f"{type(exc).__name__}: {exc}"
+        _finish_run(run_id, status="failed", error=error)
+        log_activity("maintenance run", "failed", error, settings=settings_payload, links_by_origin_before=links_before)
         raise
     _finish_run(run_id, status="complete", summary=payload)
+    log_activity(
+        "maintenance run",
+        "ok",
+        f"links +{summary.links_added}/-{summary.links_removed}, {summary.tags_merged} tags merged, {summary.duplicates_proposed} proposals",
+        settings=settings_payload,
+        links_by_origin_before=links_before,
+        links_by_origin_after=payload["links_by_origin_after"],
+    )
     return payload
 
 
@@ -95,7 +136,9 @@ def put_maintenance_settings(body: TraversalSettingsBody) -> dict:
     )
     save_traversal_settings(updated)
     # Round-trip through the loader so clamping/validation is reflected back.
-    return _settings_dto(load_worker_config().traversal)
+    saved = _settings_dto(load_worker_config().traversal)
+    log_activity("maintenance settings", "ok", "Saved graph maintenance settings", settings=saved)
+    return saved
 
 
 def _start_run() -> str:

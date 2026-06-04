@@ -891,7 +891,7 @@ def normalize_related_notes(value: Any, related_candidates: list[RelatedCandidat
         title = _clean_related_text(item.get("title")) or (candidate.title if candidate else note_id)
         reason = _clean_related_text(item.get("reason")) or "Related context."
         path = candidate.note_path if candidate else ""
-        related.append({"id": note_id, "title": title, "reason": reason, "path": path})
+        related.append({"id": note_id, "title": title, "reason": reason, "path": path, "origin": "llm"})
         seen.add(note_id)
     return related[:10]
 
@@ -906,9 +906,17 @@ def related_notes_for_record(record: NoteRecord) -> list[dict[str, str]]:
         title = str(item.get("title") or note_id).strip()
         reason = str(item.get("reason") or "Related context.").strip()
         path = str(item.get("path") or "").strip()
+        origin = _related_origin(item.get("origin"))
         if note_id:
-            normalized.append({"id": note_id, "title": title, "reason": reason, "path": path})
+            normalized.append({"id": note_id, "title": title, "reason": reason, "path": path, "origin": origin})
     return normalized
+
+
+def _related_origin(value: object) -> str:
+    origin = str(value or "llm").strip().lower()
+    if origin in {"auto", "llm", "manual"}:
+        return origin
+    return "unknown"
 
 
 def _dedup_preserve(items: list[str]) -> list[str]:

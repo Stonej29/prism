@@ -2,8 +2,8 @@ import { useState } from "react";
 import { P } from "../theme";
 import type { NoteDetail } from "../types";
 import { SourceBadge } from "./SourceBadge";
-import { Spinner } from "./Spinner";
 import { NoteSkeleton } from "./Skeleton";
+import { TextAction } from "./TextAction";
 import { ResizeHandle } from "./ResizeHandle";
 
 const REVIEW_STATUSES = ["unreviewed", "reviewed", "archived"] as const;
@@ -83,6 +83,7 @@ export function NotePane({
   loading,
   busy,
   reprocessing,
+  researching,
   open,
   onToggle,
   width,
@@ -102,6 +103,7 @@ export function NotePane({
   loading: boolean;
   busy: boolean;
   reprocessing: boolean;
+  researching: boolean;
   open: boolean;
   onToggle: () => void;
   width: number;
@@ -155,7 +157,7 @@ export function NotePane({
     );
   }
 
-  if (loading || reprocessing) return wrap(<NoteSkeleton />);
+  if (loading || reprocessing || researching) return wrap(<NoteSkeleton />);
   if (!note)
     return wrap(
       <div style={{ padding: 24, fontFamily: P.sans, fontSize: 13, color: P.faint }}>
@@ -331,11 +333,7 @@ export function NotePane({
         <Section
           title="Tags"
           defaultOpen
-          action={
-            <span onClick={editing ? saveEdit : startEdit} style={{ fontFamily: P.mono, fontSize: 10, color: P.accent, cursor: "pointer" }}>
-              {editing ? "save" : "edit"}
-            </span>
-          }
+          action={<TextAction onClick={editing ? saveEdit : startEdit}>{editing ? "save" : "edit"}</TextAction>}
         >
           {editing ? (
             <input
@@ -379,19 +377,11 @@ export function NotePane({
         </Section>
       </div>
 
-      <div style={{ padding: "12px 20px", borderTop: `1px solid ${P.line}`, display: "flex", alignItems: "center", gap: 10 }}>
-        {busy && <Spinner size={13} />}
-        <span onClick={() => !busy && onReprocess(note.id)} style={{ fontFamily: P.mono, fontSize: 11, color: P.mid, cursor: busy ? "default" : "pointer" }}>
-          reprocess
-        </span>
-        <span onClick={() => !busy && onResearch(note.id)} title="Reprocess with OpenRouter web research" style={{ fontFamily: P.mono, fontSize: 11, color: P.accent, cursor: busy ? "default" : "pointer" }}>
-          research
-        </span>
-        <span
-          onClick={() => !busy && confirm(`Delete "${note.title}"?`) && onDelete(note.id)}
-          style={{ marginLeft: "auto", fontFamily: P.mono, fontSize: 11, color: P.arxiv, cursor: "pointer" }}
-        >
-          delete
+      <div style={{ padding: "12px 20px", borderTop: `1px solid ${P.line}`, display: "flex", alignItems: "center", gap: 12 }}>
+        <TextAction busy={reprocessing} disabled={busy && !reprocessing} onClick={() => onReprocess(note.id)}>reprocess</TextAction>
+        <TextAction busy={researching} disabled={busy && !researching} title="Reprocess with OpenRouter web research" onClick={() => onResearch(note.id)}>research</TextAction>
+        <span style={{ marginLeft: "auto" }}>
+          <TextAction danger disabled={busy} onClick={() => { if (confirm(`Delete \"${note.title}\"?`)) onDelete(note.id); }}>delete</TextAction>
         </span>
       </div>
     </>,
