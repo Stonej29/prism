@@ -385,7 +385,8 @@ export default function App() {
   const onRate = async (id: string, rating: number) => {
     try {
       const updated = await api.rateIdea(id, rating);
-      setIdeaJob((j) => ({ ...j, idea: updated }));
+      // Rating consumes the idea: drop the "ready" (yellow bulb) state.
+      setIdeaJob((j) => ({ ...j, idea: updated, status: "idle" }));
     } catch (e) {
       setToast(String(e));
     }
@@ -475,7 +476,7 @@ export default function App() {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         setAsk((a) => ({ ...a, open: false }));
-        setIdeaJob((j) => ({ ...j, open: false }));
+        setIdeaJob((j) => ({ ...j, open: false, status: "idle" }));
         setProposals((p) => ({ ...p, open: false }));
         setActivity((a) => ({ ...a, open: false }));
         setOpenFile(null);
@@ -582,7 +583,7 @@ export default function App() {
           <IdeaView
             topic={ideaJob.topic}
             idea={ideaJob.idea}
-            onClose={() => setIdeaJob((j) => ({ ...j, open: false }))}
+            onClose={() => setIdeaJob((j) => ({ ...j, open: false, status: "idle" }))}
             onRate={onRate}
             onRegenerate={generateIdea}
           />
