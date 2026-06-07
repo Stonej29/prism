@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Lightbulb, Plus, Settings } from "lucide-react";
 import { P } from "../theme";
 import { Omnibar } from "./Omnibar";
@@ -28,6 +28,20 @@ export function TopBar({
 }) {
   const [saveOpen, setSaveOpen] = useState(false);
   const [url, setUrl] = useState("");
+  const actionsRef = useRef<HTMLDivElement>(null);
+  const popRef = useRef<HTMLDivElement>(null);
+
+  // Close the URL popover when clicking anywhere outside it (or the action bar).
+  useEffect(() => {
+    if (!saveOpen) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (popRef.current?.contains(t) || actionsRef.current?.contains(t)) return;
+      setSaveOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [saveOpen]);
 
   const submitSave = () => {
     const u = url.trim();
@@ -62,14 +76,21 @@ export function TopBar({
 
       <Omnibar busy={busy} onAsk={onAsk} onFind={onFind} />
 
-      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-        <IconButton icon={Lightbulb} busy={ideaStatus === "loading"} title="Generate or open an idea" onClick={onLightbulb} />
+      <div ref={actionsRef} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+        <IconButton
+          icon={Lightbulb}
+          busy={ideaStatus === "loading"}
+          color={ideaStatus === "ready" ? "#ffd66e" : undefined}
+          title={ideaStatus === "ready" ? "Idea ready — click to view" : "Generate an idea"}
+          onClick={onLightbulb}
+        />
         <IconButton icon={Plus} busy={saving} title={saving ? "Saving…" : "Save a URL"} onClick={() => setSaveOpen((o) => !o)} />
         <IconButton icon={Settings} title="Settings — profile, feeds, maintenance" onClick={onOpenSettings} />
       </div>
 
       {saveOpen && (
         <div
+          ref={popRef}
           style={{
             position: "absolute",
             top: 56,

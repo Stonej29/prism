@@ -12,6 +12,7 @@ export function IconButton({
   disabled = false,
   danger = false,
   size = 16,
+  color,
 }: {
   icon: LucideIcon;
   title: string;
@@ -20,8 +21,11 @@ export function IconButton({
   disabled?: boolean;
   danger?: boolean;
   size?: number;
+  color?: string;
 }) {
   const inactive = busy || disabled;
+  const base = color ?? (danger ? P.arxiv : P.mid);
+  const hover = color ?? (danger ? P.arxiv : P.hi);
   return (
     <button
       type="button"
@@ -39,13 +43,13 @@ export function IconButton({
         background: "transparent",
         border: "none",
         borderRadius: 7,
-        color: danger ? P.arxiv : P.mid,
+        color: base,
         cursor: inactive ? "default" : "pointer",
         opacity: inactive ? 0.5 : 1,
         transition: "color 0.12s, background 0.12s",
       }}
-      onMouseEnter={(e) => { if (!inactive) e.currentTarget.style.color = danger ? P.arxiv : P.hi; e.currentTarget.style.background = P.bg2; }}
-      onMouseLeave={(e) => { e.currentTarget.style.color = danger ? P.arxiv : P.mid; e.currentTarget.style.background = "transparent"; }}
+      onMouseEnter={(e) => { if (!inactive) e.currentTarget.style.color = hover; e.currentTarget.style.background = P.bg2; }}
+      onMouseLeave={(e) => { e.currentTarget.style.color = base; e.currentTarget.style.background = "transparent"; }}
     >
       <Icon size={size} strokeWidth={1.75} className={busy ? "prism-spin" : undefined} />
     </button>

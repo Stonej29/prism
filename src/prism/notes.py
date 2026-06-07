@@ -178,12 +178,38 @@ class NoteService:
         record = self._index_after_persist(record)
         return SaveResult(record=record, created=True)
 
+    def _refetch(self, record: NoteRecord) -> NoteRecord:
+        """Retry the original fetch in place (browser headers + reader fallback may
+        now succeed where the first attempt was blocked), updating fetch fields."""
+        fetch = fetch_source(record.source_url, self.archive_path, record.note_id)
+        title = record.title
+        if (title == placeholder_title(record.source_url) or not title) and clean_title(fetch.title):
+            title = clean_title(fetch.title)
+        updated = replace(
+            record,
+            title=title,
+            resolved_url=fetch.resolved_url or record.resolved_url,
+            source_kind=fetch.source_kind,
+            local_archive=fetch.local_archive,
+            pdf_path=fetch.pdf_path,
+            content_hash=fetch.content_hash or record.content_hash,
+            fetch_status=fetch.fetch_status,
+            fetch_error=fetch.fetch_error,
+            fetched_at=fetch.fetched_at,
+            metadata_json=json.dumps(fetch.metadata, ensure_ascii=True, sort_keys=True),
+        )
+        self.database.update_note(updated)
+        return updated
+
     def reprocess(self, note_id: str) -> ReprocessResult:
         record = self.database.find_by_note_id(note_id.strip().lower())
         if not record:
             return ReprocessResult(record=None, ok=False, message=f"No note found for {note_id}.")
+        # If the original capture failed, retry the fetch first instead of refusing.
         if record.fetch_status != "fetched":
-            return ReprocessResult(record=record, ok=False, message=f"Cannot reprocess {record.note_id}: fetch status is {record.fetch_status}.")
+            record = self._refetch(record)
+            if record.fetch_status != "fetched":
+                return ReprocessResult(record=record, ok=False, message=f"Re-fetch failed: {record.fetch_error or 'still blocked'}.")
         if not record.local_archive:
             return ReprocessResult(record=record, ok=False, message=f"Cannot reprocess {record.note_id}: no local archive recorded.")
 
@@ -639,6 +665,10 @@ class NoteService:
             tags = _tags(structured.get("tags"))
             scores = _scores(structured)
             generated_at = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+            metadata_json = record.metadata_json
+            if web and generation.web_sources:
+                merged = {**metadata, "research_sources": generation.web_sources}
+                metadata_json = json.dumps(merged, ensure_ascii=True, sort_keys=True)
             return replace(
                 record,
                 title=title,
@@ -651,6 +681,7 @@ class NoteService:
                 scores_json=json.dumps(scores, ensure_ascii=True, sort_keys=True),
                 structured_summary_json=json.dumps(structured, ensure_ascii=True, sort_keys=True),
                 related_notes_json=json.dumps(structured.get("related_notes", []), ensure_ascii=True, sort_keys=True),
+                metadata_json=metadata_json,
             )
         except Exception as exc:
             if force or record.llm_status != "generated":

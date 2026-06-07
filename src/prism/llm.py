@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
@@ -37,6 +37,7 @@ class LLMConfig:
 class LLMGeneration:
     data: dict[str, Any]
     model: str
+    web_sources: list[dict[str, str]] = field(default_factory=list)
 
 
 class LLMClient:
@@ -65,7 +66,11 @@ class LLMClient:
 
         content = _assistant_content(data)
         parsed = _parse_json_object(content)
-        return LLMGeneration(data=parsed, model=str(data.get("model") or self.config.model))
+        return LLMGeneration(
+            data=parsed,
+            model=str(data.get("model") or self.config.model),
+            web_sources=web_sources_from_response(data),
+        )
 
     def generate_idea(self, context: dict[str, Any], profile: str) -> LLMGeneration:
         if not self.config.is_configured:
@@ -300,6 +305,31 @@ def _log_usage(data: dict[str, Any], fallback_model: str | None) -> None:
             usage.get("prompt_tokens"), usage.get("completion_tokens"), usage.get("total_tokens"),
         )
         record_usage("llm", usage.get("prompt_tokens"), usage.get("completion_tokens"), usage.get("total_tokens"))
+
+
+def web_sources_from_response(response: dict[str, Any]) -> list[dict[str, str]]:
+    """Extract the pages the web-search plugin consulted (OpenRouter url_citation
+    annotations) so research can show which sources it visited."""
+    out: list[dict[str, str]] = []
+    seen: set[str] = set()
+    choices = response.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return out
+    message = choices[0].get("message") if isinstance(choices[0], dict) else None
+    annotations = message.get("annotations") if isinstance(message, dict) else None
+    if not isinstance(annotations, list):
+        return out
+    for ann in annotations:
+        if not isinstance(ann, dict):
+            continue
+        citation = ann.get("url_citation")
+        if not isinstance(citation, dict):
+            continue
+        url = str(citation.get("url") or "").strip()
+        if url and url not in seen:
+            seen.add(url)
+            out.append({"url": url, "title": str(citation.get("title") or "").strip()})
+    return out
 
 
 def _assistant_content(response: dict[str, Any]) -> str:

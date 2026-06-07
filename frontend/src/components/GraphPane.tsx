@@ -48,7 +48,7 @@ export function GraphPane({
   onClearHighlight,
   onClearFilters,
   leftPanelWidth,
-  processingNodeId,
+  processingNodeIds,
   maintenanceStatus,
   maintenanceEvents = [],
 }: {
@@ -65,7 +65,7 @@ export function GraphPane({
   onClearHighlight: () => void;
   onClearFilters: () => void;
   leftPanelWidth: number;
-  processingNodeId?: string | null;
+  processingNodeIds?: Record<string, string>;
   maintenanceStatus?: MaintenanceStatus | null;
   maintenanceEvents?: MaintenanceEvent[];
 }) {
@@ -265,11 +265,15 @@ export function GraphPane({
     (e.target as Element).setPointerCapture(e.pointerId);
   };
   const onBgMove = (e: React.PointerEvent) => {
-    if (!panRef.current) return;
-    const dx = e.clientX - panRef.current.sx;
-    const dy = e.clientY - panRef.current.sy;
+    const pan = panRef.current;
+    if (!pan) return;
+    const dx = e.clientX - pan.sx;
+    const dy = e.clientY - pan.sy;
     if (Math.abs(dx) + Math.abs(dy) > 3) movedRef.current = true;
-    setTransform((t) => ({ ...t, x: panRef.current!.ox + dx, y: panRef.current!.oy + dy }));
+    // Capture pan locally: the setTransform updater runs later, by which point
+    // panRef.current may be null (pointerup) — dereferencing it there crashes
+    // the render and blanks the graph.
+    setTransform((t) => ({ ...t, x: pan.ox + dx, y: pan.oy + dy }));
   };
   const onBgUp = () => (panRef.current = null);
   const onBgClick = () => {
@@ -366,13 +370,12 @@ export function GraphPane({
           backdropFilter: "blur(8px)",
         }}
       >
-        <span style={{ fontFamily: P.mono, fontSize: 11, color: P.faint }}>Show hubs</span>
         <span
           onClick={toggleHulls}
           title="Outline topic regions behind the graph"
           style={{ fontFamily: P.mono, fontSize: 11, color: showHulls ? P.hi : P.mid, cursor: "pointer" }}
         >
-          {showHulls ? "yes" : "no"}
+          hulls
         </span>
       </div>
 
@@ -441,7 +444,7 @@ export function GraphPane({
             const archived = n.status === "archived";
             const showLabel = selected || lit || hover === n.id;
             const maintenancePulse = maintenanceNodeIds.has(n.id);
-            const processing = n.id === processingNodeId;
+            const processing = !!processingNodeIds?.[n.id];
             const nodeColor = scoreColor(n.overall);
             return (
               <g

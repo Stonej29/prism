@@ -10,8 +10,8 @@ import { usePersistentToggle } from "../hooks/usePersistentToggle";
 const KNOWN_SOURCES = ["paper", "github", "huggingface", "youtube", "pdf", "website"];
 // "Min age" slider stops: window of days to keep (0 = all). Far left = all,
 // moving right narrows toward the newest notes.
-const AGE_BUCKETS = [0, 365, 180, 90, 30, 14, 7];
-const AGE_LABELS = ["all", "1y", "180d", "90d", "30d", "14d", "7d"];
+const AGE_BUCKETS = [0, 365, 180, 90, 30, 14, 7, 3, 1];
+const AGE_LABELS = ["all", "1y", "180d", "90d", "30d", "14d", "7d", "3d", "1d"];
 
 function Mono({ children, c = P.mid }: { children: React.ReactNode; c?: string }) {
   return <span style={{ fontFamily: P.mono, fontSize: 11, color: c }}>{children}</span>;

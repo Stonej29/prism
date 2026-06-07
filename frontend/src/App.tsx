@@ -54,7 +54,8 @@ export default function App() {
   const [note, setNote] = useState<NoteDetail | null>(null);
   const [noteLoading, setNoteLoading] = useState(false);
   const [paneBusy, setPaneBusy] = useState(false);
-  const [processingNote, setProcessingNote] = useState<{ noteId: string; action: "reprocess" | "research" } | null>(null);
+  // Multiple notes can be reprocessing/researching at once — keyed by note id.
+  const [processingNotes, setProcessingNotes] = useState<Record<string, "reprocess" | "research">>({});
 
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(false);
@@ -84,7 +85,9 @@ export default function App() {
     selectedIdRef.current = selectedId;
   }, [selectedId]);
 
-  const selectedProcessing = processingNote?.noteId === selectedId ? processingNote : null;
+  const selectedAction = selectedId ? processingNotes[selectedId] ?? null : null;
+  const clearProcessing = (id: string, action: "reprocess" | "research") =>
+    setProcessingNotes((m) => (m[id] === action ? Object.fromEntries(Object.entries(m).filter(([k]) => k !== id)) : m));
 
   const noteKind = useMemo(() => {
     const m: Record<string, string> = {};
@@ -287,7 +290,7 @@ export default function App() {
   };
 
   const onReprocess = async (id: string) => {
-    setProcessingNote({ noteId: id, action: "reprocess" });
+    setProcessingNotes((m) => ({ ...m, [id]: "reprocess" }));
     try {
       const res = await api.reprocess(id);
       setNote((current) => (selectedIdRef.current === id ? res.note : current));
@@ -296,12 +299,12 @@ export default function App() {
     } catch (e) {
       setToast(String(e));
     } finally {
-      setProcessingNote((current) => (current?.noteId === id && current.action === "reprocess" ? null : current));
+      clearProcessing(id, "reprocess");
     }
   };
 
   const onResearch = async (id: string) => {
-    setProcessingNote({ noteId: id, action: "research" });
+    setProcessingNotes((m) => ({ ...m, [id]: "research" }));
     try {
       const res = await api.research(id);
       setNote((current) => (selectedIdRef.current === id ? res.note : current));
@@ -310,7 +313,7 @@ export default function App() {
     } catch (e) {
       setToast(String(e));
     } finally {
-      setProcessingNote((current) => (current?.noteId === id && current.action === "research" ? null : current));
+      clearProcessing(id, "research");
     }
   };
 
@@ -537,16 +540,16 @@ export default function App() {
           onClearHighlight={() => setHighlight(null)}
           onClearFilters={clearAllFilters}
           leftPanelWidth={leftOpen ? leftWidth : LEFT_CLOSED_W}
-          processingNodeId={processingNote?.noteId ?? null}
+          processingNodeIds={processingNotes}
           maintenanceStatus={maintenanceStatus}
           maintenanceEvents={maintenanceStatus?.events ?? []}
         />
         <NotePane
           note={note}
           loading={noteLoading}
-          busy={paneBusy || selectedProcessing != null}
-          reprocessing={selectedProcessing?.action === "reprocess"}
-          researching={selectedProcessing?.action === "research"}
+          busy={paneBusy || selectedAction != null}
+          reprocessing={selectedAction === "reprocess"}
+          researching={selectedAction === "research"}
           open={rightOpen}
           onToggle={() => setRightOpen((o) => !o)}
           width={rightWidth}

@@ -36,6 +36,7 @@ export interface NoteDetail {
   research_status: string | null;
   researched_at: string | null;
   research_error: string | null;
+  research_sources: { url: string; title: string }[];
   scores: Record<string, number>;
   tags: string[];
   structured_summary: Record<string, unknown>;

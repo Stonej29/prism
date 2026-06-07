@@ -421,6 +421,59 @@ class Phase3NoteServiceTests(unittest.TestCase):
             self.assertEqual(metadata["research_status"], "generated")
             self.assertIn("researched_at", metadata)
 
+    def test_research_note_records_web_sources(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = PrismDatabase(root / "prism.sqlite3")
+            service = NoteService(root / "vault", db, root / "archives", LLMConfig("https://llm.example", "key", "model-a"))
+            archive = root / "archives" / "abc123"
+            archive.mkdir(parents=True)
+            (archive / "extracted.txt").write_text("Archived text", encoding="utf-8")
+            note_path = root / "vault" / "notes" / "a.md"
+            note_path.parent.mkdir(parents=True, exist_ok=True)
+            note_path.write_text("old", encoding="utf-8")
+            db.insert_note(NoteRecord(
+                note_id="abc123", source_url="https://a", resolved_url="https://a", note_path="notes/a.md",
+                date_saved="2026-01-01T00:00:00Z", status="unreviewed", title="A", summary="A",
+                fetch_status="fetched", source_kind="website", local_archive=str(archive), metadata_json="{}",
+            ))
+            gen = LLMGeneration(structured(), "model-a", web_sources=[{"url": "https://src.example/x", "title": "X"}])
+            with patch("prism.notes.LLMClient.generate_note", return_value=gen):
+                result = service.research_note("abc123")
+            self.assertTrue(result.ok)
+            metadata = json.loads(db.find_by_note_id("abc123").metadata_json)
+            self.assertEqual(metadata["research_sources"][0]["url"], "https://src.example/x")
+
+    def test_reprocess_refetches_failed_note(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = PrismDatabase(root / "prism.sqlite3")
+            service = NoteService(root / "vault", db, root / "archives", LLMConfig("https://llm.example", "key", "model-a"))
+            note_path = root / "vault" / "notes" / "a.md"
+            note_path.parent.mkdir(parents=True, exist_ok=True)
+            note_path.write_text("old", encoding="utf-8")
+            db.insert_note(NoteRecord(
+                note_id="abc123", source_url="https://blocked", resolved_url="https://blocked", note_path="notes/a.md",
+                date_saved="2026-01-01T00:00:00Z", status="unreviewed", title="A", summary="A",
+                fetch_status="failed", source_kind="website", metadata_json="{}",
+            ))
+
+            def fake_fetch(url, archive_root, note_id):
+                d = archive_root / note_id
+                d.mkdir(parents=True, exist_ok=True)
+                (d / "extracted.txt").write_text("Recovered body text", encoding="utf-8")
+                return FetchResult(
+                    source_url=url, resolved_url=url, source_kind="website", title="A", summary=None,
+                    extracted_text="Recovered body text", local_archive=str(d), pdf_path=None, content_hash="h",
+                    fetch_status="fetched", fetch_error=None, fetched_at="2026-01-02T00:00:00Z", metadata={},
+                )
+
+            with patch("prism.notes.fetch_source", side_effect=fake_fetch), \
+                 patch("prism.notes.LLMClient.generate_note", return_value=LLMGeneration(structured(), "model-a")):
+                result = service.reprocess("abc123")
+            self.assertTrue(result.ok)
+            self.assertEqual(db.find_by_note_id("abc123").fetch_status, "fetched")
+
     def test_reprocess_recovers_empty_website_extraction_from_raw_html(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

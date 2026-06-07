@@ -61,6 +61,7 @@ def note_to_dto(record: NoteRecord) -> dict[str, Any]:
         "research_status": metadata.get("research_status"),
         "researched_at": metadata.get("researched_at"),
         "research_error": metadata.get("research_error"),
+        "research_sources": metadata.get("research_sources") or [],
         "scores": scores_for_record(record),
         "tags": tags_for_record(record),
         "structured_summary": structured_summary(record),

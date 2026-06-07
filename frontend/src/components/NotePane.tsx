@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { RotateCw, Share2, Telescope, Trash2 } from "lucide-react";
+import { ExternalLink, Loader2, RotateCw, Share2, Telescope, Trash2 } from "lucide-react";
 import { P } from "../theme";
 import type { NoteDetail } from "../types";
 import { SourceBadge } from "./SourceBadge";
@@ -177,7 +177,7 @@ export function NotePane({
     );
   }
 
-  if (loading || reprocessing || researching) return wrap(<NoteSkeleton />);
+  if (loading || reprocessing) return wrap(<NoteSkeleton />);
   if (!note)
     return wrap(
       <div style={{ padding: 24, fontFamily: P.sans, fontSize: 13, color: P.faint }}>
@@ -270,6 +270,12 @@ export function NotePane({
             {note.title}
           </div>
         )}
+        {researching && (
+          <div style={{ display: "flex", alignItems: "center", gap: 9, padding: "9px 11px", marginBottom: 12, borderRadius: 8, background: P.accentDim, border: `1px solid ${P.accent}` }}>
+            <Loader2 size={14} strokeWidth={2} className="prism-spin" color={P.accent} />
+            <span style={{ fontFamily: P.mono, fontSize: 11.5, color: P.accent }}>Researching — running web search…</span>
+          </div>
+        )}
         {(overall != null || restScores.length > 0) && (
           <div style={{ display: "flex", alignItems: "baseline", gap: 14, flexWrap: "wrap" }}>
             {overall != null && (
@@ -335,6 +341,26 @@ export function NotePane({
         {technical.length > 0 && <Section title="Technical details"><Bullets items={technical} /></Section>}
         {limitations.length > 0 && <Section title="Limitations"><Bullets items={limitations} /></Section>}
         {projectIdeas.length > 0 && <Section title="Project ideas"><Bullets items={projectIdeas} /></Section>}
+
+        {note.research_sources.length > 0 && (
+          <Section title={`Researched sources (${note.research_sources.length})`} defaultOpen>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {note.research_sources.map((src) => (
+                <a
+                  key={src.url}
+                  href={src.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  title={src.url}
+                  style={{ display: "flex", alignItems: "center", gap: 9, padding: "7px 9px", borderRadius: 7, background: P.bg2, border: `1px solid ${P.line}`, textDecoration: "none" }}
+                >
+                  <ExternalLink size={13} color={P.lo} />
+                  <span style={{ fontFamily: P.sans, fontSize: 12.5, color: P.hi, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{src.title || src.url.replace(/^https?:\/\//, "")}</span>
+                </a>
+              ))}
+            </div>
+          </Section>
+        )}
 
         {linkedNotes.length > 0 && (
           <Section title="Linked notes" defaultOpen>
