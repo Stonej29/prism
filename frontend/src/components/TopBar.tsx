@@ -3,6 +3,7 @@ import { Lightbulb, Plus, Settings } from "lucide-react";
 import { P } from "../theme";
 import { Omnibar } from "./Omnibar";
 import type { IdeaStatus } from "./Lightbulb";
+import { Logo } from "./Logo";
 import { IconButton } from "./IconButton";
 import { TextAction } from "./TextAction";
 
@@ -53,17 +54,7 @@ export function TopBar({
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
-        <div style={{ width: 18, height: 18, position: "relative" }}>
-          <div
-            style={{
-              position: "absolute",
-              inset: 0,
-              transform: "rotate(45deg)",
-              background: `linear-gradient(135deg, ${P.accent}, ${P.github})`,
-              borderRadius: 3,
-            }}
-          />
-        </div>
+        <Logo size={20} />
         <span style={{ fontFamily: P.mono, fontWeight: 600, letterSpacing: 2, fontSize: 14, color: P.hi }}>
           PRISM
         </span>

@@ -536,6 +536,11 @@ export function GraphPane({
             {sim.nodes.length} notes · {sim.links.length} links · {new Set(nodes.map((n) => n.topic)).size} topics
           </Mono>
         </div>
+        <div title="Node colour = overall score; node size = number of semantic links" style={{ display: "flex", alignItems: "center", gap: 8, background: `${P.bg1}dd`, border: `1px solid ${P.line}`, borderRadius: 8, padding: "7px 12px" }}>
+          <Mono c={P.faint}>score</Mono>
+          <span style={{ width: 44, height: 7, borderRadius: 4, background: `linear-gradient(90deg, ${scoreColor(1)}, ${scoreColor(5.5)}, ${scoreColor(10)})` }} />
+          <Mono c={P.faint}>size = links</Mono>
+        </div>
         {filterCount > 0 && (
           <div style={{ display: "flex", alignItems: "center", gap: 8, background: `${P.bg1}dd`, border: `1px solid ${P.line}`, borderRadius: 8, padding: "7px 12px" }}>
             <Mono c={P.mid}>{filterCount} filter{filterCount === 1 ? "" : "s"}</Mono>
