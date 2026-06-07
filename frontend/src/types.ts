@@ -102,6 +102,8 @@ export interface Stats {
   tags: number;
   index_configured: boolean;
   embedding_model: string | null;
+  llm_configured: boolean;
+  llm_model: string | null;
 }
 
 export interface Usage {

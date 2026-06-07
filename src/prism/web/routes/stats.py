@@ -4,7 +4,8 @@ from fastapi import APIRouter, Depends
 
 from prism.db import PrismDatabase
 from prism.index import NoteIndexer
-from prism.web.deps import get_db, get_indexer
+from prism.notes import NoteService
+from prism.web.deps import get_db, get_indexer, get_notes
 from prism.web.serializers import stats_dto
 
 router = APIRouter(tags=["stats"])
@@ -14,6 +15,7 @@ router = APIRouter(tags=["stats"])
 def get_stats(
     db: PrismDatabase = Depends(get_db),
     indexer: NoteIndexer = Depends(get_indexer),
+    notes: NoteService = Depends(get_notes),
 ) -> dict:
     stats = db.get_note_stats()
     tags = db.list_tags_with_counts()
@@ -22,6 +24,8 @@ def get_stats(
         "tags": len(tags),
         "index_configured": indexer.is_configured,
         "embedding_model": indexer.embedding_config.model,
+        "llm_configured": notes.llm_config.is_configured,
+        "llm_model": notes.llm_config.model,
     }
 
 

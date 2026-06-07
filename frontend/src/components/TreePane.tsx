@@ -3,7 +3,6 @@ import { P, srcColor, srcLabel } from "../theme";
 import type { GraphPayload, Stats, TagCount, TreeNode, Usage } from "../types";
 import { FileTree } from "./FileTree";
 import type { OpenFile } from "./FileViewer";
-import { MaintenancePanel } from "./MaintenancePanel";
 import { ResizeHandle } from "./ResizeHandle";
 import { TagManager } from "./TagManager";
 import { usePersistentToggle } from "../hooks/usePersistentToggle";
@@ -87,8 +86,6 @@ export function TreePane({
   minAgeDays,
   minScore,
   usage,
-  pendingProposals,
-  maintaining,
   onSelectNote,
   onOpenIdea,
   onOpenFile,
@@ -96,9 +93,6 @@ export function TreePane({
   onSelectTag,
   onToggleFlagFilter,
   onClearFilters,
-  onRunMaintenance,
-  onReviewProposals,
-  onOpenLog,
   onMinAgeDays,
   onMinScore,
   onTagsChanged,
@@ -119,8 +113,6 @@ export function TreePane({
   minAgeDays: number;
   minScore: number;
   usage: Usage | null;
-  pendingProposals: number;
-  maintaining: boolean;
   onSelectNote: (id: string) => void;
   onOpenIdea: (id: string) => void;
   onOpenFile: (f: OpenFile) => void;
@@ -128,9 +120,6 @@ export function TreePane({
   onSelectTag: (t: string, additive?: boolean) => void;
   onToggleFlagFilter: (flag: string, additive?: boolean) => void;
   onClearFilters: () => void;
-  onRunMaintenance: () => void | Promise<void>;
-  onReviewProposals: () => void;
-  onOpenLog: () => void;
   onMinAgeDays: (v: number) => void;
   onMinScore: (v: number) => void;
   onTagsChanged: () => void;
@@ -153,6 +142,7 @@ export function TreePane({
   for (const n of graph?.nodes ?? []) counts[n.source_kind] = (counts[n.source_kind] ?? 0) + 1;
   const indexed = stats?.notes.embedding_indexed ?? 0;
   const healthy = stats?.index_configured && (stats?.notes.embedding_failed ?? 0) === 0;
+  const llmHealthy = stats?.llm_configured && (stats?.notes.llm_failed ?? 0) === 0;
   const filtering = query.trim().length > 0;
   const fanoutActive = sourceFilters.length > 0 || tagFilters.length > 0 || flagFilters.length > 0 || minAgeDays > 0 || minScore > 0;
 
@@ -240,17 +230,15 @@ export function TreePane({
             </div>
           </div>
         )}
-
-        <MaintenancePanel
-          pendingProposals={pendingProposals}
-          maintaining={maintaining}
-          onRunMaintenance={onRunMaintenance}
-          onReviewProposals={onReviewProposals}
-          onOpenLog={onOpenLog}
-        />
       </div>
 
       <div style={{ padding: "12px 14px", borderTop: `1px solid ${P.line}`, display: "flex", flexDirection: "column", gap: 6 }}>
+        <div style={{ display: "flex", justifyContent: "space-between" }} title={stats?.llm_model ?? "no LLM configured"}>
+          <Mono>llm</Mono>
+          <Mono c={!stats?.llm_configured ? P.lo : llmHealthy ? P.pdf : P.arxiv}>
+            ● {stats?.llm_configured ? (llmHealthy ? "healthy" : `${stats?.notes.llm_failed ?? 0} failed`) : "off"}
+          </Mono>
+        </div>
         <div style={{ display: "flex", justifyContent: "space-between" }}>
           <Mono>index</Mono>
           <Mono c={healthy ? P.pdf : P.arxiv}>● {stats?.index_configured ? (healthy ? "healthy" : "errors") : "off"}</Mono>

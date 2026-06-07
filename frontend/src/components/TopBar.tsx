@@ -1,29 +1,29 @@
 import { useState } from "react";
+import { Lightbulb, Plus, Settings } from "lucide-react";
 import { P } from "../theme";
 import { Omnibar } from "./Omnibar";
 import type { IdeaStatus } from "./Lightbulb";
+import { IconButton } from "./IconButton";
 import { TextAction } from "./TextAction";
 
 export function TopBar({
   busy,
   saving,
   ideaStatus,
-  ingesting,
   onAsk,
   onFind,
   onSave,
   onLightbulb,
-  onPullFeeds,
+  onOpenSettings,
 }: {
   busy: boolean;
   saving: boolean;
   ideaStatus: IdeaStatus;
-  ingesting: boolean;
   onAsk: (q: string) => void;
   onFind: (q: string) => void;
   onSave: (url: string) => void;
   onLightbulb: () => void;
-  onPullFeeds: () => void;
+  onOpenSettings: () => void;
 }) {
   const [saveOpen, setSaveOpen] = useState(false);
   const [url, setUrl] = useState("");
@@ -71,10 +71,10 @@ export function TopBar({
 
       <Omnibar busy={busy} onAsk={onAsk} onFind={onFind} />
 
-      <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-        <TextAction busy={ingesting} disabled={ingesting} title="Pull configured feeds now" onClick={onPullFeeds}>feeds</TextAction>
-        <TextAction busy={ideaStatus === "loading"} disabled={ideaStatus === "loading"} title="Generate or open an idea" onClick={onLightbulb}>idea</TextAction>
-        <TextAction busy={saving} disabled={saving} title={saving ? "Saving" : "Save a URL"} onClick={() => setSaveOpen((o) => !o)}>save url</TextAction>
+      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+        <IconButton icon={Lightbulb} busy={ideaStatus === "loading"} title="Generate or open an idea" onClick={onLightbulb} />
+        <IconButton icon={Plus} busy={saving} title={saving ? "Saving…" : "Save a URL"} onClick={() => setSaveOpen((o) => !o)} />
+        <IconButton icon={Settings} title="Settings — profile, feeds, maintenance" onClick={onOpenSettings} />
       </div>
 
       {saveOpen && (

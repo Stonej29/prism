@@ -11,6 +11,7 @@ import { ProposalsOverlay } from "./components/ProposalsOverlay";
 import { IdeaView } from "./components/IdeaView";
 import { FileViewer, type OpenFile } from "./components/FileViewer";
 import { ActivityLog } from "./components/ActivityLog";
+import { SettingsOverlay } from "./components/SettingsOverlay";
 import type { IdeaStatus } from "./components/Lightbulb";
 
 interface AskState {
@@ -76,6 +77,7 @@ export default function App() {
   const [proposals, setProposals] = useState<ProposalsState>({ open: false, items: [], pending: 0, loading: false, busyId: null, runningJob: null });
   const [maintenanceStatus, setMaintenanceStatus] = useState<MaintenanceStatus | null>(null);
   const [activity, setActivity] = useState<ActivityState>({ open: false, loading: false, items: [] });
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const selectedIdRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -486,12 +488,11 @@ export default function App() {
         busy={busy || ask.loading}
         saving={saving}
         ideaStatus={ideaJob.status}
-        ingesting={proposals.runningJob === "ingest"}
         onAsk={onAsk}
         onFind={onFind}
         onSave={onSave}
         onLightbulb={onLightbulb}
-        onPullFeeds={runIngest}
+        onOpenSettings={() => setSettingsOpen(true)}
       />
       <div style={{ flex: 1, display: "flex", minHeight: 0, position: "relative" }}>
         <TreePane
@@ -514,15 +515,10 @@ export default function App() {
           onSelectNote={selectNote}
           onOpenIdea={onOpenIdeaById}
           onOpenFile={setOpenFile}
-          pendingProposals={proposals.pending}
-          maintaining={proposals.runningJob === "traverse"}
           onSelectSource={selectSource}
           onSelectTag={selectTag}
           onToggleFlagFilter={toggleFlagFilter}
           onClearFilters={clearAllFilters}
-          onRunMaintenance={runTraverse}
-          onReviewProposals={openProposals}
-          onOpenLog={openActivityLog}
           onMinAgeDays={setMinAgeDays}
           onMinScore={setMinScore}
           onTagsChanged={() => { refreshData().catch((e) => setToast(String(e))); }}
@@ -606,6 +602,18 @@ export default function App() {
           />
         )}
         {openFile && <FileViewer file={openFile} onClose={() => setOpenFile(null)} />}
+        {settingsOpen && (
+          <SettingsOverlay
+            onClose={() => setSettingsOpen(false)}
+            onPullFeeds={runIngest}
+            ingesting={proposals.runningJob === "ingest"}
+            pendingProposals={proposals.pending}
+            maintaining={proposals.runningJob === "traverse"}
+            onRunMaintenance={runTraverse}
+            onReviewProposals={openProposals}
+            onOpenLog={openActivityLog}
+          />
+        )}
       </div>
 
       {toast && (

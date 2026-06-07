@@ -99,6 +99,11 @@ export const api = {
   mergeTags: (source: string, target: string) =>
     req<{ ok: boolean; notes_updated: number }>(`/tags/merge`, { method: "POST", body: JSON.stringify({ source, target }) }),
 
+  getProfile: () => req<{ content: string }>(`/profile`),
+
+  saveProfile: (content: string) =>
+    req<{ ok: boolean; content: string }>(`/profile`, { method: "PUT", body: JSON.stringify({ content }) }),
+
   tree: () => req<TreeNode>(`/tree`),
 
   idea: (id: string) => req<Idea>(`/ideas/${id}`),

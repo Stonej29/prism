@@ -17,14 +17,16 @@ export function MaintenancePanel({
   onRunMaintenance,
   onReviewProposals,
   onOpenLog,
+  defaultOpen = false,
 }: {
   pendingProposals: number;
   maintaining: boolean;
   onRunMaintenance: () => void | Promise<void>;
   onReviewProposals: () => void;
   onOpenLog: () => void;
+  defaultOpen?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
   const [settings, setSettings] = useState<MaintenanceSettings | null>(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -106,7 +108,7 @@ export function MaintenancePanel({
           ) : (
             <>
               <div style={{ fontFamily: P.sans, fontSize: 11.5, color: P.lo, lineHeight: 1.45 }}>
-                Thresholds tune auto links only. LLM and manual links are preserved; turn on LLM links in the graph to inspect model suggestions.
+                Thresholds tune the automatic (semantic) links only. LLM suggestions are kept as "similar notes" on each note, not as graph links.
               </div>
               {SETTING_FIELDS.map((f) => (
                 <div key={f.key} title={f.hint} style={{ display: "grid", gridTemplateColumns: "76px 1fr 38px", alignItems: "center", gap: 8 }}>

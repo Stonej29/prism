@@ -344,6 +344,8 @@ class WebApiTest(unittest.TestCase):
         stats = self.client.get("/api/stats").json()
         self.assertEqual(stats["notes"]["total"], 2)
         self.assertFalse(stats["index_configured"])
+        self.assertFalse(stats["llm_configured"])
+        self.assertIn("llm_model", stats)
 
     def test_edit_tags(self) -> None:
         self.db.insert_note(make_note("aaa111", tags=["graph"]))

@@ -1,9 +1,11 @@
 import { useState } from "react";
+import { RotateCw, Share2, Telescope, Trash2 } from "lucide-react";
 import { P } from "../theme";
 import type { NoteDetail } from "../types";
 import { SourceBadge } from "./SourceBadge";
 import { NoteSkeleton } from "./Skeleton";
 import { TextAction } from "./TextAction";
+import { IconButton } from "./IconButton";
 import { ResizeHandle } from "./ResizeHandle";
 
 const REVIEW_STATUSES = ["unreviewed", "reviewed", "archived"] as const;
@@ -244,7 +246,7 @@ export function NotePane({
               {note.favorite ? "★" : "☆"}
             </span>
             <span style={{ fontFamily: P.mono, fontSize: 10, color: P.faint }}>captured {captured}</span>
-            <span onClick={() => onShowRelated(note.id)} title="Highlight related notes in the graph" style={{ fontFamily: P.mono, fontSize: 11, color: P.accent, cursor: "pointer" }}>related</span>
+            <IconButton icon={Share2} title="Highlight related notes in the graph" onClick={() => onShowRelated(note.id)} size={14} />
           </div>
         </div>
         {titleEditing ? (
@@ -396,11 +398,11 @@ export function NotePane({
         </Section>
       </div>
 
-      <div style={{ padding: "12px 20px", borderTop: `1px solid ${P.line}`, display: "flex", alignItems: "center", gap: 12 }}>
-        <TextAction busy={reprocessing} disabled={busy && !reprocessing} onClick={() => onReprocess(note.id)}>reprocess</TextAction>
-        <TextAction busy={researching} disabled={busy && !researching} title="Reprocess with OpenRouter web research" onClick={() => onResearch(note.id)}>research</TextAction>
+      <div style={{ padding: "10px 16px", borderTop: `1px solid ${P.line}`, display: "flex", alignItems: "center", gap: 4 }}>
+        <IconButton icon={RotateCw} busy={reprocessing} disabled={busy && !reprocessing} title="Reprocess from saved text" onClick={() => onReprocess(note.id)} />
+        <IconButton icon={Telescope} busy={researching} disabled={busy && !researching} title="Research with web search" onClick={() => onResearch(note.id)} />
         <span style={{ marginLeft: "auto" }}>
-          <TextAction danger disabled={busy} onClick={() => { if (confirm(`Delete \"${note.title}\"?`)) onDelete(note.id); }}>delete</TextAction>
+          <IconButton icon={Trash2} danger disabled={busy} title="Delete note" onClick={() => { if (confirm(`Delete \"${note.title}\"?`)) onDelete(note.id); }} />
         </span>
       </div>
     </>,
