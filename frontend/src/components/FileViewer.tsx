@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { marked } from "marked";
+import DOMPurify from "dompurify";
 import { api } from "../api";
 import { P } from "../theme";
 import { Backdrop } from "./AskOverlay";
@@ -45,7 +46,7 @@ export function FileViewer({ file, onClose }: { file: OpenFile; onClose: () => v
     body = (
       <div
         style={{ fontFamily: P.sans, fontSize: 13.5, lineHeight: 1.6, color: P.hi }}
-        dangerouslySetInnerHTML={{ __html: marked.parse(text) as string }}
+        dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(marked.parse(text) as string) }}
       />
     );
   } else {

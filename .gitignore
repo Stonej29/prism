@@ -1,9 +1,15 @@
 .env
+.env.*
+!.env.example
 .venv/
 __pycache__/
 *.py[cod]
 .pytest_cache/
 .ruff_cache/
+.mypy_cache/
+.coverage
+coverage.xml
+htmlcov/
 
 # Frontend build artifacts and dependencies.
 node_modules/
@@ -19,3 +25,14 @@ runtime/
 archives/
 logs/
 *.tsbuildinfo
+
+# Local editor/agent state and machine-specific files.
+.claude/
+.DS_Store
+
+# Private key/certificate material.
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx

@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import ipaddress
 import json
 import logging
+import os
 import re
+import socket
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -31,6 +34,7 @@ FETCH_TIMEOUT_SECONDS = 45.0
 MAX_DOWNLOAD_BYTES = 100 * 1024 * 1024
 FETCH_RETRY_ATTEMPTS = 3
 FETCH_RETRY_BACKOFF_BASE = 1.0
+MAX_REDIRECTS = 10
 # Hard-block statuses where retrying the same request won't help; we surface them
 # clearly (and fall back to a reader proxy for websites) instead of retrying.
 _BLOCKED_STATUSES = {401, 403, 451}
@@ -564,7 +568,9 @@ def _fetch_website(source_url: str, archive_dir: Path, fetched_at: str) -> Fetch
     try:
         html_bytes, resolved_url, content_type = _http_get_bytes(source_url)
     except FetchBlockedError as blocked:
-        return _fetch_website_via_jina(source_url, archive_dir, fetched_at, blocked)
+        if _use_jina_reader_fallback():
+            return _fetch_website_via_jina(source_url, archive_dir, fetched_at, blocked)
+        raise
     if content_type and "application/pdf" in content_type.lower():
         pdf_path = archive_dir / "source.pdf"
         pdf_path.write_bytes(html_bytes)
@@ -610,6 +616,10 @@ def _fetch_website(source_url: str, archive_dir: Path, fetched_at: str) -> Fetch
         fetched_at=fetched_at,
         metadata=metadata,
     )
+
+
+def _use_jina_reader_fallback() -> bool:
+    return os.getenv("PRISM_FETCH_USE_JINA_READER", "1").lower() not in {"0", "false", "no"}
 
 
 def _fetch_website_via_jina(
@@ -664,25 +674,37 @@ def _http_get_bytes(url: str, headers: dict[str, str] | None = None) -> tuple[by
         httpx.WriteError,
         httpx.PoolTimeout,
     )
+    start_url = _validate_fetch_url(url)
     last_exc: Exception | None = None
     for attempt in range(FETCH_RETRY_ATTEMPTS):
+        current_url = start_url
         try:
-            with httpx.Client(timeout=timeout, follow_redirects=True, headers=request_headers) as client:
-                with client.stream("GET", url) as response:
-                    if response.status_code in _BLOCKED_STATUSES:
-                        # Drain so the connection can close cleanly, then surface a clear block.
-                        response.read()
-                        raise FetchBlockedError(response.status_code, str(response.url))
-                    response.raise_for_status()
-                    chunks: list[bytes] = []
-                    total = 0
-                    for chunk in response.iter_bytes():
-                        total += len(chunk)
-                        if total > MAX_DOWNLOAD_BYTES:
-                            raise ValueError(f"Response exceeded {MAX_DOWNLOAD_BYTES} byte limit")
-                        chunks.append(chunk)
-                    content_type = response.headers.get("content-type")
-                    return b"".join(chunks), str(response.url), content_type
+            with httpx.Client(timeout=timeout, follow_redirects=False, headers=request_headers) as client:
+                for _redirect in range(MAX_REDIRECTS + 1):
+                    current_url = _validate_fetch_url(current_url)
+                    with client.stream("GET", current_url) as response:
+                        if response.status_code in {301, 302, 303, 307, 308}:
+                            response.read()
+                            location = response.headers.get("location")
+                            if not location:
+                                response.raise_for_status()
+                            current_url = _validate_fetch_url(urljoin(str(response.url), location))
+                            continue
+                        if response.status_code in _BLOCKED_STATUSES:
+                            # Drain so the connection can close cleanly, then surface a clear block.
+                            response.read()
+                            raise FetchBlockedError(response.status_code, str(response.url))
+                        response.raise_for_status()
+                        chunks: list[bytes] = []
+                        total = 0
+                        for chunk in response.iter_bytes():
+                            total += len(chunk)
+                            if total > MAX_DOWNLOAD_BYTES:
+                                raise ValueError(f"Response exceeded {MAX_DOWNLOAD_BYTES} byte limit")
+                            chunks.append(chunk)
+                        content_type = response.headers.get("content-type")
+                        return b"".join(chunks), str(response.url), content_type
+                raise ValueError(f"Too many redirects while fetching {url}")
         except httpx.HTTPStatusError as exc:
             # Retry transient server errors and rate limits; other 4xx propagate.
             status = exc.response.status_code
@@ -705,6 +727,60 @@ def _http_get_bytes(url: str, headers: dict[str, str] | None = None) -> tuple[by
     raise last_exc  # pragma: no cover - loop either returns or raises
 
 
+def _validate_fetch_url(url: str) -> str:
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"}:
+        raise ValueError("Only http:// and https:// URLs can be fetched")
+    if parsed.username or parsed.password:
+        raise ValueError("URLs with embedded credentials are not allowed")
+    host = parsed.hostname
+    if not host:
+        raise ValueError("Fetch URL must include a host")
+    if _allow_private_fetches():
+        return url
+    _reject_private_host(host, parsed.port or (443 if parsed.scheme == "https" else 80))
+    return url
+
+
+def _allow_private_fetches() -> bool:
+    return os.getenv("PRISM_FETCH_ALLOW_PRIVATE", "").lower() in {"1", "true", "yes"}
+
+
+def _reject_private_host(host: str, port: int) -> None:
+    try:
+        addresses = [ipaddress.ip_address(host.strip("[]"))]
+    except ValueError:
+        try:
+            infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+        except OSError as exc:
+            raise ValueError(f"Could not resolve fetch host: {host}") from exc
+        addresses = []
+        for info in infos:
+            sockaddr = info[4]
+            if not sockaddr:
+                continue
+            try:
+                addresses.append(ipaddress.ip_address(str(sockaddr[0])))
+            except ValueError:
+                continue
+    if not addresses:
+        raise ValueError(f"Could not resolve fetch host: {host}")
+    blocked = [addr for addr in addresses if _blocked_ip(addr)]
+    if blocked:
+        raise ValueError(f"Refusing to fetch private or local address for host: {host}")
+
+
+def _blocked_ip(addr: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    return (
+        addr.is_private
+        or addr.is_loopback
+        or addr.is_link_local
+        or addr.is_multicast
+        or addr.is_reserved
+        or addr.is_unspecified
+    )
+
+
 def _extract_pdf_text(pdf_bytes: bytes) -> str:
     try:
         import fitz
@@ -724,8 +800,8 @@ def _extract_html(html: str, resolved_url: str) -> tuple[str | None, str, dict[s
 
         extracted = trafilatura.extract(html, url=resolved_url, include_comments=False, include_tables=True) or ""
         trafilatura_metadata = extract_metadata(html, default_url=resolved_url)
-        if trafilatura_metadata:
-            metadata = {key: value for key, value in trafilatura_metadata.as_dict().items() if value}
+        if trafilatura_metadata is not None:
+            metadata = _clean_metadata(trafilatura_metadata.as_dict())
     except Exception as exc:
         metadata["trafilatura_error"] = f"{type(exc).__name__}: {exc}"
 
@@ -737,6 +813,34 @@ def _extract_html(html: str, resolved_url: str) -> tuple[str | None, str, dict[s
     if fallback.description and "description" not in metadata:
         metadata["description"] = fallback.description
     return title, _normalize_extracted_text(extracted), metadata
+
+
+def _clean_metadata(raw: dict[str, Any]) -> dict[str, Any]:
+    cleaned: dict[str, Any] = {}
+    for key, value in raw.items():
+        item = _clean_metadata_value(value)
+        if item is not None:
+            cleaned[key] = item
+    return cleaned
+
+
+def _clean_metadata_value(value: object) -> Any:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        stripped = value.strip()
+        return stripped or None
+    if isinstance(value, (int, float, bool)):
+        return value
+    if isinstance(value, (list, tuple, set)):
+        items = [_clean_metadata_value(item) for item in value]
+        items = [item for item in items if item is not None]
+        return items or None
+    if isinstance(value, dict):
+        data = {str(k): _clean_metadata_value(v) for k, v in value.items()}
+        data = {k: v for k, v in data.items() if v is not None}
+        return data or None
+    return None
 
 
 def _normalize_extracted_text(text: str) -> str:

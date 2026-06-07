@@ -18,6 +18,8 @@ jobs:
           cache: pip
       - name: Install package
         run: pip install .
+      - name: Syntax check
+        run: python -m compileall src tests
       - name: Run tests
         run: PYTHONPATH=src python -m unittest discover -s tests
 
@@ -36,5 +38,17 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - name: Install dependencies
         run: npm ci
+      - name: Audit high severity advisories
+        run: npm audit --audit-level=high
       - name: Build (type-check + bundle)
         run: npm run build
+
+
+  secret-scan:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2

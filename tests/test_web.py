@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import base64
 import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -94,6 +96,28 @@ class _FakeIndexer:
             )
             for i in range(limit)
         ]
+
+
+def _basic(username: str, password: str) -> dict[str, str]:
+    token = base64.b64encode(f"{username}:{password}".encode("utf-8")).decode("ascii")
+    return {"Authorization": f"Basic {token}"}
+
+
+class WebAuthTest(unittest.TestCase):
+    def test_basic_auth_protects_api_when_configured(self) -> None:
+        with patch.dict("os.environ", {"PRISM_WEB_USERNAME": "owner", "PRISM_WEB_PASSWORD": "secret"}):
+            client = TestClient(create_app())
+            self.assertEqual(client.get("/api/maintenance/status").status_code, 401)
+            self.assertEqual(client.get("/api/maintenance/status", headers=_basic("owner", "wrong")).status_code, 401)
+            # Auth succeeds and reaches the route dependency layer. This route may
+            # still fail without test service overrides, but it must not be rejected
+            # by the auth middleware.
+            self.assertNotEqual(client.get("/api/maintenance/status", headers=_basic("owner", "secret")).status_code, 401)
+
+    def test_basic_auth_requires_both_env_vars(self) -> None:
+        with patch.dict("os.environ", {"PRISM_WEB_USERNAME": "owner", "PRISM_WEB_PASSWORD": ""}):
+            with self.assertRaises(RuntimeError):
+                create_app()
 
 
 class WebApiTest(unittest.TestCase):

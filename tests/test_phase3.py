@@ -336,7 +336,7 @@ class Phase3NoteServiceTests(unittest.TestCase):
             service = NoteService(root / "vault", db, root / "archives")
             profile = service.profile_path
             self.assertTrue(profile.exists())
-            self.assertIn("Copenhagen/Lyngby", profile.read_text(encoding="utf-8"))
+            self.assertIn("Describe the person using PRISM here", profile.read_text(encoding="utf-8"))
 
             profile.write_text("custom profile", encoding="utf-8")
             NoteService(root / "vault", db, root / "archives")

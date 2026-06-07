@@ -122,10 +122,10 @@ Run it as a second container (shares `runtime/`; the bot is untouched):
 
 ```sh
 docker compose build prism-web
-docker compose up -d prism-web      # serves http://localhost:8000
+docker compose up -d prism-web      # serves http://127.0.0.1:8000
 ```
 
-It binds `0.0.0.0:8000`, so it's reachable from other devices on your network at `http://<host-ip>:8000`. There is **no authentication** — keep it on a trusted LAN/VPN (e.g. Tailscale), not the public internet.
+By default Docker Compose publishes the web UI on host loopback only (`127.0.0.1:8000`), so it is not reachable from other devices. To expose it on a trusted LAN/VPN, set `PRISM_WEB_USERNAME` and `PRISM_WEB_PASSWORD`, then intentionally change the Compose port binding or reverse-proxy it. Do not expose PRISM directly to the public internet.
 
 **Local development** — FastAPI with autoreload plus the Vite dev server proxying `/api`:
 
@@ -133,12 +133,12 @@ It binds `0.0.0.0:8000`, so it's reachable from other devices on your network at
 # Terminal 1 — API (shares runtime/ with the bot)
 PYTHONPATH=src SQLITE_PATH=runtime/prism.sqlite3 LANCEDB_PATH=runtime/lancedb \
   VAULT_PATH=runtime/research-vault ARCHIVE_PATH=runtime/archives \
-  PRISM_WEB_RELOAD=1 python -m prism.web
+  PRISM_WEB_HOST=127.0.0.1 PRISM_WEB_RELOAD=1 python -m prism.web
 # Terminal 2 — frontend
 cd frontend && npm install && npm run dev
 ```
 
-The web service ignores the Telegram env vars; optional knobs: `PRISM_WEB_HOST`, `PRISM_WEB_PORT`, `PRISM_WEB_RELOAD`, `PRISM_WEB_STATIC`.
+The web service ignores the Telegram env vars; optional knobs: `PRISM_WEB_HOST`, `PRISM_WEB_PORT`, `PRISM_WEB_RELOAD`, `PRISM_WEB_STATIC`, `PRISM_WEB_USERNAME`, and `PRISM_WEB_PASSWORD`.
 
 ## Terminal interface
 
@@ -182,6 +182,18 @@ docker compose up -d prism-worker
 docker compose run --rm prism-worker python -m prism.worker ingest    # also: backup | reembed
 ```
 
+## Security and privacy
+
+PRISM is designed as a self-hosted personal system. Treat the runtime vault, SQLite database, archives, profile, and `.env` as private data.
+
+- The Telegram bot requires `TELEGRAM_ALLOWED_USER_IDS` and rejects other users.
+- The web UI should stay on localhost, a trusted LAN, or a VPN. If you expose it beyond localhost, set `PRISM_WEB_USERNAME` and `PRISM_WEB_PASSWORD` or put it behind an authenticated reverse proxy.
+- The fetcher blocks localhost, private, link-local, multicast, reserved, and unspecified IP targets by default to reduce SSRF risk. Set `PRISM_FETCH_ALLOW_PRIVATE=1` only if you deliberately need to capture private-network URLs.
+- LLM and embedding providers receive the text and profile context needed for the requested operation. The optional blocked-page reader fallback sends blocked URLs to `r.jina.ai`. Set `PRISM_FETCH_USE_JINA_READER=0` if that does not fit your privacy model.
+- `docker compose config` expands `.env` values; do not paste that output publicly without redacting secrets.
+
+See `SECURITY.md` for more release and deployment guidance.
+
 ## Stack
 
 Python · `python-telegram-bot` · FastAPI · React + Vite (TypeScript) · Textual (TUI) · Obsidian-compatible Markdown vault · SQLite · LanceDB · OpenAI-compatible LLM and embedding APIs. Requires Python ≥ 3.12 (and Node ≥ 18 to build the web UI); runs via Docker Compose.
@@ -222,7 +234,7 @@ PYTHONPATH=src python -m unittest discover -s tests
 
 ## Architecture
 
-See `CLAUDE.md` for the full architecture, data flow, and design decisions.
+See `ARCHITECTURE.md` for the public architecture, data flow, and design decisions.
 
 ## License
 

@@ -26,11 +26,11 @@ ASK_CLAIM_LIMIT = 300
 SCORE_FIELDS = ("relevance", "novelty", "credibility", "actionability", "interest", "overall")
 DEFAULT_PROFILE = """# Personal Profile
 
-Jone is based in Copenhagen/Lyngby and studies a data science and machine learning master's at DTU. He works at HIVE Robotics on humanoid robot software.
+Describe the person using PRISM here: their context, goals, interests, and constraints.
 
-Core interests: robotics, vision-language-action models, inverse kinematics and control, manipulation, perception, computer vision, agents, AI systems, open-source tools, practical research, and home tinkering on an Ubuntu server with an RTX 3090.
+Core interests: add topics, domains, tools, and research areas that should influence note relevance and idea generation.
 
-Prefer notes that are dense, practical, technical, and direct. Emphasize a healthy mix of buildable ideas, research novelty, and practical tool value.
+Preferences: describe what makes a note useful, which tradeoffs matter, and what kinds of project ideas should be emphasized.
 """
 
 

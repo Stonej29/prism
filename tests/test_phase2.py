@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from prism.db import NoteRecord, PrismDatabase
-from prism.fetch import FetchResult, detect_source_kind, parse_arxiv_id
+from prism.fetch import FetchResult, _validate_fetch_url, detect_source_kind, parse_arxiv_id
 from prism.notes import NoteService, render_note, slugify
 
 
@@ -19,6 +19,17 @@ class SourceDetectionTests(unittest.TestCase):
         self.assertEqual(detect_source_kind("https://example.com/paper.pdf"), "pdf")
         self.assertEqual(detect_source_kind("https://github.com/openai/openai-python"), "github")
         self.assertEqual(detect_source_kind("https://example.com/article"), "website")
+
+
+    def test_fetch_url_validation_blocks_private_targets(self) -> None:
+        for url in ("http://127.0.0.1:8000", "http://[::1]/", "http://10.0.0.5/x", "ftp://example.com/x"):
+            with self.subTest(url=url):
+                with self.assertRaises(ValueError):
+                    _validate_fetch_url(url)
+
+    def test_fetch_url_validation_allows_private_targets_when_opted_in(self) -> None:
+        with patch.dict("os.environ", {"PRISM_FETCH_ALLOW_PRIVATE": "1"}):
+            self.assertEqual(_validate_fetch_url("http://127.0.0.1:8000"), "http://127.0.0.1:8000")
 
     def test_slugifies_fetched_titles_for_filenames(self) -> None:
         self.assertEqual(slugify("A Fetched: Title / With Punctuation"), "a-fetched-title-with-punctuation")
@@ -233,6 +244,24 @@ class FetcherIntegrationTests(unittest.TestCase):
             self.assertIn("Reader-extracted body text", result.extracted_text)
             self.assertEqual(result.metadata.get("fetch_via"), "jina")
             self.assertEqual(result.metadata.get("blocked_status"), 403)
+
+
+    def test_blocked_website_skips_jina_when_disabled(self) -> None:
+        from prism.fetch import FetchBlockedError, fetch_source
+
+        calls: list[str] = []
+
+        def fake_get(url: str, headers=None):
+            calls.append(url)
+            raise FetchBlockedError(403, url)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.dict("os.environ", {"PRISM_FETCH_USE_JINA_READER": "0"}), \
+                 patch("prism.fetch._http_get_bytes", side_effect=fake_get):
+                result = fetch_source("https://example.com/blocked", Path(tmp), "blk003")
+
+            self.assertEqual(result.fetch_status, "failed")
+            self.assertEqual(calls, ["https://example.com/blocked"])
 
     def test_blocked_website_surfaces_block_when_jina_fails(self) -> None:
         from prism.fetch import FetchBlockedError, fetch_source
