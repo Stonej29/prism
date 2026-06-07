@@ -146,10 +146,20 @@ class Phase6LLMTests(unittest.TestCase):
             topic="robotics",
             knowledge=[{"id": "a", "title": "T"}],
             past_ideas=[{"title": "x", "summary": "s", "rating": 5}],
+            recent_ideas=[{"title": "y", "summary": "z"}],
         )
         self.assertEqual(ctx["topic"], "robotics")
         self.assertEqual(ctx["knowledge"], [{"id": "a", "title": "T"}])
         self.assertEqual(ctx["past_rated_ideas"][0]["rating"], 5)
+        self.assertEqual(ctx["recent_ideas"][0]["title"], "y")
+
+    def test_build_idea_context_recent_ideas_defaults_empty(self) -> None:
+        ctx = build_idea_context(
+            topic=None,
+            knowledge=[],
+            past_ideas=[],
+        )
+        self.assertEqual(ctx["recent_ideas"], [])
 
     def test_generate_idea_retries_without_response_format_on_400(self) -> None:
         import json as json_module

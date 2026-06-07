@@ -215,6 +215,38 @@ class FetcherIntegrationTests(unittest.TestCase):
             self.assertEqual(result.fetch_error, "timeout")
             self.assertTrue((Path(tmp) / "fail12" / "metadata.json").exists())
 
+    def test_blocked_website_recovers_via_jina_reader(self) -> None:
+        from prism.fetch import FetchBlockedError, JINA_READER_PREFIX, fetch_source
+
+        def fake_get(url: str, headers=None):
+            if url == "https://example.com/blocked":
+                raise FetchBlockedError(403, url)
+            if url == JINA_READER_PREFIX + "https://example.com/blocked":
+                return b"# Title\n\nReader-extracted body text.", url, "text/plain"
+            raise AssertionError(url)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("prism.fetch._http_get_bytes", side_effect=fake_get):
+                result = fetch_source("https://example.com/blocked", Path(tmp), "blk001")
+
+            self.assertEqual(result.fetch_status, "fetched")
+            self.assertIn("Reader-extracted body text", result.extracted_text)
+            self.assertEqual(result.metadata.get("fetch_via"), "jina")
+            self.assertEqual(result.metadata.get("blocked_status"), 403)
+
+    def test_blocked_website_surfaces_block_when_jina_fails(self) -> None:
+        from prism.fetch import FetchBlockedError, fetch_source
+
+        def fake_get(url: str, headers=None):
+            raise FetchBlockedError(403, "https://example.com/blocked")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("prism.fetch._http_get_bytes", side_effect=fake_get):
+                result = fetch_source("https://example.com/blocked", Path(tmp), "blk002")
+
+            self.assertEqual(result.fetch_status, "failed")
+            self.assertIn("403", result.fetch_error or "")
+
 
 class NoteServiceTests(unittest.TestCase):
     def test_save_url_uses_fetch_metadata_and_renders_archive_fields(self) -> None:

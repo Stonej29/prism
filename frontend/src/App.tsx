@@ -64,8 +64,7 @@ export default function App() {
   const [tagFilters, setTagFilters] = useState<string[]>([]);
   const [flagFilters, setFlagFilters] = useState<string[]>([]);
   const [highlight, setHighlight] = useState<Set<string> | null>(null);
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
+  const [minAgeDays, setMinAgeDays] = useState(0); // 0 = show all; higher = only newer
   const [minScore, setMinScore] = useState(0); // 0 = no score filter
 
   const [busy, setBusy] = useState(false);
@@ -166,8 +165,7 @@ export default function App() {
 
   const clearAllFilters = () => {
     clearFanoutFilters();
-    setDateFrom("");
-    setDateTo("");
+    setMinAgeDays(0);
     setMinScore(0);
   };
 
@@ -510,8 +508,7 @@ export default function App() {
           sourceFilters={sourceFilters}
           tagFilters={tagFilters}
           flagFilters={flagFilters}
-          dateFrom={dateFrom}
-          dateTo={dateTo}
+          minAgeDays={minAgeDays}
           minScore={minScore}
           usage={usage}
           onSelectNote={selectNote}
@@ -526,8 +523,7 @@ export default function App() {
           onRunMaintenance={runTraverse}
           onReviewProposals={openProposals}
           onOpenLog={openActivityLog}
-          onDateFrom={setDateFrom}
-          onDateTo={setDateTo}
+          onMinAgeDays={setMinAgeDays}
           onMinScore={setMinScore}
         />
         <GraphPane
@@ -535,8 +531,7 @@ export default function App() {
           sourceFilters={sourceFilters}
           tagFilters={tagFilters}
           flagFilters={flagFilters}
-          dateFrom={dateFrom}
-          dateTo={dateTo}
+          minAgeDays={minAgeDays}
           minScore={minScore}
           selectedId={selectedId}
           highlightIds={highlight}

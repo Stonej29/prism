@@ -224,6 +224,10 @@ PYTHONPATH=src python -m unittest discover -s tests
 
 See `CLAUDE.md` for the full architecture, data flow, and design decisions.
 
+## License
+
+Released under the [MIT License](LICENSE).
+
 ## Planned
 
 - [x] Terminal interface (TUI + CLI)

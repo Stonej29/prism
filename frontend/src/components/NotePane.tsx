@@ -65,6 +65,24 @@ function TextBlock({ children }: { children: string }) {
   return <p style={{ fontFamily: P.sans, fontSize: 13.5, lineHeight: 1.6, color: P.mid, margin: 0 }}>{children}</p>;
 }
 
+function RelatedList({ items, onSelect }: { items: { id: string; title: string; reason: string }[]; onSelect: (id: string) => void }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      {items.map((l) => (
+        <div
+          key={l.id}
+          onClick={() => onSelect(l.id)}
+          title={l.reason}
+          style={{ display: "flex", alignItems: "center", gap: 9, padding: "7px 9px", borderRadius: 7, background: P.bg2, border: `1px solid ${P.line}`, cursor: "pointer" }}
+        >
+          <span style={{ fontFamily: P.sans, fontSize: 12.5, color: P.hi, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{l.title}</span>
+          <span style={{ fontFamily: P.mono, fontSize: 10, color: P.lo }}>→</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function Bullets({ items }: { items: string[] }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
@@ -179,6 +197,10 @@ export function NotePane({
   const technical = listField(s, "technical_details");
   const limitations = listField(s, "limitations");
   const projectIdeas = listField(s, "project_ideas");
+  // Semantic (auto) links are real graph neighbors; LLM/manual ones are
+  // conceptual "similar notes" suggestions, shown separately.
+  const linkedNotes = note.related_notes.filter((l) => l.origin === "auto");
+  const similarNotes = note.related_notes.filter((l) => l.origin !== "auto");
 
   const startEdit = () => {
     setDraft(note.tags.join(", "));
@@ -312,21 +334,18 @@ export function NotePane({
         {limitations.length > 0 && <Section title="Limitations"><Bullets items={limitations} /></Section>}
         {projectIdeas.length > 0 && <Section title="Project ideas"><Bullets items={projectIdeas} /></Section>}
 
-        {note.related_notes.length > 0 && (
-          <Section title="Backlinks" defaultOpen>
-            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              {note.related_notes.map((l) => (
-                <div
-                  key={l.id}
-                  onClick={() => onSelectRelated(l.id)}
-                  title={l.reason}
-                  style={{ display: "flex", alignItems: "center", gap: 9, padding: "7px 9px", borderRadius: 7, background: P.bg2, border: `1px solid ${P.line}`, cursor: "pointer" }}
-                >
-                  <span style={{ fontFamily: P.sans, fontSize: 12.5, color: P.hi, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{l.title}</span>
-                  <span style={{ fontFamily: P.mono, fontSize: 10, color: P.lo }}>→</span>
-                </div>
-              ))}
+        {linkedNotes.length > 0 && (
+          <Section title="Linked notes" defaultOpen>
+            <RelatedList items={linkedNotes} onSelect={onSelectRelated} />
+          </Section>
+        )}
+
+        {similarNotes.length > 0 && (
+          <Section title="Similar notes" defaultOpen>
+            <div style={{ fontFamily: P.mono, fontSize: 10, color: P.faint, padding: "0 2px 6px" }}>
+              LLM-suggested — not graph links
             </div>
+            <RelatedList items={similarNotes} onSelect={onSelectRelated} />
           </Section>
         )}
 

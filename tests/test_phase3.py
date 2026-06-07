@@ -147,6 +147,41 @@ class Phase3LLMClientTests(unittest.TestCase):
         self.assertEqual(generation.data["title"], "Generated Title")
         self.assertEqual(calls[0]["plugins"], [{"id": "web"}])
 
+    def test_generate_note_web_400_drops_plugin_then_succeeds(self) -> None:
+        import json as json_module
+
+        calls: list[dict[str, object]] = []
+
+        class FakeClient:
+            def __init__(self, timeout) -> None:
+                self.timeout = timeout
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb) -> None:
+                return None
+
+            def post(self, url, headers, json):
+                calls.append(json)
+                # 400 while either response_format or the web plugin is present.
+                if "response_format" in json or "plugins" in json:
+                    return httpx.Response(400, request=httpx.Request("POST", url), json={"error": "bad"})
+                return httpx.Response(
+                    200,
+                    request=httpx.Request("POST", url),
+                    json={"model": "model-a", "choices": [{"message": {"content": json_module.dumps(structured())}}]},
+                )
+
+        with patch("prism.llm.httpx.Client", FakeClient):
+            generation = LLMClient(LLMConfig("https://llm.example", "key", "model-a")).generate_note({"title": "T"}, "profile", web=True)
+
+        self.assertEqual(generation.data["title"], "Generated Title")
+        # Progressive fallback: rf+web → rf dropped (web kept) → web dropped.
+        self.assertEqual(len(calls), 3)
+        self.assertNotIn("plugins", calls[2])
+        self.assertNotIn("response_format", calls[2])
+
 
 class LLMRetryTests(unittest.TestCase):
     def _client(self) -> LLMClient:

@@ -8,6 +8,10 @@ import { ResizeHandle } from "./ResizeHandle";
 import { usePersistentToggle } from "../hooks/usePersistentToggle";
 
 const KNOWN_SOURCES = ["paper", "github", "huggingface", "youtube", "pdf", "website"];
+// "Min age" slider stops: window of days to keep (0 = all). Far left = all,
+// moving right narrows toward the newest notes.
+const AGE_BUCKETS = [0, 365, 180, 90, 30, 14, 7];
+const AGE_LABELS = ["all", "1y", "180d", "90d", "30d", "14d", "7d"];
 
 function Mono({ children, c = P.mid }: { children: React.ReactNode; c?: string }) {
   return <span style={{ fontFamily: P.mono, fontSize: 11, color: c }}>{children}</span>;
@@ -79,8 +83,7 @@ export function TreePane({
   sourceFilters,
   tagFilters,
   flagFilters,
-  dateFrom,
-  dateTo,
+  minAgeDays,
   minScore,
   usage,
   pendingProposals,
@@ -95,8 +98,7 @@ export function TreePane({
   onRunMaintenance,
   onReviewProposals,
   onOpenLog,
-  onDateFrom,
-  onDateTo,
+  onMinAgeDays,
   onMinScore,
 }: {
   open: boolean;
@@ -112,8 +114,7 @@ export function TreePane({
   sourceFilters: string[];
   tagFilters: string[];
   flagFilters: string[];
-  dateFrom: string;
-  dateTo: string;
+  minAgeDays: number;
   minScore: number;
   usage: Usage | null;
   pendingProposals: number;
@@ -128,8 +129,7 @@ export function TreePane({
   onRunMaintenance: () => void | Promise<void>;
   onReviewProposals: () => void;
   onOpenLog: () => void;
-  onDateFrom: (v: string) => void;
-  onDateTo: (v: string) => void;
+  onMinAgeDays: (v: number) => void;
   onMinScore: (v: number) => void;
 }) {
   const [query, setQuery] = useState("");
@@ -150,20 +150,7 @@ export function TreePane({
   const indexed = stats?.notes.embedding_indexed ?? 0;
   const healthy = stats?.index_configured && (stats?.notes.embedding_failed ?? 0) === 0;
   const filtering = query.trim().length > 0;
-  const fanoutActive = sourceFilters.length > 0 || tagFilters.length > 0 || flagFilters.length > 0 || !!dateFrom || !!dateTo || minScore > 0;
-  const fieldStyle: React.CSSProperties = {
-    flex: 1,
-    minWidth: 0,
-    background: P.bg2,
-    border: `1px solid ${P.line}`,
-    borderRadius: 6,
-    padding: "4px 6px",
-    color: P.hi,
-    fontFamily: P.mono,
-    fontSize: 11,
-    outline: "none",
-    colorScheme: "dark",
-  };
+  const fanoutActive = sourceFilters.length > 0 || tagFilters.length > 0 || flagFilters.length > 0 || minAgeDays > 0 || minScore > 0;
 
   return (
     <div style={{ position: "relative", width, flexShrink: 0, borderRight: `1px solid ${P.line}`, background: P.bg1, display: "flex", flexDirection: "column", minHeight: 0 }}>
@@ -203,6 +190,7 @@ export function TreePane({
             <FilterRow glyph="◇" label="All notes" active={!fanoutActive} onClick={onClearFilters} />
             <FilterRow glyph="★" label="Job-relevant" count={(graph?.nodes ?? []).filter((n) => n.job_relevant).length} active={flagFilters.includes("job")} onClick={(e) => onToggleFlagFilter("job", additive(e))} />
             <FilterRow glyph="?" label="Unreviewed" count={stats?.notes.unreviewed ?? 0} active={flagFilters.includes("unreviewed")} onClick={(e) => onToggleFlagFilter("unreviewed", additive(e))} />
+            <FilterRow glyph="!" label="Needs attention" count={(graph?.nodes ?? []).filter((n) => n.failed).length} active={flagFilters.includes("failed")} onClick={(e) => onToggleFlagFilter("failed", additive(e))} />
             <div style={{ fontFamily: P.mono, fontSize: 9, letterSpacing: 1, color: P.faint, padding: "8px 12px 4px" }}>BY SOURCE</div>
             {KNOWN_SOURCES.map((kind) => (
               <FilterRow
@@ -220,10 +208,20 @@ export function TreePane({
             ))}
             {tags.length === 0 && <div style={{ padding: "4px 14px", fontFamily: P.sans, fontSize: 12, color: P.faint }}>No tags yet.</div>}
 
-            <div style={{ fontFamily: P.mono, fontSize: 9, letterSpacing: 1, color: P.faint, padding: "10px 12px 4px" }}>BY DATE</div>
-            <div style={{ display: "flex", gap: 6, padding: "2px 14px 4px" }}>
-              <input type="date" value={dateFrom} max={dateTo || undefined} onChange={(e) => onDateFrom(e.target.value)} style={fieldStyle} />
-              <input type="date" value={dateTo} min={dateFrom || undefined} onChange={(e) => onDateTo(e.target.value)} style={fieldStyle} />
+            <div style={{ fontFamily: P.mono, fontSize: 9, letterSpacing: 1, color: P.faint, padding: "10px 12px 4px" }}>MIN AGE</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "2px 14px 4px" }}>
+              <input
+                type="range"
+                min={0}
+                max={AGE_BUCKETS.length - 1}
+                step={1}
+                value={Math.max(0, AGE_BUCKETS.indexOf(minAgeDays))}
+                onChange={(e) => onMinAgeDays(AGE_BUCKETS[Number(e.target.value)])}
+                style={{ flex: 1, accentColor: P.mid }}
+              />
+              <span style={{ fontFamily: P.mono, fontSize: 11, color: minAgeDays > 0 ? P.hi : P.lo, width: 30, textAlign: "right" }}>
+                {AGE_LABELS[Math.max(0, AGE_BUCKETS.indexOf(minAgeDays))]}
+              </span>
             </div>
 
             <div style={{ fontFamily: P.mono, fontSize: 9, letterSpacing: 1, color: P.faint, padding: "10px 12px 4px" }}>MIN SCORE</div>

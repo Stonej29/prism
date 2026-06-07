@@ -28,6 +28,7 @@ from prism.notes import (
 
 KNOWLEDGE_LIMIT = 12
 PAST_IDEAS_LIMIT = 10
+RECENT_IDEAS_LIMIT = 12
 
 
 @dataclass(frozen=True)
@@ -68,6 +69,7 @@ class IdeaService:
             topic=topic,
             knowledge=[candidate.to_llm_dict() for candidate in candidates],
             past_ideas=self._past_ideas(),
+            recent_ideas=self._recent_ideas(),
         )
 
         structured: dict[str, Any] = {}
@@ -206,6 +208,14 @@ class IdeaService:
         return [
             {"title": idea.title, "summary": idea.summary, "rating": idea.rating}
             for idea in self.database.list_rated_ideas(PAST_IDEAS_LIMIT)
+        ]
+
+    def _recent_ideas(self) -> list[dict[str, Any]]:
+        # Recently generated ideas (rated or NOT) so the engine doesn't repeat an
+        # idea the user has seen but not yet rated.
+        return [
+            {"title": idea.title, "summary": idea.summary}
+            for idea in self.database.list_recent_ideas(RECENT_IDEAS_LIMIT)
         ]
 
     def _normalize(self, data: dict[str, Any], candidates: list[RelatedCandidate]) -> dict[str, Any]:

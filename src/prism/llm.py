@@ -47,14 +47,21 @@ class LLMClient:
         if not self.config.is_configured:
             raise RuntimeError("LLM_API_KEY and LLM_MODEL are required")
 
-        payload = self._payload(context, profile, use_response_format=True, web=web)
         try:
-            data = self._post(payload)
+            data = self._post(self._payload(context, profile, use_response_format=True, web=web))
         except httpx.HTTPStatusError as exc:
-            if exc.response.status_code == 400:
-                data = self._post(self._payload(context, profile, use_response_format=False, web=web))
-            else:
+            if exc.response.status_code != 400:
                 raise
+            # Progressive 400 fallback: first drop response_format; if the provider
+            # still rejects the request, drop the web plugin too (it's the most
+            # likely unsupported field) so research degrades to a normal regeneration
+            # instead of hard-failing.
+            try:
+                data = self._post(self._payload(context, profile, use_response_format=False, web=web))
+            except httpx.HTTPStatusError as exc2:
+                if exc2.response.status_code != 400 or not web:
+                    raise
+                data = self._post(self._payload(context, profile, use_response_format=False, web=False))
 
         content = _assistant_content(data)
         parsed = _parse_json_object(content)
@@ -211,11 +218,13 @@ def build_idea_context(
     topic: str | None,
     knowledge: list[dict[str, Any]],
     past_ideas: list[dict[str, Any]],
+    recent_ideas: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     return {
         "topic": topic or None,
         "knowledge": knowledge,
         "past_rated_ideas": past_ideas,
+        "recent_ideas": recent_ideas or [],
     }
 
 
@@ -352,6 +361,9 @@ def _idea_system_prompt() -> str:
         "summary is a single punchy sentence pitching the idea. "
         "If context.past_rated_ideas is provided, prefer directions similar to highly rated "
         "ideas and avoid those that rated poorly. "
+        "context.recent_ideas lists ideas already generated recently (rated or not) — produce a "
+        "DISTINCTLY DIFFERENT idea: do not repeat their title or core concept, and explore a fresh "
+        "angle, problem, or combination of notes. "
         "Be specific and technical, ground the idea in the provided notes, and favor things "
         "the user could actually build."
     )

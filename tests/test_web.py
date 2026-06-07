@@ -21,7 +21,7 @@ from prism.web.clustering import cluster_labels
 from prism.web.deps import get_db, get_ideas, get_indexer, get_notes, get_proposals, get_settings
 
 
-def make_note(note_id: str, *, source_kind="paper", tags=("graph",), related=(), title=None) -> NoteRecord:
+def make_note(note_id: str, *, source_kind="paper", tags=("graph",), related=(), related_origin=None, title=None) -> NoteRecord:
     return NoteRecord(
         note_id=note_id,
         source_url=f"https://example.com/{note_id}",
@@ -41,7 +41,16 @@ def make_note(note_id: str, *, source_kind="paper", tags=("graph",), related=(),
             {"quick_summary": f"Quick {note_id}", "key_claims": ["claim one", "claim two"]}
         ),
         related_notes_json=json.dumps(
-            [{"id": rid, "title": f"Note {rid}", "reason": "related", "path": f"notes/{rid}.md"} for rid in related]
+            [
+                {
+                    "id": rid,
+                    "title": f"Note {rid}",
+                    "reason": "related",
+                    "path": f"notes/{rid}.md",
+                    **({"origin": related_origin} if related_origin else {}),
+                }
+                for rid in related
+            ]
         ),
         embedding_status="indexed",
         embedding_dimensions=768,
@@ -234,19 +243,29 @@ class WebApiTest(unittest.TestCase):
         self.assertFalse(self.client.get("/api/notes/aaa111").json()["job_relevant"])
 
     def test_graph_dedup_and_dangling(self) -> None:
-        # aaa <-> bbb (mutual), and aaa -> zzz (dangling, not inserted)
-        self.db.insert_note(make_note("aaa111", related=["bbb222", "zzz999"]))
-        self.db.insert_note(make_note("bbb222", source_kind="github", related=["aaa111"]))
+        # aaa <-> bbb (mutual semantic), and aaa -> zzz (dangling, not inserted).
+        # Only semantic (auto) links are drawn as graph edges.
+        self.db.insert_note(make_note("aaa111", related=["bbb222", "zzz999"], related_origin="auto"))
+        self.db.insert_note(make_note("bbb222", source_kind="github", related=["aaa111"], related_origin="auto"))
         graph = self.client.get("/api/graph").json()
         self.assertEqual(graph["counts"]["notes"], 2)
         self.assertEqual(graph["counts"]["links"], 1)
         self.assertEqual(sorted(graph["edges"][0][k] for k in ("source", "target")), ["aaa111", "bbb222"])
-        self.assertEqual(graph["edges"][0]["origin"], "llm")
-        self.assertEqual(graph["counts"]["links_by_origin"]["llm"], 1)
+        self.assertEqual(graph["edges"][0]["origin"], "auto")
+        self.assertEqual(graph["counts"]["links_by_origin"]["auto"], 1)
         # the two linked notes form one community; nodes carry topic + community
         self.assertEqual(graph["counts"]["communities"], 1)
         self.assertEqual({n["community"] for n in graph["nodes"]}, {0})
         self.assertTrue(all("topic" in n for n in graph["nodes"]))
+
+    def test_graph_excludes_llm_links_from_edges(self) -> None:
+        # LLM-suggested related notes are NOT graph edges, but ARE counted.
+        self.db.insert_note(make_note("aaa111", related=["bbb222"]))  # default origin → llm
+        self.db.insert_note(make_note("bbb222"))
+        graph = self.client.get("/api/graph").json()
+        self.assertEqual(graph["counts"]["links"], 0)
+        self.assertEqual(graph["edges"], [])
+        self.assertEqual(graph["counts"]["links_by_origin"]["llm"], 1)
 
     def test_graph_communities_prefer_auto_links_when_present(self) -> None:
         import dataclasses

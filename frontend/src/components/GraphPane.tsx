@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { P, srcColor } from "../theme";
+import { P, scoreColor } from "../theme";
 import type { GraphPayload, MaintenanceEvent, MaintenanceStatus } from "../types";
-import { nodeRadius, useGraphSimulation, type LayoutMode, type SimNode } from "../hooks/useGraphSimulation";
+import { nodeRadius, useGraphSimulation, type SimNode } from "../hooks/useGraphSimulation";
 import { convexHull, expandHull, roundedPath } from "../lib/hull";
 
 function Mono({ children, s = 11, c = P.mid }: { children: React.ReactNode; s?: number; c?: string }) {
@@ -18,6 +18,12 @@ function edgeKey(a: string, b: string): string {
   return a < b ? `${a}::${b}` : `${b}::${a}`;
 }
 
+// Guard against a non-finite coordinate reaching the SVG: a single NaN in a
+// <g transform> blanks the entire group (the "black graph" bug).
+function finite(n: number, fallback = 0): number {
+  return Number.isFinite(n) ? n : fallback;
+}
+
 function eventNodeIds(event: MaintenanceEvent): string[] {
   const ids: string[] = [];
   if (event.note_id) ids.push(event.note_id);
@@ -28,25 +34,12 @@ function eventNodeIds(event: MaintenanceEvent): string[] {
   return ids;
 }
 
-type LinkLayer = "auto" | "llm" | "manual";
-
-function edgeOrigin(origin: string | undefined): LinkLayer {
-  if (origin === "auto" || origin === "llm") return origin;
-  return "manual";
-}
-
-function originVisible(origin: string | undefined, layers: Record<LinkLayer, boolean>): boolean {
-  return layers[edgeOrigin(origin)];
-}
-
-
 export function GraphPane({
   graph,
   sourceFilters,
   tagFilters,
   flagFilters,
-  dateFrom,
-  dateTo,
+  minAgeDays,
   minScore,
   selectedId,
   highlightIds,
@@ -63,8 +56,7 @@ export function GraphPane({
   sourceFilters: string[];
   tagFilters: string[];
   flagFilters: string[];
-  dateFrom: string;
-  dateTo: string;
+  minAgeDays: number;
   minScore: number;
   selectedId: string | null;
   highlightIds: Set<string> | null;
@@ -79,8 +71,6 @@ export function GraphPane({
 }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 800, h: 600 });
-  const [layout, setLayout] = useState<LayoutMode>("topic");
-  const [linkLayers, setLinkLayers] = useState<Record<LinkLayer, boolean>>({ auto: true, llm: false, manual: false });
   const [repaintKey, setRepaintKey] = useState(0);
   const [hover, setHover] = useState<string | null>(null);
   const [transform, setTransform] = useState({ k: 1, x: 0, y: 0 });
@@ -116,28 +106,32 @@ export function GraphPane({
 
   const { nodes, edges } = useMemo(() => {
     if (!graph) return { nodes: [], edges: [] };
+    // "Minimum age" slider: keep only notes saved within the last `minAgeDays`
+    // days (far left = 0 = show everything from the beginning).
+    const minAgeCutoff = Date.now() - minAgeDays * 86400000;
     const passes = (n: GraphPayload["nodes"][number]) => {
       if (sourceFilters.length > 0 && !sourceFilters.includes(n.source_kind)) return false;
       if (tagFilters.length > 0 && !tagFilters.some((tag) => n.tags.includes(tag))) return false;
       if (flagFilters.includes("job") && !n.job_relevant) return false;
       if (flagFilters.includes("unreviewed") && n.status !== "unreviewed") return false;
-      const day = (n.date_saved ?? "").slice(0, 10);
-      if (dateFrom && day < dateFrom) return false;
-      if (dateTo && day > dateTo) return false;
+      if (flagFilters.includes("failed") && !n.failed) return false;
+      if (minAgeDays > 0) {
+        const saved = Date.parse(n.date_saved ?? "");
+        if (!Number.isFinite(saved) || saved < minAgeCutoff) return false;
+      }
       if (minScore > 0 && !(n.overall != null && n.overall >= minScore)) return false;
       return true;
     };
-    const visibleEdges = graph.edges.filter((e) => originVisible(e.origin, linkLayers));
-    const hasFilters = sourceFilters.length > 0 || tagFilters.length > 0 || flagFilters.length > 0 || !!dateFrom || !!dateTo || minScore > 0;
-    if (!hasFilters) return { nodes: graph.nodes, edges: visibleEdges };
+    const hasFilters = sourceFilters.length > 0 || tagFilters.length > 0 || flagFilters.length > 0 || minAgeDays > 0 || minScore > 0;
+    if (!hasFilters) return { nodes: graph.nodes, edges: graph.edges };
     const keep = new Set(graph.nodes.filter(passes).map((n) => n.id));
     return {
       nodes: graph.nodes.filter((n) => keep.has(n.id)),
-      edges: visibleEdges.filter((e) => keep.has(e.source) && keep.has(e.target)),
+      edges: graph.edges.filter((e) => keep.has(e.source) && keep.has(e.target)),
     };
-  }, [graph, sourceFilters, tagFilters, flagFilters, dateFrom, dateTo, minScore, linkLayers]);
+  }, [graph, sourceFilters, tagFilters, flagFilters, minAgeDays, minScore]);
 
-  const { sim, tick, simRef } = useGraphSimulation(nodes, edges, size.w, size.h, layout);
+  const { sim, tick, simRef } = useGraphSimulation(nodes, edges, size.w, size.h);
 
   // Toggleable topic "hulls": dashed regions + labels behind the nodes. Pure
   // overlay — never touches the force simulation. Persisted across reloads.
@@ -282,10 +276,7 @@ export function GraphPane({
     if (!movedRef.current) onDeselect();
   };
 
-  const cycleLayout = () => setLayout((m) => (m === "topic" ? "force" : m === "force" ? "link" : "topic"));
-  const layoutLabel = layout === "topic" ? "topics" : layout === "force" ? "force" : "links";
-  const toggleLinkLayer = (layer: LinkLayer) => setLinkLayers((layers) => ({ ...layers, [layer]: !layers[layer] }));
-  const filterCount = sourceFilters.length + tagFilters.length + flagFilters.length + (dateFrom ? 1 : 0) + (dateTo ? 1 : 0) + (minScore > 0 ? 1 : 0);
+  const filterCount = sourceFilters.length + tagFilters.length + flagFilters.length + (minAgeDays > 0 ? 1 : 0) + (minScore > 0 ? 1 : 0);
 
   const zoomBy = (factor: number) => {
     const t = transformRef.current;
@@ -375,35 +366,14 @@ export function GraphPane({
           backdropFilter: "blur(8px)",
         }}
       >
-        <span
-          onClick={cycleLayout}
-          title="Cycle layout: topics -> force -> links"
-          style={{ fontFamily: P.mono, fontSize: 11, color: P.mid, cursor: "pointer" }}
-        >
-          {layoutLabel}
-        </span>
+        <span style={{ fontFamily: P.mono, fontSize: 11, color: P.faint }}>Show hubs</span>
         <span
           onClick={toggleHulls}
-          title="Toggle topic regions"
+          title="Outline topic regions behind the graph"
           style={{ fontFamily: P.mono, fontSize: 11, color: showHulls ? P.hi : P.mid, cursor: "pointer" }}
         >
-          hulls
+          {showHulls ? "yes" : "no"}
         </span>
-        <span style={{ fontFamily: P.mono, fontSize: 11, color: P.faint }}>links</span>
-        {([
-          ["auto", "auto", "Automatic semantic links"],
-          ["llm", "llm", "Preserved LLM suggestions"],
-          ["manual", "manual", "Manual or unknown links"],
-        ] as [LinkLayer, string, string][]).map(([layer, label, title]) => (
-          <span
-            key={layer}
-            onClick={() => toggleLinkLayer(layer)}
-            title={title}
-            style={{ fontFamily: P.mono, fontSize: 11, color: linkLayers[layer] ? P.hi : P.mid, cursor: "pointer" }}
-          >
-            {label}
-          </span>
-        ))}
       </div>
 
       <svg
@@ -417,7 +387,7 @@ export function GraphPane({
         style={{ display: "block", cursor: panRef.current ? "grabbing" : "grab" }}
       >
         <style>{`@keyframes prismNodeEnter { from { opacity: 0; transform: scale(0.3); } to { opacity: 1; transform: scale(1); } }`}</style>
-        <g transform={`translate(${transform.x},${transform.y}) scale(${transform.k})`}>
+        <g transform={`translate(${finite(transform.x)},${finite(transform.y)}) scale(${finite(transform.k, 1)})`}>
           {hulls.map((h) => (
             <g key={`hull-${h.topic}`} style={{ pointerEvents: "none" }}>
               <path d={h.d} fill={topicColor(h.topic)} fillOpacity={0.06} stroke={topicColor(h.topic)} strokeOpacity={0.5} strokeWidth={1.2} strokeDasharray="6 5" />
@@ -438,8 +408,7 @@ export function GraphPane({
                 y2={l.target.y}
                 stroke={on ? P.hi : P.line}
                 strokeWidth={on ? 1.5 : 1}
-                strokeDasharray={l.origin === "llm" ? "4 4" : edgeOrigin(l.origin) === "manual" ? "2 4" : undefined}
-                opacity={active ? (on ? 0.95 : 0.05) : l.origin === "auto" ? 0.7 : 0.55}
+                opacity={active ? (on ? 0.95 : 0.05) : 0.7}
               />
             );
           })}
@@ -465,7 +434,7 @@ export function GraphPane({
             );
           })}
           {sim.nodes.map((n) => {
-            const r = nodeRadius(n.overall);
+            const r = nodeRadius(n.degree);
             const selected = n.id === selectedId;
             const lit = !!highlightIds && highlightIds.has(n.id);
             const dim = !!highlightIds && !lit;
@@ -473,11 +442,11 @@ export function GraphPane({
             const showLabel = selected || lit || hover === n.id;
             const maintenancePulse = maintenanceNodeIds.has(n.id);
             const processing = n.id === processingNodeId;
-            const nodeColor = srcColor(n.source_kind);
+            const nodeColor = scoreColor(n.overall);
             return (
               <g
                 key={n.id}
-                transform={`translate(${n.x},${n.y})`}
+                transform={`translate(${finite(n.x)},${finite(n.y)})`}
                 style={{ cursor: "pointer" }}
                 opacity={dim ? 0.12 : archived ? 0.4 : 1}
                 onPointerDown={(e) => onNodeDown(e, n)}
@@ -564,7 +533,7 @@ export function GraphPane({
       <div style={{ position: "absolute", bottom: 16, left: 16, zIndex: 6, display: "flex", gap: 8 }}>
         <div style={{ background: `${P.bg1}dd`, border: `1px solid ${P.line}`, borderRadius: 8, padding: "7px 12px" }}>
           <Mono>
-            {sim.nodes.length} notes · {sim.links.length} links · {new Set(nodes.map((n) => (layout === "link" ? n.community : n.topic))).size} {layout === "link" ? "communities" : "topics"}
+            {sim.nodes.length} notes · {sim.links.length} links · {new Set(nodes.map((n) => n.topic)).size} topics
           </Mono>
         </div>
         {filterCount > 0 && (

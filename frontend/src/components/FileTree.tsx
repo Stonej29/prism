@@ -55,7 +55,11 @@ function Entry({ node, depth, ctx }: { node: TreeNode; depth: number; ctx: Ctx }
 
   const active = !!node.note_id && node.note_id === ctx.selectedNoteId;
   const dot = node.note_id ? srcColor(ctx.noteKind[node.note_id] ?? "unknown") : node.idea_id ? "#ffd66e" : P.faint;
-  const label = node.name.replace(/\.md$/, "");
+  // Hide the leading YYYY-MM-DD- date prefix from note/idea filenames in the UI
+  // (the date stays in the filename + frontmatter); keep folder names as-is.
+  const label = node.note_id || node.idea_id
+    ? node.name.replace(/\.md$/, "").replace(/^\d{4}-\d{2}-\d{2}-/, "")
+    : node.name.replace(/\.md$/, "");
 
   const onClick = () => {
     if (node.note_id) ctx.onSelectNote(node.note_id);

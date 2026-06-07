@@ -51,6 +51,7 @@ export interface GraphNode {
   date_saved: string;
   overall: number | null;
   job_relevant: boolean;
+  failed: boolean;
   tags: string[];
   topic: number;
   community: number;

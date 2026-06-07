@@ -3,7 +3,9 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import logging
 import re
+import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from html.parser import HTMLParser
@@ -12,9 +14,38 @@ from typing import Any
 from urllib.parse import parse_qs, urljoin, urlparse
 from xml.etree import ElementTree
 
-USER_AGENT = "PRISM/0.2 (+https://github.com/local/prism)"
+LOGGER = logging.getLogger(__name__)
+
+# Browser-like headers: many sites (Cloudflare etc.) 403 a bare bot UA. Sending a
+# realistic UA + Accept headers recovers most "Fetch failed / 403" captures.
+USER_AGENT = (
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+)
+BROWSER_HEADERS = {
+    "User-Agent": USER_AGENT,
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,application/pdf,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+}
 FETCH_TIMEOUT_SECONDS = 45.0
 MAX_DOWNLOAD_BYTES = 100 * 1024 * 1024
+FETCH_RETRY_ATTEMPTS = 3
+FETCH_RETRY_BACKOFF_BASE = 1.0
+# Hard-block statuses where retrying the same request won't help; we surface them
+# clearly (and fall back to a reader proxy for websites) instead of retrying.
+_BLOCKED_STATUSES = {401, 403, 451}
+# r.jina.ai is a free reader proxy that fetches + extracts a page server-side;
+# used only as a fallback when the origin hard-blocks our request.
+JINA_READER_PREFIX = "https://r.jina.ai/"
+
+
+class FetchBlockedError(Exception):
+    """Raised when an origin hard-blocks the request (401/403/451)."""
+
+    def __init__(self, status_code: int, url: str) -> None:
+        self.status_code = status_code
+        self.url = url
+        super().__init__(f"Blocked by server (HTTP {status_code})")
 
 
 @dataclass(frozen=True)
@@ -530,7 +561,10 @@ def _huggingface_metadata_header(kind: str, repo: str, meta: dict[str, Any]) -> 
 
 
 def _fetch_website(source_url: str, archive_dir: Path, fetched_at: str) -> FetchResult:
-    html_bytes, resolved_url, content_type = _http_get_bytes(source_url)
+    try:
+        html_bytes, resolved_url, content_type = _http_get_bytes(source_url)
+    except FetchBlockedError as blocked:
+        return _fetch_website_via_jina(source_url, archive_dir, fetched_at, blocked)
     if content_type and "application/pdf" in content_type.lower():
         pdf_path = archive_dir / "source.pdf"
         pdf_path.write_bytes(html_bytes)
@@ -578,25 +612,97 @@ def _fetch_website(source_url: str, archive_dir: Path, fetched_at: str) -> Fetch
     )
 
 
+def _fetch_website_via_jina(
+    source_url: str, archive_dir: Path, fetched_at: str, blocked: FetchBlockedError
+) -> FetchResult:
+    # The origin hard-blocked us; ask the r.jina.ai reader proxy to fetch and
+    # extract the page server-side. If that also fails, surface the original block.
+    try:
+        raw, _resolved, _content_type = _http_get_bytes(JINA_READER_PREFIX + source_url)
+        extracted = _normalize_extracted_text(raw.decode("utf-8", errors="replace"))
+    except Exception:
+        raise blocked
+    if not extracted.strip():
+        raise blocked
+    metadata = {
+        "source_url": source_url,
+        "resolved_url": source_url,
+        "fetch_via": "jina",
+        "blocked_status": blocked.status_code,
+    }
+    _write_text(archive_dir / "extracted.txt", extracted)
+    _write_json(archive_dir / "metadata.json", metadata)
+    LOGGER.info("Recovered %s via r.jina.ai after HTTP %d block", source_url, blocked.status_code)
+    return FetchResult(
+        source_url=source_url,
+        resolved_url=source_url,
+        source_kind="website",
+        title=_title_from_url(source_url),
+        summary=None,
+        extracted_text=extracted,
+        local_archive=str(archive_dir),
+        pdf_path=None,
+        content_hash=content_hash(extracted),
+        fetch_status="fetched",
+        fetch_error=None,
+        fetched_at=fetched_at,
+        metadata=metadata,
+    )
+
+
 def _http_get_bytes(url: str, headers: dict[str, str] | None = None) -> tuple[bytes, str, str | None]:
     import httpx
 
-    request_headers = {"User-Agent": USER_AGENT}
+    request_headers = dict(BROWSER_HEADERS)
     if headers:
         request_headers.update(headers)
     timeout = httpx.Timeout(FETCH_TIMEOUT_SECONDS)
-    with httpx.Client(timeout=timeout, follow_redirects=True, headers=request_headers) as client:
-        with client.stream("GET", url) as response:
-            response.raise_for_status()
-            chunks: list[bytes] = []
-            total = 0
-            for chunk in response.iter_bytes():
-                total += len(chunk)
-                if total > MAX_DOWNLOAD_BYTES:
-                    raise ValueError(f"Response exceeded {MAX_DOWNLOAD_BYTES} byte limit")
-                chunks.append(chunk)
-            content_type = response.headers.get("content-type")
-            return b"".join(chunks), str(response.url), content_type
+    retryable = (
+        httpx.TimeoutException,
+        httpx.ConnectError,
+        httpx.ReadError,
+        httpx.WriteError,
+        httpx.PoolTimeout,
+    )
+    last_exc: Exception | None = None
+    for attempt in range(FETCH_RETRY_ATTEMPTS):
+        try:
+            with httpx.Client(timeout=timeout, follow_redirects=True, headers=request_headers) as client:
+                with client.stream("GET", url) as response:
+                    if response.status_code in _BLOCKED_STATUSES:
+                        # Drain so the connection can close cleanly, then surface a clear block.
+                        response.read()
+                        raise FetchBlockedError(response.status_code, str(response.url))
+                    response.raise_for_status()
+                    chunks: list[bytes] = []
+                    total = 0
+                    for chunk in response.iter_bytes():
+                        total += len(chunk)
+                        if total > MAX_DOWNLOAD_BYTES:
+                            raise ValueError(f"Response exceeded {MAX_DOWNLOAD_BYTES} byte limit")
+                        chunks.append(chunk)
+                    content_type = response.headers.get("content-type")
+                    return b"".join(chunks), str(response.url), content_type
+        except httpx.HTTPStatusError as exc:
+            # Retry transient server errors and rate limits; other 4xx propagate.
+            status = exc.response.status_code
+            if (status >= 500 or status == 429) and attempt < FETCH_RETRY_ATTEMPTS - 1:
+                last_exc = exc
+            else:
+                raise
+        except retryable as exc:
+            if attempt == FETCH_RETRY_ATTEMPTS - 1:
+                raise
+            last_exc = exc
+        LOGGER.warning(
+            "Fetch failed for %s (%s); retry %d/%d",
+            url,
+            type(last_exc).__name__,
+            attempt + 1,
+            FETCH_RETRY_ATTEMPTS - 1,
+        )
+        time.sleep(FETCH_RETRY_BACKOFF_BASE * (2 ** attempt))
+    raise last_exc  # pragma: no cover - loop either returns or raises
 
 
 def _extract_pdf_text(pdf_bytes: bytes) -> str:
