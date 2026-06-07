@@ -5,6 +5,7 @@ import { FileTree } from "./FileTree";
 import type { OpenFile } from "./FileViewer";
 import { MaintenancePanel } from "./MaintenancePanel";
 import { ResizeHandle } from "./ResizeHandle";
+import { TagManager } from "./TagManager";
 import { usePersistentToggle } from "../hooks/usePersistentToggle";
 
 const KNOWN_SOURCES = ["paper", "github", "huggingface", "youtube", "pdf", "website"];
@@ -100,6 +101,7 @@ export function TreePane({
   onOpenLog,
   onMinAgeDays,
   onMinScore,
+  onTagsChanged,
 }: {
   open: boolean;
   onToggle: () => void;
@@ -131,8 +133,10 @@ export function TreePane({
   onOpenLog: () => void;
   onMinAgeDays: (v: number) => void;
   onMinScore: (v: number) => void;
+  onTagsChanged: () => void;
 }) {
   const [query, setQuery] = useState("");
+  const [managingTags, setManagingTags] = useState(false);
   const [filtersOpen, toggleFilters] = usePersistentToggle("prism.tree.filters", true);
 
   if (!open) {
@@ -188,7 +192,7 @@ export function TreePane({
               {fanoutActive && <span onClick={onClearFilters} style={{ fontFamily: P.mono, fontSize: 10, color: P.mid, cursor: "pointer" }}>clear</span>}
             </div>
             <FilterRow glyph="◇" label="All notes" active={!fanoutActive} onClick={onClearFilters} />
-            <FilterRow glyph="★" label="Job-relevant" count={(graph?.nodes ?? []).filter((n) => n.job_relevant).length} active={flagFilters.includes("job")} onClick={(e) => onToggleFlagFilter("job", additive(e))} />
+            <FilterRow glyph="★" label="Favorites" count={(graph?.nodes ?? []).filter((n) => n.favorite).length} active={flagFilters.includes("favorite")} onClick={(e) => onToggleFlagFilter("favorite", additive(e))} />
             <FilterRow glyph="?" label="Unreviewed" count={stats?.notes.unreviewed ?? 0} active={flagFilters.includes("unreviewed")} onClick={(e) => onToggleFlagFilter("unreviewed", additive(e))} />
             <FilterRow glyph="!" label="Needs attention" count={(graph?.nodes ?? []).filter((n) => n.failed).length} active={flagFilters.includes("failed")} onClick={(e) => onToggleFlagFilter("failed", additive(e))} />
             <div style={{ fontFamily: P.mono, fontSize: 9, letterSpacing: 1, color: P.faint, padding: "8px 12px 4px" }}>BY SOURCE</div>
@@ -202,7 +206,12 @@ export function TreePane({
                 onClick={(e) => onSelectSource(kind, additive(e))}
               />
             ))}
-            <div style={{ fontFamily: P.mono, fontSize: 9, letterSpacing: 1, color: P.faint, padding: "8px 12px 4px" }}>TAGS</div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 12px 4px" }}>
+              <span style={{ fontFamily: P.mono, fontSize: 9, letterSpacing: 1, color: P.faint }}>TAGS</span>
+              {tags.length > 0 && (
+                <span onClick={() => setManagingTags(true)} title="Delete or merge tags" style={{ fontFamily: P.mono, fontSize: 10, color: P.mid, cursor: "pointer" }}>manage</span>
+              )}
+            </div>
             {tags.slice(0, 12).map((t) => (
               <FilterRow key={t.tag} glyph="#" label={t.tag} count={t.count} active={tagFilters.includes(t.tag)} onClick={(e) => onSelectTag(t.tag, additive(e))} />
             ))}
@@ -255,6 +264,10 @@ export function TreePane({
           <Mono c={P.lo}>{fmtTokens(usage?.total_tokens ?? 0)} · today {fmtTokens(usage?.today_total_tokens ?? 0)}</Mono>
         </div>
       </div>
+
+      {managingTags && (
+        <TagManager tags={tags} onClose={() => setManagingTags(false)} onChanged={onTagsChanged} />
+      )}
     </div>
   );
 }

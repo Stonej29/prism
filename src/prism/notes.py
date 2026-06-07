@@ -360,6 +360,34 @@ class NoteService:
         self._render_to_disk(updated)
         return updated
 
+    def remove_tag_everywhere(self, tag: str) -> int:
+        """Delete a tag from every note that has it. Returns notes updated."""
+        tag = tag.strip()
+        if not tag:
+            return 0
+        count = 0
+        for record in self.database.list_notes_with_tag(tag):
+            self.apply_tags(record, [t for t in tags_for_record(record) if t != tag])
+            count += 1
+        return count
+
+    def merge_tag(self, source: str, target: str) -> int:
+        """Fold `source` tag into `target` across all notes. Returns notes updated."""
+        source = source.strip()
+        target = target.strip()
+        if not source or not target or source == target:
+            return 0
+        count = 0
+        for record in self.database.list_notes_with_tag(source):
+            new_tags: list[str] = []
+            for t in tags_for_record(record):
+                replacement = target if t == source else t
+                if replacement not in new_tags:
+                    new_tags.append(replacement)
+            self.apply_tags(record, new_tags)
+            count += 1
+        return count
+
     def merge_notes(self, keep_id: str, remove_id: str) -> MergeResult:
         """Consolidate two near-duplicate notes into the `keep` note, then delete `remove`.
 

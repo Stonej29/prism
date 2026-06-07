@@ -266,7 +266,7 @@ export default function App() {
     const topic = ideaTopic();
     setIdeaJob((j) => ({ ...j, status: "loading", topic }));
     try {
-      const res = await api.generateIdea(topic || undefined, flagFilters.includes("job"));
+      const res = await api.generateIdea(topic || undefined, flagFilters.includes("favorite"));
       if (!res.ok) {
         setToast(res.message);
         setIdeaJob((j) => ({ ...j, status: "idle" }));
@@ -364,12 +364,12 @@ export default function App() {
     }
   };
 
-  const onSetJobFlag = async (id: string, value: boolean) => {
+  const onSetFavorite = async (id: string, value: boolean) => {
     setPaneBusy(true);
     try {
-      const updated = await api.setJobFlag(id, value);
+      const updated = await api.setFavorite(id, value);
       setNote(updated);
-      await refreshData(); // node's job_relevant flag changed
+      await refreshData(); // node's favorite flag changed
     } catch (e) {
       setToast(String(e));
     } finally {
@@ -525,6 +525,7 @@ export default function App() {
           onOpenLog={openActivityLog}
           onMinAgeDays={setMinAgeDays}
           onMinScore={setMinScore}
+          onTagsChanged={() => { refreshData().catch((e) => setToast(String(e))); }}
         />
         <GraphPane
           graph={graph}
@@ -563,7 +564,7 @@ export default function App() {
           onEditTitle={onEditTitle}
           onSetStatus={onSetStatus}
           onSelectTag={(tag) => selectTag(tag)}
-          onSetJobFlag={onSetJobFlag}
+          onSetFavorite={onSetFavorite}
         />
 
         {ask.open && (

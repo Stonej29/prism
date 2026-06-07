@@ -112,7 +112,7 @@ export function GraphPane({
     const passes = (n: GraphPayload["nodes"][number]) => {
       if (sourceFilters.length > 0 && !sourceFilters.includes(n.source_kind)) return false;
       if (tagFilters.length > 0 && !tagFilters.some((tag) => n.tags.includes(tag))) return false;
-      if (flagFilters.includes("job") && !n.job_relevant) return false;
+      if (flagFilters.includes("favorite") && !n.favorite) return false;
       if (flagFilters.includes("unreviewed") && n.status !== "unreviewed") return false;
       if (flagFilters.includes("failed") && !n.failed) return false;
       if (minAgeDays > 0) {

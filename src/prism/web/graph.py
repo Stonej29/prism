@@ -75,7 +75,7 @@ def build_graph(records: list[NoteRecord], vectors: dict[str, list[float]] | Non
             "status": r.status,
             "date_saved": r.date_saved,
             "overall": scores.get("overall"),
-            "job_relevant": bool(r.job_relevant),
+            "favorite": bool(r.favorite),
             "failed": r.fetch_status == "failed" or r.llm_status == "failed",
             "tags": tags_by_id[r.note_id],
             "topic": topic.get(r.note_id, -1),

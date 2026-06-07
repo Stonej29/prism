@@ -82,8 +82,8 @@ export const api = {
   setStatus: (id: string, status: string) =>
     req<NoteDetail>(`/notes/${id}/status`, { method: "PUT", body: JSON.stringify({ status }) }),
 
-  setJobFlag: (id: string, value: boolean) =>
-    req<NoteDetail>(`/notes/${id}/job_flag`, { method: "PUT", body: JSON.stringify({ value }) }),
+  setFavorite: (id: string, value: boolean) =>
+    req<NoteDetail>(`/notes/${id}/favorite`, { method: "PUT", body: JSON.stringify({ value }) }),
 
   setStatusBulk: (ids: string[], status: string) =>
     req<{ status: string; results: { id: string; ok: boolean; status?: string }[] }>(`/notes/status`, {
@@ -92,6 +92,12 @@ export const api = {
     }),
 
   tags: () => req<{ items: TagCount[] }>(`/tags`),
+
+  deleteTag: (tag: string) =>
+    req<{ ok: boolean; tag: string; notes_updated: number }>(`/tags/${encodeURIComponent(tag)}`, { method: "DELETE" }),
+
+  mergeTags: (source: string, target: string) =>
+    req<{ ok: boolean; notes_updated: number }>(`/tags/merge`, { method: "POST", body: JSON.stringify({ source, target }) }),
 
   tree: () => req<TreeNode>(`/tree`),
 
@@ -120,8 +126,8 @@ export const api = {
 
   ideas: () => req<{ items: Idea[] }>(`/ideas`),
 
-  generateIdea: (topic?: string, preferJob = false) =>
-    req<IdeaResult>(`/ideas`, { method: "POST", body: JSON.stringify({ topic: topic || null, prefer_job: preferJob }) }),
+  generateIdea: (topic?: string, preferFavorite = false) =>
+    req<IdeaResult>(`/ideas`, { method: "POST", body: JSON.stringify({ topic: topic || null, prefer_favorite: preferFavorite }) }),
 
   rateIdea: (id: string, rating: number) =>
     req<Idea>(`/ideas/${id}/rating`, { method: "POST", body: JSON.stringify({ rating }) }),

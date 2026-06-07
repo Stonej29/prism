@@ -55,12 +55,20 @@ class IdeaService:
         self.ideas_path.mkdir(parents=True, exist_ok=True)
         ensure_profile(self.profile_path)
 
-    def generate_idea(self, topic: str | None = None, prefer_job: bool = False) -> IdeaResult:
+    def read_profile(self) -> str:
+        ensure_profile(self.profile_path)
+        return self.profile_path.read_text(encoding="utf-8")
+
+    def write_profile(self, content: str) -> None:
+        self.profile_path.parent.mkdir(parents=True, exist_ok=True)
+        self.profile_path.write_text(content, encoding="utf-8")
+
+    def generate_idea(self, topic: str | None = None, prefer_favorite: bool = False) -> IdeaResult:
         topic = (topic or "").strip() or None
         if not self.llm_config.is_configured:
             return IdeaResult(record=None, ok=False, message="Idea generation needs LLM_API_KEY and LLM_MODEL.")
 
-        candidates = self._gather_knowledge(topic, prefer_job)
+        candidates = self._gather_knowledge(topic, prefer_favorite)
         created = datetime.now(UTC).replace(microsecond=0)
         created_at = created.isoformat().replace("+00:00", "Z")
         idea_id = self._new_idea_id()
@@ -148,18 +156,18 @@ class IdeaService:
         self.database.delete_idea(record.idea_id)
         return record
 
-    def _gather_knowledge(self, topic: str | None, prefer_job: bool = False) -> list[RelatedCandidate]:
-        # Steered ideation: when asked to focus on the user's job, seed the
-        # knowledge from notes they flagged as job-relevant (topped up with
-        # semantic/recent candidates if there are few flagged notes).
-        if prefer_job:
-            job = self._job_candidates()
-            if job:
-                if len(job) >= KNOWLEDGE_LIMIT:
-                    return job[:KNOWLEDGE_LIMIT]
-                seen = {c.note_id for c in job}
-                extra = self._gather_knowledge(topic, prefer_job=False)
-                return (job + [c for c in extra if c.note_id not in seen])[:KNOWLEDGE_LIMIT]
+    def _gather_knowledge(self, topic: str | None, prefer_favorite: bool = False) -> list[RelatedCandidate]:
+        # Steered ideation: when asked to focus on favorites, seed the knowledge
+        # from notes the user starred (topped up with semantic/recent candidates
+        # if there are few favorites).
+        if prefer_favorite:
+            favorites = self._favorite_candidates()
+            if favorites:
+                if len(favorites) >= KNOWLEDGE_LIMIT:
+                    return favorites[:KNOWLEDGE_LIMIT]
+                seen = {c.note_id for c in favorites}
+                extra = self._gather_knowledge(topic, prefer_favorite=False)
+                return (favorites + [c for c in extra if c.note_id not in seen])[:KNOWLEDGE_LIMIT]
         if topic and self.indexer and self.indexer.is_configured:
             try:
                 results = self.indexer.search_text(topic, limit=KNOWLEDGE_LIMIT)
@@ -169,7 +177,7 @@ class IdeaService:
                 return results
         return self._recent_candidates()
 
-    def _job_candidates(self) -> list[RelatedCandidate]:
+    def _favorite_candidates(self) -> list[RelatedCandidate]:
         return [
             RelatedCandidate(
                 note_id=record.note_id,
@@ -180,7 +188,7 @@ class IdeaService:
                 tags=tags_for_record(record),
                 score=0.0,
             )
-            for record in self.database.list_job_notes(KNOWLEDGE_LIMIT)
+            for record in self.database.list_favorite_notes(KNOWLEDGE_LIMIT)
             if record.llm_status == "generated"
         ]
 

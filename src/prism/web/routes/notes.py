@@ -10,7 +10,7 @@ from prism.notes import NOTE_STATUSES, NoteService, _tags
 from prism.web.activity import log_activity
 from prism.web.deps import get_db, get_notes
 from prism.web.routes import filter_notes, gather_all_notes
-from prism.web.schemas import BulkStatusBody, EditTagsBody, JobFlagBody, RenameBody, SaveUrlBody, SetStatusBody
+from prism.web.schemas import BulkStatusBody, EditTagsBody, FavoriteBody, RenameBody, SaveUrlBody, SetStatusBody
 from prism.web.serializers import note_summary_dto, note_to_dto
 
 router = APIRouter(prefix="/notes", tags=["notes"])
@@ -148,12 +148,12 @@ def rename_note(note_id: str, body: RenameBody, db: PrismDatabase = Depends(get_
     return note_to_dto(updated)
 
 
-@router.put("/{note_id}/job_flag")
-def set_job_flag(note_id: str, body: JobFlagBody, db: PrismDatabase = Depends(get_db)) -> dict:
+@router.put("/{note_id}/favorite")
+def set_favorite(note_id: str, body: FavoriteBody, db: PrismDatabase = Depends(get_db)) -> dict:
     record = db.find_by_note_id(note_id.strip().lower())
     if not record:
         raise HTTPException(status_code=404, detail=f"No note found for {note_id}")
-    db.set_job_flag(record.note_id, body.value)
+    db.set_favorite(record.note_id, body.value)
     return note_to_dto(db.find_by_note_id(record.note_id))
 
 

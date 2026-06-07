@@ -16,7 +16,7 @@ class AskBody(BaseModel):
 
 class GenerateIdeaBody(BaseModel):
     topic: str | None = None
-    prefer_job: bool = False
+    prefer_favorite: bool = False
 
 
 class RateIdeaBody(BaseModel):
@@ -47,5 +47,14 @@ class TraversalSettingsBody(BaseModel):
     dup_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
 
 
-class JobFlagBody(BaseModel):
+class FavoriteBody(BaseModel):
     value: bool
+
+
+class MergeTagBody(BaseModel):
+    source: str = Field(..., min_length=1)
+    target: str = Field(..., min_length=1)
+
+
+class ProfileBody(BaseModel):
+    content: str = Field(..., max_length=100_000)

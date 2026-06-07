@@ -226,21 +226,48 @@ class WebApiTest(unittest.TestCase):
 
         self.assertEqual(self.client.get("/api/notes/missing").status_code, 404)
 
-    def test_job_flag_round_trip(self) -> None:
+    def test_favorite_round_trip(self) -> None:
         self.db.insert_note(make_note("aaa111"))
-        self.assertFalse(self.client.get("/api/notes/aaa111").json()["job_relevant"])
+        self.assertFalse(self.client.get("/api/notes/aaa111").json()["favorite"])
 
-        flagged = self.client.put("/api/notes/aaa111/job_flag", json={"value": True}).json()
-        self.assertTrue(flagged["job_relevant"])
+        flagged = self.client.put("/api/notes/aaa111/favorite", json={"value": True}).json()
+        self.assertTrue(flagged["favorite"])
 
         # Reflected in detail, summary list, and graph node payload.
-        self.assertTrue(self.client.get("/api/notes/aaa111").json()["job_relevant"])
+        self.assertTrue(self.client.get("/api/notes/aaa111").json()["favorite"])
         node = next(n for n in self.client.get("/api/graph").json()["nodes"] if n["id"] == "aaa111")
-        self.assertTrue(node["job_relevant"])
-        self.assertEqual([r.note_id for r in self.db.list_job_notes()], ["aaa111"])
+        self.assertTrue(node["favorite"])
+        self.assertEqual([r.note_id for r in self.db.list_favorite_notes()], ["aaa111"])
 
-        self.client.put("/api/notes/aaa111/job_flag", json={"value": False})
-        self.assertFalse(self.client.get("/api/notes/aaa111").json()["job_relevant"])
+        self.client.put("/api/notes/aaa111/favorite", json={"value": False})
+        self.assertFalse(self.client.get("/api/notes/aaa111").json()["favorite"])
+
+    def test_delete_tag_removes_from_all_notes(self) -> None:
+        self.db.insert_note(make_note("aaa111", tags=("graph", "rl")))
+        self.db.insert_note(make_note("bbb222", tags=("graph",)))
+        resp = self.client.delete("/api/tags/graph").json()
+        self.assertTrue(resp["ok"])
+        self.assertEqual(resp["notes_updated"], 2)
+        tags = {t["tag"] for t in self.client.get("/api/tags").json()["items"]}
+        self.assertNotIn("graph", tags)
+        self.assertIn("rl", tags)
+
+    def test_profile_get_and_edit(self) -> None:
+        # GET creates a default profile; PUT persists edits readable back.
+        initial = self.client.get("/api/profile").json()
+        self.assertIn("content", initial)
+        resp = self.client.put("/api/profile", json={"content": "# Personal Profile\n\nI build robots."})
+        self.assertTrue(resp.json()["ok"])
+        self.assertIn("I build robots", self.client.get("/api/profile").json()["content"])
+
+    def test_merge_tag_folds_into_target(self) -> None:
+        self.db.insert_note(make_note("aaa111", tags=("graphs", "rl")))
+        self.db.insert_note(make_note("bbb222", tags=("graph",)))
+        resp = self.client.post("/api/tags/merge", json={"source": "graphs", "target": "graph"}).json()
+        self.assertEqual(resp["notes_updated"], 1)
+        counts = {t["tag"]: t["count"] for t in self.client.get("/api/tags").json()["items"]}
+        self.assertEqual(counts.get("graph"), 2)
+        self.assertNotIn("graphs", counts)
 
     def test_graph_dedup_and_dangling(self) -> None:
         # aaa <-> bbb (mutual semantic), and aaa -> zzz (dangling, not inserted).

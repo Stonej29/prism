@@ -227,6 +227,28 @@ class InputSourceTests(unittest.TestCase):
             assert record is not None
             self.assertEqual(record.input_source, "unknown")
 
+    def test_job_relevant_column_migrates_to_favorite(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "prism.sqlite3"
+            conn = sqlite3.connect(db_path)
+            conn.execute(
+                """CREATE TABLE notes (
+                    note_id TEXT PRIMARY KEY, source_url TEXT NOT NULL UNIQUE, resolved_url TEXT NOT NULL,
+                    note_path TEXT NOT NULL, date_saved TEXT NOT NULL, status TEXT NOT NULL,
+                    title TEXT NOT NULL, summary TEXT NOT NULL,
+                    job_relevant INTEGER NOT NULL DEFAULT 0)"""
+            )
+            conn.execute(
+                "INSERT INTO notes VALUES ('old1','https://e.com','https://e.com','notes/e.md','2026-01-01T00:00:00Z','unreviewed','T','S',1)"
+            )
+            conn.commit()
+            conn.close()
+            db = PrismDatabase(db_path)
+            record = db.find_by_note_id("old1")
+            assert record is not None
+            self.assertEqual(record.favorite, 1)
+            self.assertEqual([r.note_id for r in db.list_favorite_notes()], ["old1"])
+
     def test_render_note_includes_input_source(self) -> None:
         record = NoteRecord(
             note_id="abc123",

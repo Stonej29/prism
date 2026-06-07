@@ -115,7 +115,7 @@ export function NotePane({
   onEditTitle,
   onSetStatus,
   onSelectTag,
-  onSetJobFlag,
+  onSetFavorite,
 }: {
   note: NoteDetail | null;
   loading: boolean;
@@ -135,7 +135,7 @@ export function NotePane({
   onEditTitle: (id: string, title: string) => void;
   onSetStatus: (id: string, status: string) => void;
   onSelectTag: (tag: string) => void;
-  onSetJobFlag: (id: string, value: boolean) => void;
+  onSetFavorite: (id: string, value: boolean) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
@@ -237,11 +237,11 @@ export function NotePane({
           </a>
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12 }}>
             <span
-              onClick={() => !busy && onSetJobFlag(note.id, !note.job_relevant)}
-              title={note.job_relevant ? "Flagged as job-relevant — click to unflag" : "Flag as relevant to your job"}
-              style={{ fontSize: 14, lineHeight: 1, color: note.job_relevant ? "#ffd66e" : P.lo, cursor: "pointer" }}
+              onClick={() => !busy && onSetFavorite(note.id, !note.favorite)}
+              title={note.favorite ? "Favorited — click to unfavorite" : "Mark as favorite"}
+              style={{ fontSize: 14, lineHeight: 1, color: note.favorite ? "#ffd66e" : P.lo, cursor: "pointer" }}
             >
-              {note.job_relevant ? "★" : "☆"}
+              {note.favorite ? "★" : "☆"}
             </span>
             <span style={{ fontFamily: P.mono, fontSize: 10, color: P.faint }}>captured {captured}</span>
             <span onClick={() => onShowRelated(note.id)} title="Highlight related notes in the graph" style={{ fontFamily: P.mono, fontSize: 11, color: P.accent, cursor: "pointer" }}>related</span>
