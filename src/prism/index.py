@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
+import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from prism.config import load_settings
 from prism.db import NoteRecord, PrismDatabase
 from prism.embedding import EmbeddingClient, EmbeddingConfig
 
@@ -258,14 +259,13 @@ def tags_for_record(record: NoteRecord) -> list[str]:
 
 
 def load_index_settings_from_env() -> tuple[Path, PrismDatabase, NoteIndexer]:
-    sqlite_path = Path(os.getenv("SQLITE_PATH", "/data/prism.sqlite3"))
-    lancedb_path = Path(os.getenv("LANCEDB_PATH", "/data/lancedb"))
+    settings = load_settings(require_telegram=False)
     config = EmbeddingConfig(
-        base_url=os.getenv("EMBEDDING_BASE_URL", "https://api.openai.com/v1").strip(),
-        api_key=_optional_env("EMBEDDING_API_KEY"),
-        model=_optional_env("EMBEDDING_MODEL"),
+        base_url=settings.embedding_base_url,
+        api_key=settings.embedding_api_key,
+        model=settings.embedding_model,
     )
-    return sqlite_path, PrismDatabase(sqlite_path), NoteIndexer(lancedb_path, config)
+    return settings.sqlite_path, PrismDatabase(settings.sqlite_path), NoteIndexer(settings.lancedb_path, config)
 
 
 def rebuild_index() -> tuple[int, int, int]:
@@ -284,7 +284,7 @@ def rebuild_index() -> tuple[int, int, int]:
 
 
 def main(argv: list[str] | None = None) -> None:
-    args = argv if argv is not None else os.sys.argv[1:]
+    args = argv if argv is not None else sys.argv[1:]
     if args != ["rebuild"]:
         print("Usage: PYTHONPATH=src python -m prism.index rebuild")
         raise SystemExit(2)
@@ -331,10 +331,6 @@ def _json_array(raw: str | None) -> list[Any]:
         return []
     return data if isinstance(data, list) else []
 
-
-def _optional_env(name: str) -> str | None:
-    value = os.getenv(name, "").strip()
-    return value or None
 
 
 if __name__ == "__main__":

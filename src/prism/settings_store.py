@@ -36,7 +36,9 @@ def config_store_path() -> Path:
     explicit = os.getenv("PRISM_CONFIG_FILE", "").strip()
     if explicit:
         return Path(explicit)
-    sqlite_path = Path(os.getenv("SQLITE_PATH", "/data/prism.sqlite3"))
+    from prism.config import DEFAULT_SQLITE_PATH
+
+    sqlite_path = Path(os.getenv("SQLITE_PATH", str(DEFAULT_SQLITE_PATH)))
     return sqlite_path.parent / "settings.json"
 
 

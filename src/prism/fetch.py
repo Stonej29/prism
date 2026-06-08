@@ -5,7 +5,6 @@ import hashlib
 import ipaddress
 import json
 import logging
-import os
 import re
 import socket
 import time
@@ -16,6 +15,15 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urljoin, urlparse
 from xml.etree import ElementTree
+
+from prism.config import (
+    DEFAULT_FETCH_MAX_DOWNLOAD_BYTES,
+    DEFAULT_FETCH_MAX_REDIRECTS,
+    DEFAULT_FETCH_RETRY_ATTEMPTS,
+    DEFAULT_FETCH_RETRY_BACKOFF_BASE,
+    DEFAULT_FETCH_TIMEOUT_SECONDS,
+    load_fetch_settings,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -30,11 +38,11 @@ BROWSER_HEADERS = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,application/pdf,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.9",
 }
-FETCH_TIMEOUT_SECONDS = 45.0
-MAX_DOWNLOAD_BYTES = 100 * 1024 * 1024
-FETCH_RETRY_ATTEMPTS = 3
-FETCH_RETRY_BACKOFF_BASE = 1.0
-MAX_REDIRECTS = 10
+FETCH_TIMEOUT_SECONDS = DEFAULT_FETCH_TIMEOUT_SECONDS
+MAX_DOWNLOAD_BYTES = DEFAULT_FETCH_MAX_DOWNLOAD_BYTES
+FETCH_RETRY_ATTEMPTS = DEFAULT_FETCH_RETRY_ATTEMPTS
+FETCH_RETRY_BACKOFF_BASE = DEFAULT_FETCH_RETRY_BACKOFF_BASE
+MAX_REDIRECTS = DEFAULT_FETCH_MAX_REDIRECTS
 # Hard-block statuses where retrying the same request won't help; we surface them
 # clearly (and fall back to a reader proxy for websites) instead of retrying.
 _BLOCKED_STATUSES = {401, 403, 451}
@@ -245,8 +253,9 @@ def fetch_upload(
     source_url = f"upload://{hashed[:16]}/{slugify_filename(safe_name)}"
     try:
         archive_dir.mkdir(parents=True, exist_ok=True)
-        if len(data) > MAX_DOWNLOAD_BYTES:
-            raise ValueError(f"Upload exceeded {MAX_DOWNLOAD_BYTES} byte limit")
+        max_download_bytes = load_fetch_settings().max_download_bytes
+        if len(data) > max_download_bytes:
+            raise ValueError(f"Upload exceeded {max_download_bytes} byte limit")
         is_pdf = (content_type or "").lower().startswith("application/pdf") or safe_name.lower().endswith(".pdf")
         if not is_pdf:
             raise ValueError(f"Unsupported upload type: {content_type or safe_name}")
@@ -619,7 +628,7 @@ def _fetch_website(source_url: str, archive_dir: Path, fetched_at: str) -> Fetch
 
 
 def _use_jina_reader_fallback() -> bool:
-    return os.getenv("PRISM_FETCH_USE_JINA_READER", "1").lower() not in {"0", "false", "no"}
+    return load_fetch_settings().use_jina_reader
 
 
 def _fetch_website_via_jina(
@@ -663,10 +672,11 @@ def _fetch_website_via_jina(
 def _http_get_bytes(url: str, headers: dict[str, str] | None = None) -> tuple[bytes, str, str | None]:
     import httpx
 
+    settings = load_fetch_settings()
     request_headers = dict(BROWSER_HEADERS)
     if headers:
         request_headers.update(headers)
-    timeout = httpx.Timeout(FETCH_TIMEOUT_SECONDS)
+    timeout = httpx.Timeout(settings.timeout_seconds)
     retryable = (
         httpx.TimeoutException,
         httpx.ConnectError,
@@ -676,11 +686,11 @@ def _http_get_bytes(url: str, headers: dict[str, str] | None = None) -> tuple[by
     )
     start_url = _validate_fetch_url(url)
     last_exc: Exception | None = None
-    for attempt in range(FETCH_RETRY_ATTEMPTS):
+    for attempt in range(settings.retry_attempts):
         current_url = start_url
         try:
             with httpx.Client(timeout=timeout, follow_redirects=False, headers=request_headers) as client:
-                for _redirect in range(MAX_REDIRECTS + 1):
+                for _redirect in range(settings.max_redirects + 1):
                     current_url = _validate_fetch_url(current_url)
                     with client.stream("GET", current_url) as response:
                         if response.status_code in {301, 302, 303, 307, 308}:
@@ -699,8 +709,8 @@ def _http_get_bytes(url: str, headers: dict[str, str] | None = None) -> tuple[by
                         total = 0
                         for chunk in response.iter_bytes():
                             total += len(chunk)
-                            if total > MAX_DOWNLOAD_BYTES:
-                                raise ValueError(f"Response exceeded {MAX_DOWNLOAD_BYTES} byte limit")
+                            if total > settings.max_download_bytes:
+                                raise ValueError(f"Response exceeded {settings.max_download_bytes} byte limit")
                             chunks.append(chunk)
                         content_type = response.headers.get("content-type")
                         return b"".join(chunks), str(response.url), content_type
@@ -708,12 +718,12 @@ def _http_get_bytes(url: str, headers: dict[str, str] | None = None) -> tuple[by
         except httpx.HTTPStatusError as exc:
             # Retry transient server errors and rate limits; other 4xx propagate.
             status = exc.response.status_code
-            if (status >= 500 or status == 429) and attempt < FETCH_RETRY_ATTEMPTS - 1:
+            if (status >= 500 or status == 429) and attempt < settings.retry_attempts - 1:
                 last_exc = exc
             else:
                 raise
         except retryable as exc:
-            if attempt == FETCH_RETRY_ATTEMPTS - 1:
+            if attempt == settings.retry_attempts - 1:
                 raise
             last_exc = exc
         LOGGER.warning(
@@ -721,9 +731,9 @@ def _http_get_bytes(url: str, headers: dict[str, str] | None = None) -> tuple[by
             url,
             type(last_exc).__name__,
             attempt + 1,
-            FETCH_RETRY_ATTEMPTS - 1,
+            settings.retry_attempts - 1,
         )
-        time.sleep(FETCH_RETRY_BACKOFF_BASE * (2 ** attempt))
+        time.sleep(settings.retry_backoff_base * (2 ** attempt))
     raise last_exc  # pragma: no cover - loop either returns or raises
 
 
@@ -743,7 +753,7 @@ def _validate_fetch_url(url: str) -> str:
 
 
 def _allow_private_fetches() -> bool:
-    return os.getenv("PRISM_FETCH_ALLOW_PRIVATE", "").lower() in {"1", "true", "yes"}
+    return load_fetch_settings().allow_private
 
 
 def _reject_private_host(host: str, port: int) -> None:

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
+from prism.config import DEFAULT_EMBEDDING_BASE_URL, DEFAULT_LLM_BASE_URL
 from prism import settings_store as cfg
 from prism.web.activity import log_activity
 from prism.web.deps import get_services
@@ -20,8 +21,8 @@ from prism.web.schemas import SettingsBody
 router = APIRouter(prefix="/settings", tags=["settings"])
 
 _DEFAULT_BASE_URLS = {
-    "llm_base_url": "https://openrouter.ai/api/v1",
-    "embedding_base_url": "https://api.openai.com/v1",
+    "llm_base_url": DEFAULT_LLM_BASE_URL,
+    "embedding_base_url": DEFAULT_EMBEDDING_BASE_URL,
 }
 
 

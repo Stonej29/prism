@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 
 import yaml
 
+from prism.config import DEFAULT_LLM_BASE_URL
 from prism.db import NoteRecord, PrismDatabase
 from prism.fetch import FetchResult, extract_website_text, fetch_source, fetch_upload
 from prism.index import NoteIndexer, RelatedCandidate, canonical_index_text
@@ -111,7 +112,7 @@ class NoteService:
         self.archive_path = archive_path
         self.profile_path = vault_path / "profile" / "personal.md"
         self.database = database
-        self.llm_config = llm_config or LLMConfig("https://openrouter.ai/api/v1", None, None)
+        self.llm_config = llm_config or LLMConfig(DEFAULT_LLM_BASE_URL, None, None)
         self.indexer = indexer
         self.notes_path.mkdir(parents=True, exist_ok=True)
         self.archive_path.mkdir(parents=True, exist_ok=True)

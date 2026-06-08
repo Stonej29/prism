@@ -25,6 +25,8 @@ import secrets
 import time
 from pathlib import Path
 
+from prism.config import DEFAULT_SQLITE_PATH, load_web_settings
+
 Credentials = tuple[str, str]
 
 COOKIE_NAME = "prism_session"
@@ -54,7 +56,7 @@ def auth_file() -> Path:
     explicit = os.getenv("PRISM_WEB_AUTH_FILE", "").strip()
     if explicit:
         return Path(explicit)
-    sqlite_path = Path(os.getenv("SQLITE_PATH", "/data/prism.sqlite3"))
+    sqlite_path = Path(os.getenv("SQLITE_PATH", str(DEFAULT_SQLITE_PATH)))
     return sqlite_path.parent / "web-auth.json"
 
 
@@ -64,7 +66,7 @@ def cookie_secure() -> bool:
     Off by default so the cookie works over plain HTTP on a trusted LAN. Set
     ``PRISM_WEB_COOKIE_SECURE=1`` when serving behind HTTPS / a TLS proxy.
     """
-    return os.getenv("PRISM_WEB_COOKIE_SECURE", "").lower() in {"1", "true", "yes"}
+    return load_web_settings().cookie_secure
 
 
 def _hash_password(password: str, salt: bytes, iterations: int) -> bytes:

@@ -8,13 +8,13 @@ from __future__ import annotations
 
 import ipaddress
 import logging
-import os
 from pathlib import Path
 
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from prism.config import load_web_settings
 from prism.web import auth
 from prism.web.routes import activity, files, graph, ideas, maintenance, notes, profile, proposals, search, settings, stats, tags, tree
 from prism.web.routes import auth as auth_routes
@@ -46,8 +46,7 @@ def _auth_enforced(authenticator: auth.Authenticator) -> bool:
     """
     if authenticator.is_configured():
         return True
-    host = os.getenv("PRISM_WEB_HOST", "127.0.0.1")
-    return not _is_loopback_host(host)
+    return not _is_loopback_host(load_web_settings().host)
 
 
 def _install_auth(app: FastAPI, authenticator: auth.Authenticator) -> None:
@@ -75,9 +74,9 @@ def _install_auth(app: FastAPI, authenticator: auth.Authenticator) -> None:
 
 def _static_dir() -> Path | None:
     candidates = []
-    env = os.getenv("PRISM_WEB_STATIC", "").strip()
-    if env:
-        candidates.append(Path(env))
+    static_path = load_web_settings().static_path
+    if static_path is not None:
+        candidates.append(static_path)
     candidates.append(Path("/app/static"))
     candidates.append(Path(__file__).resolve().parents[3] / "frontend" / "dist")
     for path in candidates:

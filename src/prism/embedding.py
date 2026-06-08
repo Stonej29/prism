@@ -7,6 +7,7 @@ from typing import Any
 
 import httpx
 
+from prism.config import DEFAULT_EMBEDDING_BASE_URL
 from prism.usage import record_usage
 
 LOGGER = logging.getLogger("prism.embedding")
@@ -21,7 +22,7 @@ _RETRYABLE = (httpx.TimeoutException, httpx.ConnectError, httpx.ReadError, httpx
 
 @dataclass(frozen=True)
 class EmbeddingConfig:
-    base_url: str = "https://api.openai.com/v1"
+    base_url: str = DEFAULT_EMBEDDING_BASE_URL
     api_key: str | None = None
     model: str | None = None
 

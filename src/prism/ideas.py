@@ -9,6 +9,7 @@ from typing import Any
 
 import yaml
 
+from prism.config import DEFAULT_LLM_BASE_URL
 from prism.db import IdeaRecord, PrismDatabase
 from prism.index import NoteIndexer, RelatedCandidate
 from prism.llm import LLMClient, LLMConfig, build_idea_context
@@ -50,7 +51,7 @@ class IdeaService:
         self.ideas_path = vault_path / "generated-ideas"
         self.profile_path = vault_path / "profile" / "personal.md"
         self.database = database
-        self.llm_config = llm_config or LLMConfig("https://openrouter.ai/api/v1", None, None)
+        self.llm_config = llm_config or LLMConfig(DEFAULT_LLM_BASE_URL, None, None)
         self.indexer = indexer
         self.ideas_path.mkdir(parents=True, exist_ok=True)
         ensure_profile(self.profile_path)
