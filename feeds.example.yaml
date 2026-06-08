@@ -3,20 +3,21 @@
 # Edits take effect on the next worker restart. The worker starts fine with no
 # feeds configured.
 
-feeds:
+# No feeds are active by default — uncomment one of the examples below (or add
+# your own) and restart the worker. Two feed types:
+feeds: []
   # "rss": save each feed entry's own link (one note per entry).
-  #   - type: rss
-  #     url: https://some-single-topic-blog.com/feed
-  #     max: 20
+  # - type: rss
+  #   url: https://some-single-topic-blog.com/feed
+  #   max: 20            # newest N entries to consider each run
   #
   # "digest": for roundup newsletters where each post links to many items,
   # follow the "Read more" links (repos / papers / project pages) and save each
   # as its own note — one tech per note — instead of the digest post itself.
-  - type: digest
-    url: https://aisearch.substack.com/feed
-    posts: 4          # expand the newest N posts each run (overlap + dedup avoids misses)
-    # input_source tags how these notes entered PRISM (default: ai_search).
-    input_source: ai_search
+  # - type: digest
+  #   url: https://your-favorite-ai-newsletter.example/feed
+  #   posts: 4          # expand the newest N posts each run (overlap + dedup avoids misses)
+  #   input_source: ai_search   # tags how these notes entered PRISM (default: ai_search)
 
 schedule:
   # 5-field cron expressions, interpreted in `timezone` (DST-aware).
