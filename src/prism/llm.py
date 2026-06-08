@@ -8,6 +8,13 @@ from typing import Any
 
 import httpx
 
+from prism.prompts import (
+    ask_system_prompt,
+    idea_system_prompt,
+    merge_system_prompt,
+    note_system_prompt,
+    profile_system_prompt,
+)
 from prism.usage import record_usage
 
 LOGGER = logging.getLogger("prism.llm")
@@ -114,7 +121,7 @@ class LLMClient:
             "temperature": 0.2,
             "max_tokens": 1200,
             "messages": [
-                {"role": "system", "content": _ask_system_prompt()},
+                {"role": "system", "content": ask_system_prompt()},
                 {"role": "user", "content": json.dumps(context, ensure_ascii=True)},
             ],
         }
@@ -131,7 +138,7 @@ class LLMClient:
             "temperature": 0.2,
             "max_tokens": 1600,
             "messages": [
-                {"role": "system", "content": _profile_system_prompt(mode)},
+                {"role": "system", "content": profile_system_prompt(mode)},
                 {
                     "role": "user",
                     "content": json.dumps(
@@ -179,7 +186,7 @@ class LLMClient:
             "temperature": 0.2,
             "max_tokens": 4500,
             "messages": [
-                {"role": "system", "content": _system_prompt()},
+                {"role": "system", "content": note_system_prompt()},
                 {"role": "user", "content": json.dumps({"profile": profile, "source": context}, ensure_ascii=True)},
             ],
         }
@@ -195,7 +202,7 @@ class LLMClient:
             "temperature": 0.2,
             "max_tokens": 4500,
             "messages": [
-                {"role": "system", "content": _merge_system_prompt()},
+                {"role": "system", "content": merge_system_prompt()},
                 {"role": "user", "content": json.dumps({"profile": profile, "sources": context}, ensure_ascii=True)},
             ],
         }
@@ -209,7 +216,7 @@ class LLMClient:
             "temperature": 0.7,
             "max_tokens": 2000,
             "messages": [
-                {"role": "system", "content": _idea_system_prompt()},
+                {"role": "system", "content": idea_system_prompt()},
                 {"role": "user", "content": json.dumps({"profile": profile, "context": context}, ensure_ascii=True)},
             ],
         }
@@ -343,90 +350,6 @@ def _assistant_content(response: dict[str, Any]) -> str:
     return content
 
 
-def _scoring_rubric() -> str:
-    return (
-        "SCORING: relevance, novelty, credibility, actionability, interest, and overall are "
-        "integers 1-10. confidence is your 0-1 confidence in this note's accuracy. "
-        "Score each dimension HONESTLY and INDEPENDENTLY on an absolute scale. Most items are "
-        "ordinary, so most scores should land in the middle. Do NOT default to 8 — that is the "
-        "single most common mistake. Force a spread: across many notes the full range should be "
-        "used, with only a few items above 8.\n"
-        "Anchored bands (apply to every 1-10 dimension):\n"
-        "- 1-2: trivial, derivative, or irrelevant; little reason to revisit.\n"
-        "- 3-4: marginal; minor or niche value.\n"
-        "- 5-6: solid and useful but unremarkable — the DEFAULT for competent, ordinary work.\n"
-        "- 7-8: clearly strong; notably useful, novel, or rigorous.\n"
-        "- 9-10: exceptional / foundational; reserve for the genuine best, seen only rarely.\n"
-        "Per-dimension meaning: relevance = fit to the user's profile and interests; "
-        "novelty = how new/original vs prior art; credibility = rigor and trustworthiness of the source; "
-        "actionability = how directly the user can build on or apply it; interest = how engaging it is. "
-        "overall is a holistic judgement, NOT a mechanical average, but must stay consistent with the "
-        "others — never give a high overall when every dimension is mediocre."
-    )
-
-
-def _system_prompt() -> str:
-    return (
-        "You generate dense, practical, technical Obsidian notes for PRISM. "
-        "Return only a valid JSON object. Required fields: title, quick_summary, "
-        "detailed_summary, key_claims, limitations, technical_details, why_it_matters, "
-        "personal_relevance, project_ideas, tags, relevance, novelty, credibility, "
-        "actionability, interest, overall, confidence, related_notes. "
-        "related_notes must be a list of objects with id, title, and reason selected only from related_candidates. "
-        "Use direct language, preserve uncertainty, and favor a healthy mix of "
-        "buildable ideas, research novelty, and practical tool value.\n"
-        + _scoring_rubric()
-    )
-
-
-def _idea_system_prompt() -> str:
-    return (
-        "You are PRISM's idea engine. Generate one concrete, buildable project idea "
-        "synthesized from the user's saved knowledge and profile. "
-        "Return only a valid JSON object with fields: title, summary, problem, approach, "
-        "why_it_fits, components, risks, related_notes, tags. "
-        "components, risks, and tags are lists of strings. "
-        "related_notes is a list of objects with id, title, and reason, selected only from "
-        "context.knowledge entries (use their exact ids). "
-        "summary is a single punchy sentence pitching the idea. "
-        "If context.past_rated_ideas is provided, prefer directions similar to highly rated "
-        "ideas and avoid those that rated poorly. "
-        "context.recent_ideas lists ideas already generated recently (rated or not) — produce a "
-        "DISTINCTLY DIFFERENT idea: do not repeat their title or core concept, and explore a fresh "
-        "angle, problem, or combination of notes. "
-        "Be specific and technical, ground the idea in the provided notes, and favor things "
-        "the user could actually build."
-    )
-
-
-def _merge_system_prompt() -> str:
-    return (
-        "You merge two near-duplicate research notes (in sources) into ONE consolidated note. "
-        "Combine and de-duplicate their content, preserving every distinct claim, limitation, and "
-        "technical detail from BOTH sources — never drop information that appears in only one. "
-        "Return only a valid JSON object with these fields: title, quick_summary, detailed_summary, "
-        "key_claims, limitations, technical_details, why_it_matters, personal_relevance, project_ideas, "
-        "tags, relevance, novelty, credibility, actionability, interest, overall, confidence. "
-        "Use direct language and preserve uncertainty. "
-        "The title should describe the unified topic of both sources.\n"
-        + _scoring_rubric()
-    )
-
-
-def _profile_system_prompt(mode: str) -> str:
-    base = (
-        "You maintain PRISM's personal profile file at profile/personal.md. "
-        "Return only Markdown, with no code fence and no commentary. "
-        "Use this exact structure: # Personal Profile, then short sections for Context, "
-        "Interests, Preferences, Constraints, and Current Direction. "
-        "Keep it concise, concrete, and useful for steering research-note summaries and idea generation. "
-        "Preserve specific facts, tools, projects, locations, and preferences. Do not invent details."
-    )
-    if mode == "reset":
-        return base + " Replace the profile completely using only the user's new input."
-    return base + " Update the existing profile by integrating the user's new input without losing still-relevant existing facts."
-
-
 def _clean_markdown_profile(content: str) -> str:
     text = content.strip()
     if text.startswith("```"):
@@ -439,13 +362,3 @@ def _clean_markdown_profile(content: str) -> str:
     if not text.startswith("#"):
         text = "# Personal Profile\n\n" + text
     return text.rstrip() + "\n"
-
-
-def _ask_system_prompt() -> str:
-    return (
-        "You answer the user's question using ONLY the notes provided in context.notes, "
-        "which come from their personal research vault. Do not use outside knowledge and "
-        "never invent facts. If the notes do not contain the answer, say plainly that you "
-        "have nothing saved about it. Cite the note ids you rely on in square brackets, "
-        "e.g. [a1b2c3]. Be concise, direct, and technical."
-    )
