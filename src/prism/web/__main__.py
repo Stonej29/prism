@@ -8,7 +8,7 @@ def main() -> None:
     import uvicorn
 
     host = os.getenv("PRISM_WEB_HOST", "127.0.0.1")
-    port = int(os.getenv("PRISM_WEB_PORT", "8000"))
+    port = int(os.getenv("PRISM_WEB_PORT", "5890"))
     reload = os.getenv("PRISM_WEB_RELOAD", "").lower() in {"1", "true", "yes"}
     uvicorn.run("prism.web.app:create_app", factory=True, host=host, port=port, reload=reload)
 

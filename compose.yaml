@@ -19,8 +19,9 @@ services:
         required: false
     environment:
       PRISM_WEB_HOST: 0.0.0.0
+      PRISM_WEB_PORT: 5890
     ports:
-      - "8000:8000"
+      - "5890:5890"
     volumes:
       - ./runtime:/data:z
     restart: unless-stopped

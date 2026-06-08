@@ -24,6 +24,6 @@ RUN pip install --no-cache-dir .
 
 COPY --from=frontend /frontend/dist /app/static
 
-EXPOSE 8000
+EXPOSE 5890
 
 CMD ["prism-web"]

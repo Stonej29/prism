@@ -29,10 +29,10 @@ sudo docker compose logs -f prism
 Run the web UI (FastAPI + React three-pane "Atlas" interface) via Docker:
 ```sh
 docker compose build prism-web
-sudo docker compose up -d prism-web   # serves on http://localhost:8000
+sudo docker compose up -d prism-web   # serves on http://localhost:5890
 ```
 
-Develop the web UI locally (FastAPI on :8000, Vite dev server on :5173 proxying /api):
+Develop the web UI locally (FastAPI on :5890, Vite dev server on :5173 proxying /api):
 ```sh
 # Terminal 1 — API (shares runtime/ with the bot)
 PYTHONPATH=src SQLITE_PATH=runtime/prism.sqlite3 LANCEDB_PATH=runtime/lancedb \
@@ -172,6 +172,6 @@ Optional (each service degrades gracefully if unset):
 - `EMBEDDING_BASE_URL` / `EMBEDDING_API_KEY` / `EMBEDDING_MODEL` — semantic indexing (default base URL: OpenAI)
 
 Web UI only (the bot ignores these; `prism-web` does not require the Telegram vars):
-- `PRISM_WEB_HOST` (default `0.0.0.0`) / `PRISM_WEB_PORT` (default `8000`) / `PRISM_WEB_RELOAD` (`1` for uvicorn auto-reload) / `PRISM_WEB_STATIC` (path to the built `frontend/dist`; default `/app/static` in Docker)
+- `PRISM_WEB_HOST` (default `127.0.0.1`) / `PRISM_WEB_PORT` (default `5890`) / `PRISM_WEB_RELOAD` (`1` for uvicorn auto-reload) / `PRISM_WEB_STATIC` (path to the built `frontend/dist`; default `/app/static` in Docker)
 
 Runtime data lives in `runtime/` (Docker volume mount) and is intentionally excluded from this repo. The Obsidian vault at `runtime/research-vault` is its own separate git repo.

@@ -39,7 +39,7 @@ $DOCKER compose up -d
 cat <<'EOF'
 
 PRISM is up.
-  Web UI: http://localhost:8000
+  Web UI: http://localhost:5890
     -> create your owner account, then add your LLM / embedding / Telegram
        keys under Settings -> Connections.
   The Telegram bot stays idle until you add its token, then connects on its own.

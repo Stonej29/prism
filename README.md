@@ -30,7 +30,7 @@ git clone <repo> && cd prism
 ./setup.sh        # scaffolds .env, inits the vault, builds, and starts the stack
 ```
 
-Then open the **web UI at `http://localhost:8000`**, create your owner account, and add your LLM / embedding / Telegram keys under **Settings → Connections**. Nothing has to be put in `.env` by hand.
+Then open the **web UI at `http://localhost:5890`**, create your owner account, and add your LLM / embedding / Telegram keys under **Settings → Connections**. Nothing has to be put in `.env` by hand.
 
 - **Telegram bot** — it stays idle until its token + allowed IDs are set (in the UI or `.env`), then connects within ~20s. Get the token from [@BotFather](https://t.me/BotFather), your user ID from [@userinfobot](https://t.me/userinfobot).
 - **Prefer the terminal / no web UI?** Set `LLM_*`, `EMBEDDING_*`, and `TELEGRAM_BOT_TOKEN` + `TELEGRAM_ALLOWED_USER_IDS` in `.env` before running. Env values take precedence and lock the matching UI fields.
@@ -82,10 +82,10 @@ Run it as a second container (shares `runtime/`; the bot is untouched):
 
 ```sh
 docker compose build prism-web
-docker compose up -d prism-web      # serves http://<host>:8000
+docker compose up -d prism-web      # serves http://<host>:5890
 ```
 
-Docker Compose publishes the web UI on all interfaces (`8000:8000`), so it is reachable from other devices on your network. The UI has full owner access (delete, reprocess, profile editing, feed ingestion), so on a network-exposed bind it requires a login. On first run it shows a **"create your account"** screen; pick a username and password and that credential is stored (hashed) under `runtime/`. A signed session cookie keeps you signed in afterwards. Because that first-run setup is open until an account exists, keep PRISM on a trusted LAN/VPN and create the account promptly — or pin the credential ahead of time by setting `PRISM_WEB_USERNAME`/`PRISM_WEB_PASSWORD` (which also disables in-UI account creation). Do not expose PRISM directly to the public internet. To run loopback-only with no login, set `PRISM_WEB_HOST=127.0.0.1` and bind the Compose port to `127.0.0.1:8000:8000`.
+Docker Compose publishes the web UI on all interfaces (`5890:5890`), so it is reachable from other devices on your network. The UI has full owner access (delete, reprocess, profile editing, feed ingestion), so on a network-exposed bind it requires a login. On first run it shows a **"create your account"** screen; pick a username and password and that credential is stored (hashed) under `runtime/`. A signed session cookie keeps you signed in afterwards. Because that first-run setup is open until an account exists, keep PRISM on a trusted LAN/VPN and create the account promptly — or pin the credential ahead of time by setting `PRISM_WEB_USERNAME`/`PRISM_WEB_PASSWORD` (which also disables in-UI account creation). Do not expose PRISM directly to the public internet. To run loopback-only with no login, set `PRISM_WEB_HOST=127.0.0.1` and bind the Compose port to `127.0.0.1:5890:5890`.
 
 **Local development** — FastAPI with autoreload plus the Vite dev server proxying `/api`:
 
