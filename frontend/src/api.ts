@@ -69,6 +69,9 @@ export const api = {
   reprocess: (id: string) =>
     req<{ ok: boolean; message: string; note: NoteDetail }>(`/notes/${id}/reprocess`, { method: "POST" }),
 
+  repersonalize: (id: string) =>
+    req<{ ok: boolean; message: string; note: NoteDetail }>(`/notes/${id}/repersonalize`, { method: "POST" }),
+
   research: (id: string) =>
     req<{ ok: boolean; message: string; note: NoteDetail }>(`/notes/${id}/research`, { method: "POST" }),
 

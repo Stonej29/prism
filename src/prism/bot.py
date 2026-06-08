@@ -62,6 +62,8 @@ COMMANDS = [
     ("rename", "Rename a note"),
     ("status_set", "Set a note's review status"),
     ("reprocess", "Re-run LLM generation for a note"),
+    ("reprocess_all", "Re-run LLM generation for every note"),
+    ("repersonalize", "Re-run only personalization for a note"),
     ("retry_failed", "Retry failed LLM and embedding work"),
     ("delete", "Delete a note or idea after confirmation"),
     ("wipe_all", "Wipe all saved notes, ideas, archives, and index cache"),
@@ -263,6 +265,66 @@ class PrismBot:
             return
         if result.ok:
             await message.reply_text(self._saved_reply(result.record).replace("<b>Saved:</b>", "<b>Reprocessed:</b>", 1), parse_mode=HTML_PARSE_MODE)
+            return
+        await message.reply_text(result.message)
+
+    async def handle_reprocess_all(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        del context
+        if not await self._is_allowed(update):
+            return
+
+        message = update.effective_message
+        if not message:
+            return
+
+        await message.reply_text("Reprocessing all notes — this may take a while...")
+        asyncio.create_task(self._reprocess_all_task(message))
+
+    async def _reprocess_all_task(self, message) -> None:
+        try:
+            summary = await asyncio.to_thread(self.notes.reprocess_all)
+        except Exception as exc:
+            LOGGER.exception("Background reprocess_all failed")
+            await message.reply_text(f"Reprocess all failed: {type(exc).__name__}: {exc}")
+            return
+        text = f"Reprocessed {summary.reprocessed}/{summary.total} notes."
+        if summary.failed:
+            text += f" {summary.failed} failed."
+        await message.reply_text(text)
+
+    async def handle_repersonalize(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self._is_allowed(update):
+            return
+
+        message = update.effective_message
+        if not message:
+            return
+
+        if not context.args:
+            await message.reply_text("Usage: /repersonalize <id>")
+            return
+
+        note_id = context.args[0].strip().lower()
+        record = self.database.find_by_note_id(note_id)
+        if not record:
+            await message.reply_text(f"No note found for {note_id}.")
+            return
+
+        await message.reply_text(f"Re-personalizing {note_id}...")
+        asyncio.create_task(self._repersonalize_task(note_id, message))
+
+    async def _repersonalize_task(self, note_id: str, message) -> None:
+        try:
+            result = await asyncio.to_thread(self.notes.repersonalize, note_id)
+        except Exception as exc:
+            LOGGER.exception("Background repersonalize failed for %s", note_id)
+            await message.reply_text(f"Re-personalize failed: {type(exc).__name__}: {exc}")
+            return
+        if not result.record:
+            await message.reply_text(result.message)
+            return
+        if result.ok:
+            await message.reply_text(self._saved_reply(result.record).replace("<b>Saved:</b>", "<b>Re-personalized:</b>", 1), parse_mode=HTML_PARSE_MODE)
             return
         await message.reply_text(result.message)
 
@@ -1190,6 +1252,8 @@ def build_application(settings: Settings) -> Application:
     application.add_handler(CommandHandler("rename", bot.handle_rename))
     application.add_handler(CommandHandler("status_set", bot.handle_status_set))
     application.add_handler(CommandHandler("reprocess", bot.handle_reprocess))
+    application.add_handler(CommandHandler("reprocess_all", bot.handle_reprocess_all))
+    application.add_handler(CommandHandler("repersonalize", bot.handle_repersonalize))
     application.add_handler(CommandHandler("retry_failed", bot.handle_retry_failed))
     application.add_handler(CommandHandler("delete", bot.handle_delete))
     application.add_handler(CommandHandler("wipe_all", bot.handle_wipe_all))

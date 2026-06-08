@@ -13,7 +13,7 @@ All front ends share the same runtime data under `runtime/` or `/data` in Docker
 
 1. A URL or uploaded PDF reaches `NoteService` in `src/prism/notes.py`.
 2. `src/prism/fetch.py` detects source type, fetches or extracts content, writes archives, and returns a `FetchResult`.
-3. `src/prism/llm.py` optionally sends extracted text and the personal profile to an OpenAI-compatible chat API for structured summaries, tags, scores, and related-note suggestions.
+3. `src/prism/llm.py` optionally runs two OpenAI-compatible chat passes: a **ground-truth** pass (`generate_note`, source text only) for summaries, tags, scores, and related-note suggestions, then a **personalization** pass (`personalize_note`, ground truth + personal profile, no source) for profile-specific prose and relevance scores. The split lets personalization be re-run cheaply when the profile changes (`repersonalize` / `repersonalize_all`) without disturbing the objective summary or embedding.
 4. `src/prism/db.py` persists note metadata and processing status in SQLite.
 5. `render_note()` writes an Obsidian-compatible Markdown note into the vault.
 6. `src/prism/index.py` optionally embeds the canonical note text and upserts it into LanceDB.

@@ -23,12 +23,14 @@ How to drive PRISM day to day — commands, the web and terminal interfaces, the
 | `/status` | Note / LLM / embedding counts and index state |
 | `/rename <id> <title>` | Rename a note (re-embeds; updates the vault frontmatter) |
 | `/status_set <id> <status>` | Set a note's review status (`unreviewed` / `reviewed` / `archived`); archived notes drop out of the default lists |
-| `/reprocess <id>` | Re-run LLM generation from archived text |
+| `/reprocess <id>` | Re-run the full LLM pipeline (ground truth + personalization) from archived text |
+| `/reprocess_all` | Run `/reprocess` over every fetched note, reusing archived text (no re-fetch) |
+| `/repersonalize <id>` | Re-run only the personalization pass against your current profile (cheap; leaves the summary, tags, links, and embedding untouched) |
 | `/retry_failed [n]` | Retry failed LLM or embedding work for up to `n` notes |
 | `/delete <id>` | Delete a note or idea (inline yes/no confirmation) |
 | `/wipe_all` | Wipe all notes, ideas, archives, and index cache (random code required) |
-| `/reset_me <text>` | Replace your personal profile from the supplied text |
-| `/update_me <text>` | Merge new facts into your personal profile |
+| `/reset_me <text>` | Replace your personal profile from the supplied text (then re-personalizes every note against it) |
+| `/update_me <text>` | Merge new facts into your personal profile (then re-personalizes every note against it) |
 | `/help` | List all commands |
 
 ## Web interface

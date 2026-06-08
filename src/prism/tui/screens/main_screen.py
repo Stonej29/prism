@@ -242,6 +242,11 @@ class AtlasScreen(Screen):
             self._dispatch_status_set(rest)
         elif first == "reprocess":
             self._dispatch_blocking(rest, "Usage: reprocess <id>", lambda q: self._op_reprocess(q), "Reprocessing…")
+        elif first == "reprocess_all":
+            self.set_status("Reprocessing all notes…")
+            self._run(self._op_reprocess_all)
+        elif first == "repersonalize":
+            self._dispatch_blocking(rest, "Usage: repersonalize <id>", lambda q: self._op_repersonalize(q), "Re-personalizing…")
         elif first == "retry_failed":
             n = int(rest) if rest.isdigit() else 25
             self.set_status("Retrying failed work…")
@@ -370,6 +375,15 @@ class AtlasScreen(Screen):
         r = self.core.reprocess(note_id)
         detail = render.note_markdown(r.record) if r.record else None
         return WorkerResult(r.message, detail, refresh=True)
+
+    def _op_repersonalize(self, note_id: str) -> WorkerResult:
+        r = self.core.repersonalize(note_id)
+        detail = render.note_markdown(r.record) if r.record else None
+        return WorkerResult(r.message, detail, refresh=True)
+
+    def _op_reprocess_all(self) -> WorkerResult:
+        s = self.core.reprocess_all()
+        return WorkerResult(f"reprocessed {s.reprocessed}/{s.total}, failed {s.failed}", refresh=True)
 
     def _op_retry(self, n: int) -> WorkerResult:
         r = self.core.retry_failed(n)

@@ -13,6 +13,7 @@ from prism.prompts import (
     idea_system_prompt,
     merge_system_prompt,
     note_system_prompt,
+    personalize_system_prompt,
     profile_system_prompt,
 )
 from prism.usage import record_usage
@@ -51,12 +52,13 @@ class LLMClient:
     def __init__(self, config: LLMConfig) -> None:
         self.config = config
 
-    def generate_note(self, context: dict[str, Any], profile: str, *, web: bool = False) -> LLMGeneration:
+    def generate_note(self, context: dict[str, Any], *, web: bool = False) -> LLMGeneration:
+        """Ground-truth pass: summarize the source objectively. Profile-independent."""
         if not self.config.is_configured:
             raise RuntimeError("LLM_API_KEY and LLM_MODEL are required")
 
         try:
-            data = self._post(self._payload(context, profile, use_response_format=True, web=web))
+            data = self._post(self._payload(context, use_response_format=True, web=web))
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code != 400:
                 raise
@@ -65,11 +67,11 @@ class LLMClient:
             # likely unsupported field) so research degrades to a normal regeneration
             # instead of hard-failing.
             try:
-                data = self._post(self._payload(context, profile, use_response_format=False, web=web))
+                data = self._post(self._payload(context, use_response_format=False, web=web))
             except httpx.HTTPStatusError as exc2:
                 if exc2.response.status_code != 400 or not web:
                     raise
-                data = self._post(self._payload(context, profile, use_response_format=False, web=False))
+                data = self._post(self._payload(context, use_response_format=False, web=False))
 
         content = _assistant_content(data)
         parsed = _parse_json_object(content)
@@ -78,6 +80,25 @@ class LLMClient:
             model=str(data.get("model") or self.config.model),
             web_sources=web_sources_from_response(data),
         )
+
+    def personalize_note(self, ground_truth: dict[str, Any], profile: str) -> LLMGeneration:
+        """Personalization pass: score relevance and reader-specific prose from the note's
+        ground truth + profile only (no source text), so it can be re-run cheaply."""
+        if not self.config.is_configured:
+            raise RuntimeError("LLM_API_KEY and LLM_MODEL are required")
+
+        payload = self._personalize_payload(ground_truth, profile, use_response_format=True)
+        try:
+            data = self._post(payload)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 400:
+                data = self._post(self._personalize_payload(ground_truth, profile, use_response_format=False))
+            else:
+                raise
+
+        content = _assistant_content(data)
+        parsed = _parse_json_object(content)
+        return LLMGeneration(data=parsed, model=str(data.get("model") or self.config.model))
 
     def generate_idea(self, context: dict[str, Any], profile: str) -> LLMGeneration:
         if not self.config.is_configured:
@@ -180,20 +201,34 @@ class LLMClient:
             time.sleep(RETRY_BACKOFF_BASE * (2 ** attempt))
         raise last_exc  # pragma: no cover - loop either returns or raises
 
-    def _payload(self, context: dict[str, Any], profile: str, use_response_format: bool, *, web: bool = False) -> dict[str, Any]:
+    def _payload(self, context: dict[str, Any], use_response_format: bool, *, web: bool = False) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "model": self.config.model,
             "temperature": 0.2,
             "max_tokens": 4500,
             "messages": [
                 {"role": "system", "content": note_system_prompt()},
-                {"role": "user", "content": json.dumps({"profile": profile, "source": context}, ensure_ascii=True)},
+                {"role": "user", "content": json.dumps({"source": context}, ensure_ascii=True)},
             ],
         }
         if use_response_format:
             payload["response_format"] = {"type": "json_object"}
         if web:
             payload["plugins"] = [{"id": "web"}]
+        return payload
+
+    def _personalize_payload(self, ground_truth: dict[str, Any], profile: str, use_response_format: bool) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "model": self.config.model,
+            "temperature": 0.2,
+            "max_tokens": 2000,
+            "messages": [
+                {"role": "system", "content": personalize_system_prompt()},
+                {"role": "user", "content": json.dumps({"profile": profile, "note": ground_truth}, ensure_ascii=True)},
+            ],
+        }
+        if use_response_format:
+            payload["response_format"] = {"type": "json_object"}
         return payload
 
     def _merge_payload(self, context: dict[str, Any], profile: str, use_response_format: bool) -> dict[str, Any]:

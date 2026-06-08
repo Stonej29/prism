@@ -513,6 +513,25 @@ class WebApiTest(unittest.TestCase):
 
         self.assertEqual(self.client.get("/api/notes/missing").status_code, 404)
 
+    def test_repersonalize_route_wired(self) -> None:
+        self.db.insert_note(make_note("aaa111"))
+        # Unconfigured LLM here, so it degrades gracefully rather than hitting the network.
+        resp = self.client.post("/api/notes/aaa111/repersonalize")
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertFalse(body["ok"])
+        self.assertIn("LLM", body["message"])
+        self.assertEqual(self.client.post("/api/notes/missing/repersonalize").status_code, 404)
+
+    def test_reprocess_all_route_wired(self) -> None:
+        self.db.insert_note(make_note("aaa111"))  # fetched but no archive -> per-note failure
+        resp = self.client.post("/api/notes/reprocess-all")
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertEqual(body["total"], 1)
+        self.assertEqual(body["reprocessed"], 0)
+        self.assertEqual(body["failed"], 1)
+
     def test_favorite_round_trip(self) -> None:
         self.db.insert_note(make_note("aaa111"))
         self.assertFalse(self.client.get("/api/notes/aaa111").json()["favorite"])

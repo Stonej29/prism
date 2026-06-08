@@ -26,6 +26,17 @@ ASK_QUICK_LIMIT = 600
 ASK_DETAILED_LIMIT = 1200
 ASK_CLAIM_LIMIT = 300
 SCORE_FIELDS = ("relevance", "novelty", "credibility", "actionability", "interest", "overall")
+# Ground truth vs. personalization split. The personalization pass (call 2) regenerates
+# only PERSONAL_PROSE_FIELDS + PERSONAL_SCORE_FIELDS from the note's ground truth + profile;
+# everything else (summaries, tags, related_notes, novelty/credibility) is profile-independent
+# and is never touched by a re-personalization, so the embedding and graph stay stable.
+PERSONAL_PROSE_FIELDS = ("why_it_matters", "personal_relevance", "project_ideas")
+PERSONAL_SCORE_FIELDS = ("relevance", "actionability", "interest", "overall")
+# Ground-truth fields handed to the personalization pass as read-only context (no source text).
+GROUND_TRUTH_CONTEXT_FIELDS = (
+    "title", "quick_summary", "detailed_summary", "key_claims",
+    "limitations", "technical_details", "tags", "source_kind", "source_url",
+)
 DEFAULT_PROFILE = """# Personal Profile
 
 Describe the person using PRISM here: their context, goals, interests, and constraints.
@@ -90,6 +101,22 @@ class MergeResult:
     ok: bool
     message: str
     synthesized: bool = False
+
+
+@dataclass(frozen=True)
+class RepersonalizeSummary:
+    total: int
+    updated: int
+    failed: int
+    errors: list[str]
+
+
+@dataclass(frozen=True)
+class ReprocessAllSummary:
+    total: int
+    reprocessed: int
+    failed: int
+    errors: list[str]
 
 
 @dataclass(frozen=True)
@@ -242,6 +269,64 @@ class NoteService:
         if updated.llm_status == "generated":
             return ReprocessResult(record=updated, ok=True, message=f"Reprocessed: {updated.title}")
         return ReprocessResult(record=updated, ok=False, message=f"LLM {updated.llm_status}: {updated.llm_error or 'not generated'}")
+
+    def reprocess_all(self) -> ReprocessAllSummary:
+        """Re-run the full LLM pipeline (ground truth + personalization) + re-embed for every
+        fetched note, reusing each note's archived extracted text (no re-fetch / network pull).
+        Non-blocking: one note's failure is collected, never aborts the batch. Un-fetched notes
+        are skipped since they have no archive to reprocess from."""
+        records = [r for r in self.database.list_notes_for_reindexing() if r.fetch_status == "fetched"]
+        reprocessed = 0
+        errors: list[str] = []
+        for record in records:
+            try:
+                result = self.reprocess(record.note_id)
+            except Exception as exc:  # noqa: BLE001 - collect and continue
+                errors.append(f"{record.note_id}: {exc}")
+                continue
+            if result.ok:
+                reprocessed += 1
+            else:
+                errors.append(f"{record.note_id}: {result.message}")
+        return ReprocessAllSummary(total=len(records), reprocessed=reprocessed, failed=len(errors), errors=errors)
+
+    def repersonalize(self, note_id: str) -> ReprocessResult:
+        """Re-run only the personalization pass (call 2) for one note against the current
+        profile. Cheap: no fetch, no re-summarize, no re-embed - the ground truth, tags,
+        related links, and embedding are untouched."""
+        record = self.database.find_by_note_id(note_id.strip().lower())
+        if not record:
+            return ReprocessResult(record=None, ok=False, message=f"No note found for {note_id}.")
+        if not self.llm_config.is_configured:
+            return ReprocessResult(record=record, ok=False, message="Personalization needs LLM_API_KEY and LLM_MODEL.")
+        if record.llm_status != "generated":
+            return ReprocessResult(record=record, ok=False, message=f"Cannot personalize {record.note_id}: LLM status is {record.llm_status}.")
+        try:
+            updated = self._apply_personalization(record, raise_on_error=True)
+        except Exception as exc:  # noqa: BLE001 - report, keep the existing note intact
+            return ReprocessResult(record=record, ok=False, message=f"Personalization failed: {exc}")
+        self.database.update_note(updated)
+        self._render_to_disk(updated)
+        return ReprocessResult(record=updated, ok=True, message=f"Re-personalized: {updated.title}")
+
+    def repersonalize_all(self) -> RepersonalizeSummary:
+        """Re-run the personalization pass for every generated note (e.g. after a profile
+        change). Non-blocking: one note's failure is collected, never aborts the batch."""
+        if not self.llm_config.is_configured:
+            return RepersonalizeSummary(total=0, updated=0, failed=0, errors=[])
+        records = [r for r in self.database.list_notes_for_reindexing() if r.llm_status == "generated"]
+        updated = 0
+        errors: list[str] = []
+        for record in records:
+            try:
+                refreshed = self._apply_personalization(record, raise_on_error=True)
+            except Exception as exc:  # noqa: BLE001 - collect and continue
+                errors.append(f"{record.note_id}: {exc}")
+                continue
+            self.database.update_note(refreshed)
+            self._render_to_disk(refreshed)
+            updated += 1
+        return RepersonalizeSummary(total=len(records), updated=updated, failed=len(errors), errors=errors)
 
     def research_note(self, note_id: str) -> ReprocessResult:
         record = self.database.find_by_note_id(note_id.strip().lower())
@@ -565,7 +650,15 @@ class NoteService:
         except Exception as exc:
             return ProfileResult(ok=False, message=f"Profile {mode} failed: {type(exc).__name__}: {exc}")
         self.profile_path.write_text(profile, encoding="utf-8")
-        return ProfileResult(ok=True, message=f"Profile {mode} complete.", profile=profile)
+        # The profile drives every note's personalization, so refresh it corpus-wide. Cheap:
+        # each note is re-scored from its stored ground truth, never re-fetched or re-embedded.
+        summary = self.repersonalize_all()
+        message = f"Profile {mode} complete."
+        if summary.total:
+            message += f" Re-personalized {summary.updated}/{summary.total} notes."
+            if summary.failed:
+                message += f" {summary.failed} failed."
+        return ProfileResult(ok=True, message=message, profile=profile)
 
     def search(self, query: str, limit: int = 20) -> list[RelatedCandidate]:
         """Hybrid note search: semantic (when configured) blended with keyword.
@@ -633,6 +726,17 @@ class NoteService:
         }
 
     def _apply_llm(self, record: NoteRecord, extracted_text: str, metadata: dict[str, Any], force: bool = False, *, web: bool = False) -> NoteRecord:
+        """Full note generation = ground-truth pass (call 1) then personalization (call 2)."""
+        record = self._apply_ground_truth(record, extracted_text, metadata, force=force, web=web)
+        if record.llm_status == "generated":
+            # Personalization is non-blocking here: a ground-truth note still has value, so a
+            # call-2 failure leaves the note un-personalized rather than failing the whole save.
+            record = self._apply_personalization(record)
+        return record
+
+    def _apply_ground_truth(self, record: NoteRecord, extracted_text: str, metadata: dict[str, Any], force: bool = False, *, web: bool = False) -> NoteRecord:
+        """Call 1: summarize the source objectively (profile-independent). Writes the
+        ground-truth fields, tags, related_notes, and the novelty/credibility scores."""
         if record.fetch_status != "fetched":
             return replace(record, llm_status="skipped", llm_error="fetch did not succeed")
         if not self.llm_config.is_configured:
@@ -660,7 +764,7 @@ class NoteService:
                     "Keep the normal PRISM JSON shape, preserve uncertainty, and separate claims grounded in the "
                     "saved source from extra context discovered on the web."
                 )
-            generation = LLMClient(self.llm_config).generate_note(context, self.profile_path.read_text(encoding="utf-8"), web=web)
+            generation = LLMClient(self.llm_config).generate_note(context, web=web)
             structured = normalize_structured_summary(generation.data, related_candidates)
             title = clean_title(_string_field(structured, "title")) or record.title
             summary = _string_field(structured, "quick_summary") or record.summary
@@ -688,6 +792,47 @@ class NoteService:
         except Exception as exc:
             if force or record.llm_status != "generated":
                 return replace(record, llm_status="failed", llm_error=f"{type(exc).__name__}: {exc}"[:1000])
+            return record
+
+    def _apply_personalization(self, record: NoteRecord, *, raise_on_error: bool = False) -> NoteRecord:
+        """Call 2: re-derive the reader-specific fields/scores from the note's ground truth
+        + profile only (no source text). Merges them into the existing structured summary and
+        scores, leaving summaries, tags, related_notes, and novelty/credibility untouched -
+        so the embedding and graph never change. Safe to re-run when the profile changes."""
+        if record.llm_status != "generated":
+            return record
+        if not self.llm_config.is_configured:
+            return record
+        try:
+            structured = structured_summary(record)
+            ground_truth = {key: structured.get(key) for key in GROUND_TRUTH_CONTEXT_FIELDS if structured.get(key) is not None}
+            ground_truth.setdefault("title", record.title)
+            ground_truth.setdefault("source_kind", record.source_kind)
+            ground_truth.setdefault("source_url", record.source_url)
+            ground_truth["tags"] = tags_for_record(record)
+            generation = LLMClient(self.llm_config).personalize_note(
+                ground_truth, self.profile_path.read_text(encoding="utf-8")
+            )
+            personal = generation.data
+            new_structured = dict(structured)
+            for key in PERSONAL_PROSE_FIELDS:
+                if key in personal:
+                    new_structured[key] = personal[key]
+            personal_scores = _scores(personal)
+            scores = scores_for_record(record)
+            for key in PERSONAL_SCORE_FIELDS:
+                if key in personal_scores:
+                    scores[key] = personal_scores[key]
+                    new_structured[key] = personal_scores[key]
+            return replace(
+                record,
+                scores_json=json.dumps(scores, ensure_ascii=True, sort_keys=True),
+                structured_summary_json=json.dumps(new_structured, ensure_ascii=True, sort_keys=True),
+            )
+        except Exception as exc:
+            if raise_on_error:
+                # Surface the failure to the caller but keep the existing (stale) note intact.
+                raise RuntimeError(f"{type(exc).__name__}: {exc}") from exc
             return record
 
     def _related_candidates(self, record: NoteRecord, extracted_text: str) -> list[RelatedCandidate]:

@@ -132,6 +132,26 @@ class CliCoreTest(unittest.TestCase):
         self.assertIsNotNone(removed)
         self.assertIsNone(self.core.idea("idea01"))
 
+    def test_repersonalize_requires_llm(self) -> None:
+        self.core.database.insert_note(make_note("aaa111"))
+        result = self.core.repersonalize("aaa111")
+        self.assertFalse(result.ok)
+        self.assertIn("LLM", result.message)
+
+    def test_repersonalize_all_noop_when_unconfigured(self) -> None:
+        self.core.database.insert_note(make_note("aaa111"))
+        summary = self.core.repersonalize_all()
+        self.assertEqual(summary.total, 0)
+        self.assertEqual(summary.updated, 0)
+
+    def test_reprocess_all_iterates_corpus(self) -> None:
+        # Fetched note but no local archive -> reprocess fails per note, proving the loop runs.
+        self.core.database.insert_note(make_note("aaa111"))
+        summary = self.core.reprocess_all()
+        self.assertEqual(summary.total, 1)
+        self.assertEqual(summary.reprocessed, 0)
+        self.assertEqual(summary.failed, 1)
+
     def test_rename_note(self) -> None:
         self.core.database.insert_note(make_note("aaa111", title="Old"))
         result = self.core.rename_note("aaa111", "A Better Title")

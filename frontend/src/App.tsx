@@ -56,7 +56,7 @@ export default function App() {
   const [noteLoading, setNoteLoading] = useState(false);
   const [paneBusy, setPaneBusy] = useState(false);
   // Multiple notes can be reprocessing/researching at once — keyed by note id.
-  const [processingNotes, setProcessingNotes] = useState<Record<string, "reprocess" | "research">>({});
+  const [processingNotes, setProcessingNotes] = useState<Record<string, "reprocess" | "repersonalize" | "research">>({});
 
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(false);
@@ -105,7 +105,7 @@ export default function App() {
   }, []);
 
   const selectedAction = selectedId ? processingNotes[selectedId] ?? null : null;
-  const clearProcessing = (id: string, action: "reprocess" | "research") =>
+  const clearProcessing = (id: string, action: "reprocess" | "repersonalize" | "research") =>
     setProcessingNotes((m) => (m[id] === action ? Object.fromEntries(Object.entries(m).filter(([k]) => k !== id)) : m));
 
   const noteKind = useMemo(() => {
@@ -352,6 +352,20 @@ export default function App() {
       setToast(String(e));
     } finally {
       clearProcessing(id, "reprocess");
+    }
+  };
+
+  const onRepersonalize = async (id: string) => {
+    setProcessingNotes((m) => ({ ...m, [id]: "repersonalize" }));
+    try {
+      const res = await api.repersonalize(id);
+      setNote((current) => (selectedIdRef.current === id ? res.note : current));
+      setToast(res.message);
+      await refreshData();
+    } catch (e) {
+      setToast(String(e));
+    } finally {
+      clearProcessing(id, "repersonalize");
     }
   };
 
@@ -623,6 +637,7 @@ export default function App() {
           loading={noteLoading}
           busy={paneBusy || selectedAction != null}
           reprocessing={selectedAction === "reprocess"}
+          repersonalizing={selectedAction === "repersonalize"}
           researching={selectedAction === "research"}
           open={rightOpen}
           onToggle={() => setRightOpen((o) => !o)}
@@ -631,6 +646,7 @@ export default function App() {
           onSelectRelated={selectNote}
           onShowRelated={onShowRelated}
           onReprocess={onReprocess}
+          onRepersonalize={onRepersonalize}
           onResearch={onResearch}
           onDelete={onDelete}
           onEditTags={onEditTags}

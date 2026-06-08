@@ -24,6 +24,8 @@ TUI_COMMANDS: list[tuple[str, str, str]] = [
     ("rename", "rename <id> <title>", "Rename a note"),
     ("status_set", "status_set <id> <status>", "Set a note's review status"),
     ("reprocess", "reprocess <id>", "Re-run LLM generation for a note"),
+    ("reprocess_all", "reprocess_all", "Re-run LLM generation for every note"),
+    ("repersonalize", "repersonalize <id>", "Re-run only personalization for a note"),
     ("retry_failed", "retry_failed [n]", "Retry failed LLM and embedding work"),
     ("delete", "delete <id>", "Delete a note (after confirmation)"),
     ("wipe_all", "wipe_all", "Wipe all notes, ideas, archives, and index"),

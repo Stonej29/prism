@@ -86,6 +86,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("note_id", nargs="+")
 
     sub.add_parser("reprocess", help="Re-run LLM generation for a note").add_argument("note_id")
+    sub.add_parser("reprocess-all", help="Re-run LLM generation for every note")
+    sub.add_parser("repersonalize", help="Re-run only personalization for a note").add_argument("note_id")
+    sub.add_parser("repersonalize-all", help="Re-run personalization for every note")
     sub.add_parser("retry-failed", help="Retry failed LLM and embedding work").add_argument(
         "-n", "--limit", type=int, default=25
     )
@@ -289,6 +292,30 @@ def _reprocess(core: CliCore, args) -> int:
     return 0 if result.ok else 1
 
 
+def _reprocess_all(core: CliCore, args) -> int:
+    del args
+    s = core.reprocess_all()
+    print(f"total={s.total} reprocessed={s.reprocessed} failed={s.failed}")
+    for err in s.errors:
+        print(f"  ! {err}", file=sys.stderr)
+    return 0 if not s.errors else 1
+
+
+def _repersonalize(core: CliCore, args) -> int:
+    result = core.repersonalize(args.note_id)
+    print(result.message)
+    return 0 if result.ok else 1
+
+
+def _repersonalize_all(core: CliCore, args) -> int:
+    del args
+    s = core.repersonalize_all()
+    print(f"total={s.total} updated={s.updated} failed={s.failed}")
+    for err in s.errors:
+        print(f"  ! {err}", file=sys.stderr)
+    return 0 if not s.errors else 1
+
+
 def _retry_failed(core: CliCore, args) -> int:
     r = core.retry_failed(args.limit)
     print(f"total={r.total} retried={r.retried} repaired={r.repaired} failed={r.failed} skipped={r.skipped}")
@@ -366,6 +393,9 @@ _HANDLERS = {
     "rename": _rename,
     "set-status": _set_status,
     "reprocess": _reprocess,
+    "reprocess-all": _reprocess_all,
+    "repersonalize": _repersonalize,
+    "repersonalize-all": _repersonalize_all,
     "retry-failed": _retry_failed,
     "delete": _delete,
     "status": _status,

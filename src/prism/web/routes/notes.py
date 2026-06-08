@@ -89,6 +89,19 @@ def retry_failed(limit: int = 25, notes: NoteService = Depends(get_notes)) -> di
     }
 
 
+@router.post("/reprocess-all")
+def reprocess_all(notes: NoteService = Depends(get_notes)) -> dict:
+    summary = notes.reprocess_all()
+    log_activity("reprocess_all", "ok" if not summary.failed else "failed",
+                 f"reprocessed {summary.reprocessed}/{summary.total}, {summary.failed} failed")
+    return {
+        "total": summary.total,
+        "reprocessed": summary.reprocessed,
+        "failed": summary.failed,
+        "errors": summary.errors,
+    }
+
+
 @router.post("/{note_id}/reprocess")
 def reprocess(note_id: str, notes: NoteService = Depends(get_notes)) -> dict:
     try:
@@ -100,6 +113,20 @@ def reprocess(note_id: str, notes: NoteService = Depends(get_notes)) -> dict:
         log_activity("reprocess", "failed", result.message, note_id=note_id)
         raise HTTPException(status_code=404, detail=result.message)
     log_activity("reprocess", "ok" if result.ok else "failed", result.message, note_id=result.record.note_id)
+    return {"ok": result.ok, "message": result.message, "note": note_to_dto(result.record)}
+
+
+@router.post("/{note_id}/repersonalize")
+def repersonalize(note_id: str, notes: NoteService = Depends(get_notes)) -> dict:
+    try:
+        result = notes.repersonalize(note_id)
+    except Exception as exc:
+        log_activity("repersonalize", "failed", f"{type(exc).__name__}: {exc}", note_id=note_id)
+        raise
+    if not result.record:
+        log_activity("repersonalize", "failed", result.message, note_id=note_id)
+        raise HTTPException(status_code=404, detail=result.message)
+    log_activity("repersonalize", "ok" if result.ok else "failed", result.message, note_id=result.record.note_id)
     return {"ok": result.ok, "message": result.message, "note": note_to_dto(result.record)}
 
 

@@ -22,6 +22,8 @@ from prism.notes import (
     AskResult,
     DeleteResult,
     ProfileResult,
+    RepersonalizeSummary,
+    ReprocessAllSummary,
     ReprocessResult,
     RetryFailedResult,
     SaveResult,
@@ -198,6 +200,15 @@ class CliCore:
 
     def reprocess(self, note_id: str) -> ReprocessResult:
         return self.notes.reprocess(note_id)
+
+    def reprocess_all(self) -> ReprocessAllSummary:
+        return self.notes.reprocess_all()
+
+    def repersonalize(self, note_id: str) -> ReprocessResult:
+        return self.notes.repersonalize(note_id)
+
+    def repersonalize_all(self) -> RepersonalizeSummary:
+        return self.notes.repersonalize_all()
 
     def retry_failed(self, limit: int = 25) -> RetryFailedResult:
         return self.notes.retry_failed(limit)

@@ -11,8 +11,9 @@ import httpx
 
 from prism.db import NoteRecord, PrismDatabase
 from prism.fetch import FetchResult
+from prism.index import canonical_index_text
 from prism.llm import LLMClient, LLMConfig, LLMGeneration
-from prism.notes import NoteService, render_note
+from prism.notes import NoteService, render_note, scores_for_record, structured_summary, tags_for_record
 
 
 def fetch_result(root: Path, text: str = "Extracted article text") -> FetchResult:
@@ -58,6 +59,24 @@ def structured() -> dict[str, object]:
     }
 
 
+def personalization() -> dict[str, object]:
+    """The call-2 (personalization) subset, matching the values in ``structured()``."""
+    return {
+        "why_it_matters": "It is useful for robotics systems.",
+        "personal_relevance": "Relevant to VLA and manipulation work.",
+        "project_ideas": ["Build a small demo"],
+        "relevance": 9,
+        "actionability": 8,
+        "interest": 9,
+        "overall": 8.5,
+    }
+
+
+def _patch_personalize():
+    """Patch the personalization pass so save/reprocess never touches the network."""
+    return patch("prism.notes.LLMClient.personalize_note", return_value=LLMGeneration(personalization(), "model-a"))
+
+
 class Phase3LLMClientTests(unittest.TestCase):
     def test_http_400_response_format_retries_without_response_format(self) -> None:
         calls: list[dict[str, object]] = []
@@ -86,7 +105,7 @@ class Phase3LLMClientTests(unittest.TestCase):
         import json as json_module
 
         with patch("prism.llm.httpx.Client", FakeClient):
-            generation = LLMClient(LLMConfig("https://llm.example", "key", "model-a")).generate_note({"title": "T"}, "profile")
+            generation = LLMClient(LLMConfig("https://llm.example", "key", "model-a")).generate_note({"title": "T"})
 
         self.assertEqual(generation.data["title"], "Generated Title")
         self.assertIn("response_format", calls[0])
@@ -114,7 +133,7 @@ class Phase3LLMClientTests(unittest.TestCase):
         import json as json_module
 
         with patch("prism.llm.httpx.Client", FakeClient):
-            generation = LLMClient(LLMConfig("https://llm.example", "key", "model-a")).generate_note({"title": "T"}, "profile")
+            generation = LLMClient(LLMConfig("https://llm.example", "key", "model-a")).generate_note({"title": "T"})
 
         self.assertEqual(generation.data["title"], "Generated Title")
 
@@ -142,7 +161,7 @@ class Phase3LLMClientTests(unittest.TestCase):
         import json as json_module
 
         with patch("prism.llm.httpx.Client", FakeClient):
-            generation = LLMClient(LLMConfig("https://llm.example", "key", "model-a")).generate_note({"title": "T"}, "profile", web=True)
+            generation = LLMClient(LLMConfig("https://llm.example", "key", "model-a")).generate_note({"title": "T"}, web=True)
 
         self.assertEqual(generation.data["title"], "Generated Title")
         self.assertEqual(calls[0]["plugins"], [{"id": "web"}])
@@ -174,7 +193,7 @@ class Phase3LLMClientTests(unittest.TestCase):
                 )
 
         with patch("prism.llm.httpx.Client", FakeClient):
-            generation = LLMClient(LLMConfig("https://llm.example", "key", "model-a")).generate_note({"title": "T"}, "profile", web=True)
+            generation = LLMClient(LLMConfig("https://llm.example", "key", "model-a")).generate_note({"title": "T"}, web=True)
 
         self.assertEqual(generation.data["title"], "Generated Title")
         # Progressive fallback: rf+web → rf dropped (web kept) → web dropped.
@@ -209,7 +228,7 @@ class LLMRetryTests(unittest.TestCase):
                 return LLMRetryTests._ok_response(url)
 
         with patch("prism.llm.httpx.Client", FakeClient), patch("prism.llm.time.sleep"):
-            gen = self._client().generate_note({"title": "T"}, "profile")
+            gen = self._client().generate_note({"title": "T"})
         self.assertEqual(len(calls), 3)
         self.assertEqual(gen.data["title"], "Generated Title")
 
@@ -240,7 +259,7 @@ class LLMRetryTests(unittest.TestCase):
 
         with patch("prism.llm.httpx.Client", FakeClient):
             with self.assertLogs("prism.llm", level="INFO") as cm:
-                self._client().generate_note({"title": "T"}, "profile")
+                self._client().generate_note({"title": "T"})
         self.assertTrue(any("LLM usage" in line and "total=15" in line for line in cm.output))
 
 
@@ -300,7 +319,7 @@ class Phase3NoteServiceTests(unittest.TestCase):
             service = NoteService(root / "vault", db, root / "archives", LLMConfig("https://llm.example", "key", "model-a"))
             generation = LLMGeneration(structured(), "model-a")
 
-            with patch("prism.notes.fetch_source", return_value=fetch_result(root)), patch("prism.notes.LLMClient.generate_note", return_value=generation):
+            with patch("prism.notes.fetch_source", return_value=fetch_result(root)), patch("prism.notes.LLMClient.generate_note", return_value=generation), _patch_personalize():
                 result = service.save_url("https://example.com/article")
 
             self.assertEqual(result.record.title, "Generated Title")
@@ -381,7 +400,7 @@ class Phase3NoteServiceTests(unittest.TestCase):
             )
             db.insert_note(record)
 
-            with patch("prism.notes.LLMClient.generate_note", return_value=LLMGeneration(structured(), "model-a")):
+            with patch("prism.notes.LLMClient.generate_note", return_value=LLMGeneration(structured(), "model-a")), _patch_personalize():
                 result = service.reprocess("abc123")
 
             self.assertTrue(result.ok)
@@ -409,7 +428,7 @@ class Phase3NoteServiceTests(unittest.TestCase):
             )
             db.insert_note(record)
 
-            with patch("prism.notes.LLMClient.generate_note", return_value=LLMGeneration(structured(), "model-a")) as generate:
+            with patch("prism.notes.LLMClient.generate_note", return_value=LLMGeneration(structured(), "model-a")) as generate, _patch_personalize():
                 result = service.research_note("abc123")
 
             self.assertTrue(result.ok)
@@ -438,7 +457,7 @@ class Phase3NoteServiceTests(unittest.TestCase):
                 fetch_status="fetched", source_kind="website", local_archive=str(archive), metadata_json="{}",
             ))
             gen = LLMGeneration(structured(), "model-a", web_sources=[{"url": "https://src.example/x", "title": "X"}])
-            with patch("prism.notes.LLMClient.generate_note", return_value=gen):
+            with patch("prism.notes.LLMClient.generate_note", return_value=gen), _patch_personalize():
                 result = service.research_note("abc123")
             self.assertTrue(result.ok)
             metadata = json.loads(db.find_by_note_id("abc123").metadata_json)
@@ -469,7 +488,8 @@ class Phase3NoteServiceTests(unittest.TestCase):
                 )
 
             with patch("prism.notes.fetch_source", side_effect=fake_fetch), \
-                 patch("prism.notes.LLMClient.generate_note", return_value=LLMGeneration(structured(), "model-a")):
+                 patch("prism.notes.LLMClient.generate_note", return_value=LLMGeneration(structured(), "model-a")), \
+                 _patch_personalize():
                 result = service.reprocess("abc123")
             self.assertTrue(result.ok)
             self.assertEqual(db.find_by_note_id("abc123").fetch_status, "fetched")
@@ -493,7 +513,7 @@ class Phase3NoteServiceTests(unittest.TestCase):
             )
             db.insert_note(record)
 
-            with patch("prism.notes.extract_website_text", return_value=("A", "Recovered website text", {"extraction_fallback": "embedded_html"})), patch("prism.notes.LLMClient.generate_note", return_value=LLMGeneration(structured(), "model-a")):
+            with patch("prism.notes.extract_website_text", return_value=("A", "Recovered website text", {"extraction_fallback": "embedded_html"})), patch("prism.notes.LLMClient.generate_note", return_value=LLMGeneration(structured(), "model-a")), _patch_personalize():
                 result = service.reprocess("abc123")
 
             self.assertTrue(result.ok)
@@ -575,6 +595,182 @@ class Phase3RenderTests(unittest.TestCase):
         note = render_note(record, "body")
         self.assertIn("Not provided.", note)
         self.assertIn("summary_status: generated", note)
+
+
+class PersonalizationSplitTests(unittest.TestCase):
+    """The two-call split: ground truth (call 1) vs. personalization (call 2)."""
+
+    def _config(self) -> LLMConfig:
+        return LLMConfig("https://llm.example", "key", "model-a")
+
+    def _seed_note(self, root: Path, db: PrismDatabase) -> NoteService:
+        service = NoteService(root / "vault", db, root / "archives", self._config())  # no indexer
+        with patch("prism.notes.fetch_source", return_value=fetch_result(root)), \
+             patch("prism.notes.LLMClient.generate_note", return_value=LLMGeneration(structured(), "model-a")), \
+             _patch_personalize():
+            service.save_url("https://example.com/article")
+        return service
+
+    def test_personalize_payload_carries_profile_and_groundtruth_no_source(self) -> None:
+        calls: list[dict] = []
+
+        class FakeClient:
+            def __init__(self, timeout) -> None: ...
+            def __enter__(self): return self
+            def __exit__(self, *a): return None
+            def post(self, url, headers, json):
+                calls.append(json)
+                return httpx.Response(
+                    200, request=httpx.Request("POST", url),
+                    json={"model": "model-a", "choices": [{"message": {"content": json_lib.dumps(personalization())}}]},
+                )
+
+        import json as json_lib
+
+        with patch("prism.llm.httpx.Client", FakeClient):
+            LLMClient(self._config()).personalize_note({"title": "T", "quick_summary": "S"}, "my-profile")
+
+        body = json_lib.loads(calls[0]["messages"][1]["content"])
+        self.assertEqual(body["profile"], "my-profile")
+        self.assertEqual(body["note"]["quick_summary"], "S")
+        self.assertNotIn("extracted_text", json_lib.dumps(body))
+
+    def test_personalize_note_400_drops_response_format(self) -> None:
+        import json as json_lib
+        calls: list[dict] = []
+
+        class FakeClient:
+            def __init__(self, timeout) -> None: ...
+            def __enter__(self): return self
+            def __exit__(self, *a): return None
+            def post(self, url, headers, json):
+                calls.append(json)
+                if "response_format" in json:
+                    return httpx.Response(400, request=httpx.Request("POST", url), json={"error": "bad"})
+                return httpx.Response(
+                    200, request=httpx.Request("POST", url),
+                    json={"model": "model-a", "choices": [{"message": {"content": json_lib.dumps(personalization())}}]},
+                )
+
+        with patch("prism.llm.httpx.Client", FakeClient):
+            gen = LLMClient(self._config()).personalize_note({"title": "T"}, "p")
+        self.assertEqual(gen.data["relevance"], 9)
+        self.assertIn("response_format", calls[0])
+        self.assertNotIn("response_format", calls[1])
+
+    def test_personalization_context_excludes_source_text(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = PrismDatabase(root / "prism.sqlite3")
+            service = self._seed_note(root, db)
+            captured: dict = {}
+
+            def fake_personalize(ground_truth, profile):
+                captured["gt"] = ground_truth
+                captured["profile"] = profile
+                return LLMGeneration(personalization(), "model-a")
+
+            note_id = db.list_notes_for_reindexing()[0].note_id
+            with patch("prism.notes.LLMClient.personalize_note", side_effect=fake_personalize):
+                service.repersonalize(note_id)
+            self.assertNotIn("extracted_text", captured["gt"])
+            self.assertEqual(captured["gt"]["quick_summary"], "Fast practical summary.")
+            self.assertIn("Personal Profile", captured["profile"])
+
+    def test_repersonalize_only_changes_personal_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = PrismDatabase(root / "prism.sqlite3")
+            service = self._seed_note(root, db)
+            before = db.list_notes_for_reindexing()[0]
+            idx_before = canonical_index_text(before)
+            tags_before = tags_for_record(before)
+            related_before = before.related_notes_json
+            novelty_before = scores_for_record(before)["novelty"]
+            detail_before = structured_summary(before)["detailed_summary"]
+
+            new_personal = {
+                "why_it_matters": "Totally different angle.",
+                "personal_relevance": "Now only mildly relevant.",
+                "project_ideas": ["A different demo"],
+                "relevance": 3, "actionability": 2, "interest": 4, "overall": 3,
+            }
+            with patch("prism.notes.LLMClient.personalize_note", return_value=LLMGeneration(new_personal, "model-a")):
+                result = service.repersonalize(before.note_id)
+            self.assertTrue(result.ok)
+            after = result.record
+            scores_after = scores_for_record(after)
+            struct_after = structured_summary(after)
+
+            # Personal fields/scores updated...
+            self.assertEqual(scores_after["relevance"], 3)
+            self.assertEqual(scores_after["overall"], 3)
+            self.assertEqual(struct_after["why_it_matters"], "Totally different angle.")
+            # ...while ground truth is untouched (so the embedding never changes).
+            self.assertEqual(scores_after["novelty"], novelty_before)
+            self.assertEqual(tags_for_record(after), tags_before)
+            self.assertEqual(after.related_notes_json, related_before)
+            self.assertEqual(struct_after["detailed_summary"], detail_before)
+            self.assertEqual(canonical_index_text(after), idx_before)
+
+    def test_repersonalize_rejects_ungenerated_note(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = PrismDatabase(root / "prism.sqlite3")
+            service = NoteService(root / "vault", db, root / "archives", self._config())
+            db.insert_note(NoteRecord(
+                note_id="abc123", source_url="https://a", resolved_url="https://a", note_path="notes/a.md",
+                date_saved="2026-01-01T00:00:00Z", status="unreviewed", title="A", summary="A",
+                fetch_status="fetched", llm_status="failed",
+            ))
+            result = service.repersonalize("abc123")
+            self.assertFalse(result.ok)
+            self.assertIn("LLM status", result.message)
+
+    def test_repersonalize_all_counts_only_generated_notes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = PrismDatabase(root / "prism.sqlite3")
+            service = self._seed_note(root, db)  # 1 generated note
+            db.insert_note(NoteRecord(
+                note_id="skip01", source_url="https://b", resolved_url="https://b", note_path="notes/b.md",
+                date_saved="2026-01-01T00:00:00Z", status="unreviewed", title="B", summary="B",
+                fetch_status="fetched", llm_status="skipped",
+            ))
+            with patch("prism.notes.LLMClient.personalize_note", return_value=LLMGeneration(personalization(), "model-a")):
+                summary = service.repersonalize_all()
+            self.assertEqual(summary.total, 1)
+            self.assertEqual(summary.updated, 1)
+            self.assertEqual(summary.failed, 0)
+
+    def test_reprocess_all_reprocesses_fetched_notes_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = PrismDatabase(root / "prism.sqlite3")
+            service = self._seed_note(root, db)  # 1 fetched + generated note (has archive)
+            db.insert_note(NoteRecord(
+                note_id="unfetched01", source_url="https://b", resolved_url="https://b", note_path="notes/b.md",
+                date_saved="2026-01-01T00:00:00Z", status="unreviewed", title="B", summary="B",
+                fetch_status="failed", llm_status="skipped",
+            ))
+            with patch("prism.notes.LLMClient.generate_note", return_value=LLMGeneration(structured(), "model-a")), \
+                 _patch_personalize():
+                summary = service.reprocess_all()
+            # The un-fetched note is skipped (no archive to reprocess from).
+            self.assertEqual(summary.total, 1)
+            self.assertEqual(summary.reprocessed, 1)
+            self.assertEqual(summary.failed, 0)
+
+    def test_profile_update_triggers_bulk_repersonalization(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = PrismDatabase(root / "prism.sqlite3")
+            service = self._seed_note(root, db)
+            with patch("prism.notes.LLMClient.rewrite_profile", return_value="# Personal Profile\n\nNew interests."), \
+                 patch("prism.notes.LLMClient.personalize_note", return_value=LLMGeneration(personalization(), "model-a")):
+                result = service.update_profile("now into reinforcement learning")
+            self.assertTrue(result.ok)
+            self.assertIn("Re-personalized 1/1", result.message)
 
 
 if __name__ == "__main__":

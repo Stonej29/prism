@@ -25,6 +25,13 @@ def note_system_prompt() -> str:
     )
 
 
+def personalize_system_prompt() -> str:
+    return _replace_tokens(
+        _read_prompt("personalize_system.md"),
+        {"{{SCORING_RUBRIC}}": scoring_rubric()},
+    )
+
+
 def idea_system_prompt() -> str:
     return _read_prompt("idea_system.md")
 

@@ -13,6 +13,19 @@ class PromptTests(unittest.TestCase):
         self.assertIn("SCORING:", prompt)
         self.assertNotIn("{{SCORING_RUBRIC}}", prompt)
 
+    def test_personalize_prompt_expands_rubric_and_targets_personal_fields(self) -> None:
+        prompt = prompts.personalize_system_prompt()
+
+        self.assertIn("Return only a valid JSON object", prompt)
+        self.assertIn("personal_relevance", prompt)
+        self.assertIn("SCORING:", prompt)
+        self.assertNotIn("{{SCORING_RUBRIC}}", prompt)
+
+    def test_ground_truth_prompt_omits_personal_fields(self) -> None:
+        prompt = prompts.note_system_prompt()
+        # Personal fields are produced by the separate personalization pass, not here.
+        self.assertNotIn("personal_relevance", prompt)
+
     def test_profile_prompt_modes_are_expanded(self) -> None:
         reset = prompts.profile_system_prompt("reset")
         update = prompts.profile_system_prompt("update")

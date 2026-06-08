@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ExternalLink, Loader2, RotateCw, Share2, Telescope, Trash2 } from "lucide-react";
+import { ExternalLink, Loader2, RotateCw, Share2, Telescope, Trash2, UserCog } from "lucide-react";
 import { P } from "../theme";
 import type { NoteDetail } from "../types";
 import { SourceBadge } from "./SourceBadge";
@@ -103,6 +103,7 @@ export function NotePane({
   loading,
   busy,
   reprocessing,
+  repersonalizing,
   researching,
   open,
   onToggle,
@@ -111,6 +112,7 @@ export function NotePane({
   onSelectRelated,
   onShowRelated,
   onReprocess,
+  onRepersonalize,
   onResearch,
   onDelete,
   onEditTags,
@@ -123,6 +125,7 @@ export function NotePane({
   loading: boolean;
   busy: boolean;
   reprocessing: boolean;
+  repersonalizing: boolean;
   researching: boolean;
   open: boolean;
   onToggle: () => void;
@@ -131,6 +134,7 @@ export function NotePane({
   onSelectRelated: (id: string) => void;
   onShowRelated: (id: string) => void;
   onReprocess: (id: string) => void;
+  onRepersonalize: (id: string) => void;
   onResearch: (id: string) => void;
   onDelete: (id: string) => void;
   onEditTags: (id: string, tags: string[]) => void;
@@ -177,7 +181,7 @@ export function NotePane({
     );
   }
 
-  if (loading || reprocessing) return wrap(<NoteSkeleton />);
+  if (loading || reprocessing || repersonalizing) return wrap(<NoteSkeleton />);
   if (!note)
     return wrap(
       <div style={{ padding: 24, fontFamily: P.sans, fontSize: 13, color: P.faint }}>
@@ -426,6 +430,7 @@ export function NotePane({
 
       <div style={{ padding: "10px 16px", borderTop: `1px solid ${P.line}`, display: "flex", alignItems: "center", gap: 4 }}>
         <IconButton icon={RotateCw} busy={reprocessing} disabled={busy && !reprocessing} title="Reprocess from saved text" onClick={() => onReprocess(note.id)} />
+        <IconButton icon={UserCog} busy={repersonalizing} disabled={busy && !repersonalizing} title="Re-personalize against your profile" onClick={() => onRepersonalize(note.id)} />
         <IconButton icon={Telescope} busy={researching} disabled={busy && !researching} title="Research with web search" onClick={() => onResearch(note.id)} />
         <span style={{ marginLeft: "auto" }}>
           <IconButton icon={Trash2} danger disabled={busy} title="Delete note" onClick={() => { if (confirm(`Delete \"${note.title}\"?`)) onDelete(note.id); }} />
