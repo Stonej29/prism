@@ -20,12 +20,19 @@ import type {
   Usage,
 } from "./types";
 
+// Lets the app bounce back to the login screen if a session expires mid-use.
+let onUnauthorized: (() => void) | null = null;
+export function setUnauthorizedHandler(fn: (() => void) | null): void {
+  onUnauthorized = fn;
+}
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`/api${path}`, {
     headers: { "Content-Type": "application/json" },
     ...init,
   });
   if (!res.ok) {
+    if (res.status === 401) onUnauthorized?.();
     let detail = res.statusText;
     try {
       detail = (await res.json()).detail ?? detail;
@@ -160,6 +167,60 @@ export const api = {
     req<MaintenanceSettings>(`/maintenance/settings`, { method: "PUT", body: JSON.stringify(body) }),
 
   activity: () => req<ActivityPayload>(`/activity`),
+
+  authStatus: () =>
+    req<{ auth_required: boolean; authenticated: boolean; needs_setup: boolean; env_locked: boolean }>(`/auth/status`),
+
+  setupAccount: (username: string, password: string) =>
+    req<{ ok?: boolean; authenticated: boolean }>(`/auth/setup`, {
+      method: "POST",
+      body: JSON.stringify({ username, password }),
+    }),
+
+  login: (username: string, password: string) =>
+    req<{ ok?: boolean; authenticated: boolean }>(`/auth/login`, {
+      method: "POST",
+      body: JSON.stringify({ username, password }),
+    }),
+
+  logout: () => req<{ ok: boolean; authenticated: boolean }>(`/auth/logout`, { method: "POST" }),
+
+  changePassword: (current_password: string, new_password: string) =>
+    req<{ ok: boolean; authenticated: boolean }>(`/auth/change-password`, {
+      method: "POST",
+      body: JSON.stringify({ current_password, new_password }),
+    }),
+
+  getSettings: () => req<SettingsConfig>(`/settings`),
+
+  saveSettings: (body: SettingsUpdate) =>
+    req<SettingsConfig>(`/settings`, { method: "PUT", body: JSON.stringify(body) }),
 };
+
+export interface SettingsField {
+  value: string;
+  source: "env" | "store" | "unset";
+  locked: boolean;
+}
+export interface SettingsSecret {
+  configured: boolean;
+  source: "env" | "store" | "unset";
+  locked: boolean;
+}
+export interface SettingsConfig {
+  llm: { configured: boolean; base_url: SettingsField; model: SettingsField; api_key: SettingsSecret };
+  embedding: { configured: boolean; base_url: SettingsField; model: SettingsField; api_key: SettingsSecret };
+  telegram: { configured: boolean; allowed_user_ids: SettingsField; bot_token: SettingsSecret; applies_on_restart: boolean };
+}
+export type SettingsUpdate = Partial<{
+  llm_base_url: string;
+  llm_api_key: string;
+  llm_model: string;
+  embedding_base_url: string;
+  embedding_api_key: string;
+  embedding_model: string;
+  telegram_bot_token: string;
+  telegram_allowed_user_ids: string;
+}>;
 
 export type { Proposal };

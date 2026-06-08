@@ -4,6 +4,8 @@ import { P } from "../theme";
 import { Backdrop } from "./AskOverlay";
 import { MaintenancePanel } from "./MaintenancePanel";
 import { TextAction } from "./TextAction";
+import { ConnectionsSettings } from "./ConnectionsSettings";
+import { AccountSettings } from "./AccountSettings";
 
 function SettingsSection({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -25,6 +27,7 @@ export function SettingsOverlay({
   onRunMaintenance,
   onReviewProposals,
   onOpenLog,
+  onLogout,
 }: {
   onClose: () => void;
   onPullFeeds: () => void;
@@ -34,6 +37,7 @@ export function SettingsOverlay({
   onRunMaintenance: () => void | Promise<void>;
   onReviewProposals: () => void;
   onOpenLog: () => void;
+  onLogout: () => void;
 }) {
   const [profile, setProfile] = useState<string | null>(null);
   const [profileDirty, setProfileDirty] = useState(false);
@@ -67,6 +71,10 @@ export function SettingsOverlay({
         <span style={{ fontFamily: P.mono, fontSize: 13, letterSpacing: 1, color: P.hi }}>Settings</span>
         <span onClick={onClose} style={{ fontFamily: P.mono, fontSize: 11, color: P.mid, cursor: "pointer" }}>close</span>
       </div>
+
+      <SettingsSection title="Connections">
+        <ConnectionsSettings />
+      </SettingsSection>
 
       <SettingsSection title="Profile">
         <div style={{ fontFamily: P.sans, fontSize: 11.5, color: P.lo, marginBottom: 8 }}>
@@ -107,6 +115,10 @@ export function SettingsOverlay({
         onReviewProposals={onReviewProposals}
         onOpenLog={onOpenLog}
       />
+
+      <SettingsSection title="Account">
+        <AccountSettings onLogout={onLogout} />
+      </SettingsSection>
     </Backdrop>
   );
 }

@@ -4,6 +4,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from prism.settings_store import load_overrides, merged
+
 
 @dataclass(frozen=True)
 class Settings:
@@ -22,33 +24,31 @@ class Settings:
 
 
 def load_settings(*, require_telegram: bool = True) -> Settings:
-    token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+    # env wins, then UI-set overrides in runtime/settings.json, then defaults.
+    overrides = load_overrides()
+
+    token = (merged("telegram_bot_token", overrides, "") or "").strip()
     if require_telegram and not token:
         raise RuntimeError("TELEGRAM_BOT_TOKEN is required. Copy .env.example to .env and set it.")
 
-    allowed_user_ids = _parse_allowed_user_ids(os.getenv("TELEGRAM_ALLOWED_USER_IDS", ""))
+    allowed_user_ids = _parse_allowed_user_ids(merged("telegram_allowed_user_ids", overrides, "") or "")
     if require_telegram and not allowed_user_ids:
         raise RuntimeError("TELEGRAM_ALLOWED_USER_IDS is required. Use comma-separated numeric Telegram user IDs.")
 
     return Settings(
         telegram_bot_token=token,
         telegram_allowed_user_ids=frozenset(allowed_user_ids),
-        llm_base_url=os.getenv("LLM_BASE_URL", "https://openrouter.ai/api/v1").strip(),
-        llm_api_key=_optional_env("LLM_API_KEY"),
-        llm_model=_optional_env("LLM_MODEL"),
-        embedding_base_url=os.getenv("EMBEDDING_BASE_URL", "https://api.openai.com/v1").strip(),
-        embedding_api_key=_optional_env("EMBEDDING_API_KEY"),
-        embedding_model=_optional_env("EMBEDDING_MODEL"),
+        llm_base_url=merged("llm_base_url", overrides, "https://openrouter.ai/api/v1"),
+        llm_api_key=merged("llm_api_key", overrides),
+        llm_model=merged("llm_model", overrides),
+        embedding_base_url=merged("embedding_base_url", overrides, "https://api.openai.com/v1"),
+        embedding_api_key=merged("embedding_api_key", overrides),
+        embedding_model=merged("embedding_model", overrides),
         vault_path=Path(os.getenv("VAULT_PATH", "/data/research-vault")),
         sqlite_path=Path(os.getenv("SQLITE_PATH", "/data/prism.sqlite3")),
         archive_path=Path(os.getenv("ARCHIVE_PATH", "/data/archives")),
         lancedb_path=Path(os.getenv("LANCEDB_PATH", "/data/lancedb")),
     )
-
-
-def _optional_env(name: str) -> str | None:
-    value = os.getenv(name, "").strip()
-    return value or None
 
 
 def _parse_allowed_user_ids(raw: str) -> set[int]:

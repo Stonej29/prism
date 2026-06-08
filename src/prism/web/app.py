@@ -6,63 +6,71 @@ single-page app at / (mounted last so /api/* always wins).
 """
 from __future__ import annotations
 
-import base64
-import binascii
+import ipaddress
+import logging
 import os
-import secrets
 from pathlib import Path
 
 from fastapi import APIRouter, FastAPI, Request
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from prism.web.routes import activity, files, graph, ideas, maintenance, notes, profile, proposals, search, stats, tags, tree
+from prism.web import auth
+from prism.web.routes import activity, files, graph, ideas, maintenance, notes, profile, proposals, search, settings, stats, tags, tree
+from prism.web.routes import auth as auth_routes
+
+logger = logging.getLogger(__name__)
+
+# Auth-status is always reachable so the SPA can decide what screen to show.
+# The static shell (non-/api paths) is always public — it carries no vault data.
+_STATUS_PATH = "/api/auth/status"
 
 
-def _basic_auth_credentials() -> tuple[str, str] | None:
-    username = os.getenv("PRISM_WEB_USERNAME", "").strip()
-    password = os.getenv("PRISM_WEB_PASSWORD", "")
-    if not username and not password:
-        return None
-    if not username or not password:
-        raise RuntimeError("PRISM_WEB_USERNAME and PRISM_WEB_PASSWORD must be set together.")
-    return username, password
-
-
-def _is_authorized(auth_header: str | None, credentials: tuple[str, str]) -> bool:
-    if not auth_header:
-        return False
-    scheme, _, token = auth_header.partition(" ")
-    if scheme.lower() != "basic" or not token:
-        return False
+def _is_loopback_host(host: str) -> bool:
+    host = host.strip().strip("[]")
+    if host in {"", "localhost"}:
+        return True
     try:
-        decoded = base64.b64decode(token, validate=True).decode("utf-8")
-    except (binascii.Error, UnicodeDecodeError):
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        # A non-literal hostname we can't classify; treat as non-loopback so the
+        # auth guard errs on the safe side.
         return False
-    username, sep, password = decoded.partition(":")
-    if sep != ":":
-        return False
-    expected_username, expected_password = credentials
-    return secrets.compare_digest(username, expected_username) and secrets.compare_digest(password, expected_password)
 
 
-def _auth_challenge() -> Response:
-    return Response(
-        "Authentication required",
-        status_code=401,
-        headers={"WWW-Authenticate": 'Basic realm="PRISM"'},
-    )
+def _auth_enforced(authenticator: auth.Authenticator) -> bool:
+    """Enforce auth when an account exists, or when bound to a LAN interface.
+
+    Loopback with no account stays open (local-dev convenience); a LAN-exposed
+    bind with no account enters first-run setup mode instead of serving openly.
+    """
+    if authenticator.is_configured():
+        return True
+    host = os.getenv("PRISM_WEB_HOST", "127.0.0.1")
+    return not _is_loopback_host(host)
 
 
-def _install_basic_auth(app: FastAPI, credentials: tuple[str, str] | None) -> None:
-    if credentials is None:
-        return
-
+def _install_auth(app: FastAPI, authenticator: auth.Authenticator) -> None:
     @app.middleware("http")
-    async def basic_auth(request: Request, call_next):  # type: ignore[no-untyped-def]
-        if not _is_authorized(request.headers.get("authorization"), credentials):
-            return _auth_challenge()
-        return await call_next(request)
+    async def gate(request: Request, call_next):  # type: ignore[no-untyped-def]
+        path = request.url.path
+        # Static SPA shell and the status probe stay public so the browser can
+        # load and decide between the setup / login / vault screens.
+        if not path.startswith("/api/") or path == _STATUS_PATH:
+            return await call_next(request)
+        if authenticator.needs_setup():
+            # First run: only the create-account endpoint is reachable.
+            if path == "/api/auth/setup":
+                return await call_next(request)
+            return JSONResponse({"detail": "Account setup required"}, status_code=401)
+        # Configured: login/logout are public; setup is closed; the rest needs auth.
+        if path in {"/api/auth/login", "/api/auth/logout"}:
+            return await call_next(request)
+        if path == "/api/auth/setup":
+            return JSONResponse({"detail": "An account already exists."}, status_code=409)
+        if authenticator.authenticated(request.cookies.get(auth.COOKIE_NAME), request.headers.get("authorization")):
+            return await call_next(request)
+        return JSONResponse({"detail": "Authentication required"}, status_code=401)
 
 
 def _static_dir() -> Path | None:
@@ -80,10 +88,21 @@ def _static_dir() -> Path | None:
 
 def create_app() -> FastAPI:
     app = FastAPI(title="PRISM", version="0.1.0")
-    _install_basic_auth(app, _basic_auth_credentials())
+    authenticator = auth.Authenticator.from_env()
+    enforced = _auth_enforced(authenticator)
+    app.state.authenticator = authenticator
+    app.state.auth_enforced = enforced
+    if enforced:
+        if authenticator.needs_setup():
+            logger.warning(
+                "PRISM web UI is exposed without an account; the first browser to reach it "
+                "can create the owner login. Set PRISM_WEB_USERNAME/PRISM_WEB_PASSWORD to "
+                "pin credentials, or keep it on a trusted network."
+            )
+        _install_auth(app, authenticator)
 
     api = APIRouter(prefix="/api")
-    for module in (notes, graph, tags, stats, search, ideas, proposals, maintenance, tree, files, activity, profile):
+    for module in (notes, graph, tags, stats, search, ideas, proposals, maintenance, tree, files, activity, profile, settings, auth_routes):
         api.include_router(module.router)
     app.include_router(api)
 

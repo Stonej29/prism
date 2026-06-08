@@ -42,7 +42,7 @@ Get your bot token from [@BotFather](https://t.me/BotFather). Get your user ID f
 
 **2. Add LLM and embedding services (optional but recommended)**
 
-Without these, links are still fetched and archived but notes won't be summarized and semantic search won't work.
+Without these, links are still fetched and archived but notes won't be summarized and semantic search won't work. You can either set them in `.env` **or** enter them later in the web UI under **Settings → Connections** (stored privately in `runtime/settings.json`, applied without a restart). Values set in `.env` take precedence and lock the corresponding UI field.
 
 ```env
 LLM_BASE_URL=https://openrouter.ai/api/v1   # default; change for other providers
@@ -115,6 +115,7 @@ PRISM also ships a self-hosted **web UI** — a dark, three-pane "Atlas" workspa
 - **Center** — an interactive, force-directed **graph** of your notes and their links; click a node to open it, or use a note's **related** button to highlight its neighbors.
 - **Right** — the full note (summary, key claims, scores, backlinks, tags, metadata) in collapsible sections. Both side panels fold and are drag-resizable.
 - **Top bar** — `/ask` and `/find` (toggle the icon), a `+` to save a URL, and a 💡 lightbulb that generates an idea in the background.
+- **Settings** (gear icon) — edit the personal profile, run feeds/maintenance, set **Connections** (LLM/embedding base URL, model, and API keys — stored privately, applied live), and manage your **Account** (change password, log out). Fields configured via environment variables show as locked.
 
 It exposes the same actions as the bot: save URLs, ask, find, generate and rate ideas, reprocess, edit tags, rename (double-click the title), set review status, and delete.
 
@@ -122,10 +123,10 @@ Run it as a second container (shares `runtime/`; the bot is untouched):
 
 ```sh
 docker compose build prism-web
-docker compose up -d prism-web      # serves http://127.0.0.1:8000
+docker compose up -d prism-web      # serves http://<host>:8000
 ```
 
-By default Docker Compose publishes the web UI on host loopback only (`127.0.0.1:8000`), so it is not reachable from other devices. To expose it on a trusted LAN/VPN, set `PRISM_WEB_USERNAME` and `PRISM_WEB_PASSWORD`, then intentionally change the Compose port binding or reverse-proxy it. Do not expose PRISM directly to the public internet.
+Docker Compose publishes the web UI on all interfaces (`8000:8000`), so it is reachable from other devices on your network. The UI has full owner access (delete, reprocess, profile editing, feed ingestion), so on a network-exposed bind it requires a login. On first run it shows a **"create your account"** screen; pick a username and password and that credential is stored (hashed) under `runtime/`. A signed session cookie keeps you signed in afterwards. Because that first-run setup is open until an account exists, keep PRISM on a trusted LAN/VPN and create the account promptly — or pin the credential ahead of time by setting `PRISM_WEB_USERNAME`/`PRISM_WEB_PASSWORD` (which also disables in-UI account creation). Do not expose PRISM directly to the public internet. To run loopback-only with no login, set `PRISM_WEB_HOST=127.0.0.1` and bind the Compose port to `127.0.0.1:8000:8000`.
 
 **Local development** — FastAPI with autoreload plus the Vite dev server proxying `/api`:
 

@@ -58,3 +58,34 @@ class MergeTagBody(BaseModel):
 
 class ProfileBody(BaseModel):
     content: str = Field(..., max_length=100_000)
+
+
+class LoginBody(BaseModel):
+    username: str = Field(..., min_length=1, max_length=256)
+    password: str = Field(..., min_length=1, max_length=1024)
+
+
+class SetupBody(BaseModel):
+    username: str = Field(..., min_length=1, max_length=256)
+    password: str = Field(..., min_length=8, max_length=1024)
+
+
+class ChangePasswordBody(BaseModel):
+    current_password: str = Field(..., min_length=1, max_length=1024)
+    new_password: str = Field(..., min_length=8, max_length=1024)
+
+
+class SettingsBody(BaseModel):
+    """Partial update of UI-editable config.
+
+    Any field omitted/``null`` is left unchanged; an empty string clears the
+    stored value (falling back to env/default); a non-empty string sets it.
+    """
+    llm_base_url: str | None = None
+    llm_api_key: str | None = None
+    llm_model: str | None = None
+    embedding_base_url: str | None = None
+    embedding_api_key: str | None = None
+    embedding_model: str | None = None
+    telegram_bot_token: str | None = None
+    telegram_allowed_user_ids: str | None = None

@@ -119,12 +119,264 @@ class WebAuthTest(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 create_app()
 
+    def test_loopback_unconfigured_is_open(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            env = {
+                "PRISM_WEB_HOST": "127.0.0.1",
+                "PRISM_WEB_USERNAME": "",
+                "PRISM_WEB_PASSWORD": "",
+                "PRISM_WEB_AUTH_FILE": str(Path(tmp) / "web-auth.json"),
+            }
+            with patch.dict("os.environ", env):
+                client = TestClient(create_app())
+                self.assertEqual(
+                    client.get("/api/auth/status").json(),
+                    {"auth_required": False, "authenticated": True, "needs_setup": False, "env_locked": False},
+                )
+
+
+class WebSessionAuthTest(unittest.TestCase):
+    def test_login_establishes_session(self) -> None:
+        with patch.dict("os.environ", {"PRISM_WEB_USERNAME": "owner", "PRISM_WEB_PASSWORD": "secret"}):
+            client = TestClient(create_app())
+            # Status is public and reports an unauthenticated browser.
+            status = client.get("/api/auth/status")
+            self.assertEqual(status.status_code, 200)
+            self.assertEqual(
+                status.json(),
+                {"auth_required": True, "authenticated": False, "needs_setup": False, "env_locked": True},
+            )
+            # A protected route is blocked before any handler runs.
+            self.assertEqual(client.get("/api/stats").status_code, 401)
+            # Wrong credentials are rejected.
+            self.assertEqual(
+                client.post("/api/auth/login", json={"username": "owner", "password": "nope"}).status_code, 401
+            )
+            # Correct credentials set a session cookie and flip the status.
+            ok = client.post("/api/auth/login", json={"username": "owner", "password": "secret"})
+            self.assertEqual(ok.status_code, 200)
+            self.assertIn("prism_session", client.cookies)
+            self.assertTrue(client.get("/api/auth/status").json()["authenticated"])
+            # Logout drops the session.
+            client.post("/api/auth/logout")
+            self.assertFalse(client.get("/api/auth/status").json()["authenticated"])
+            self.assertEqual(client.get("/api/stats").status_code, 401)
+
+    def test_tampered_cookie_is_rejected(self) -> None:
+        with patch.dict("os.environ", {"PRISM_WEB_USERNAME": "owner", "PRISM_WEB_PASSWORD": "secret"}):
+            client = TestClient(create_app())
+            client.cookies.set("prism_session", "Zm9yZ2Vk.badsignature")
+            self.assertEqual(client.get("/api/stats").status_code, 401)
+
+
+class WebSetupFlowTest(unittest.TestCase):
+    def _env(self, tmp: str, **extra: str) -> dict[str, str]:
+        env = {
+            "PRISM_WEB_HOST": "0.0.0.0",
+            "PRISM_WEB_USERNAME": "",
+            "PRISM_WEB_PASSWORD": "",
+            "PRISM_WEB_AUTH_FILE": str(Path(tmp) / "web-auth.json"),
+        }
+        env.update(extra)
+        return env
+
+    def test_first_run_setup_then_persistent_login(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.dict("os.environ", self._env(tmp)):
+                client = TestClient(create_app())
+                status = client.get("/api/auth/status").json()
+                self.assertTrue(status["auth_required"])
+                self.assertTrue(status["needs_setup"])
+                self.assertFalse(status["authenticated"])
+                # Data and login are closed until the account exists.
+                self.assertEqual(client.get("/api/stats").status_code, 401)
+                self.assertEqual(
+                    client.post("/api/auth/login", json={"username": "me", "password": "longenough"}).status_code, 401
+                )
+                # Password policy is enforced.
+                self.assertEqual(
+                    client.post("/api/auth/setup", json={"username": "me", "password": "short"}).status_code, 422
+                )
+                # Creating the account auto-logs-in via a session cookie.
+                created = client.post("/api/auth/setup", json={"username": "me", "password": "longenough"})
+                self.assertEqual(created.status_code, 200)
+                self.assertIn("prism_session", client.cookies)
+                after = client.get("/api/auth/status").json()
+                self.assertTrue(after["authenticated"])
+                self.assertFalse(after["needs_setup"])
+                # Setup is now closed.
+                self.assertEqual(
+                    client.post("/api/auth/setup", json={"username": "x", "password": "longenough"}).status_code, 409
+                )
+
+            # A fresh process over the same store requires login (credential persisted).
+            with patch.dict("os.environ", self._env(tmp)):
+                client = TestClient(create_app())
+                fresh = client.get("/api/auth/status").json()
+                self.assertFalse(fresh["needs_setup"])
+                self.assertFalse(fresh["authenticated"])
+                self.assertEqual(
+                    client.post("/api/auth/login", json={"username": "me", "password": "wrong"}).status_code, 401
+                )
+                ok = client.post("/api/auth/login", json={"username": "me", "password": "longenough"})
+                self.assertEqual(ok.status_code, 200)
+                self.assertTrue(client.get("/api/auth/status").json()["authenticated"])
+
+    def test_env_credentials_lock_ui_setup(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            env = self._env(tmp, PRISM_WEB_USERNAME="owner", PRISM_WEB_PASSWORD="secret")
+            with patch.dict("os.environ", env):
+                client = TestClient(create_app())
+                status = client.get("/api/auth/status").json()
+                self.assertTrue(status["env_locked"])
+                self.assertFalse(status["needs_setup"])
+                self.assertEqual(
+                    client.post("/api/auth/setup", json={"username": "x", "password": "longenough"}).status_code, 409
+                )
+
+
+class WebAccountTest(unittest.TestCase):
+    def _env(self, tmp: str, **extra: str) -> dict[str, str]:
+        env = {
+            "PRISM_WEB_HOST": "0.0.0.0",
+            "PRISM_WEB_USERNAME": "",
+            "PRISM_WEB_PASSWORD": "",
+            "PRISM_WEB_AUTH_FILE": str(Path(tmp) / "web-auth.json"),
+        }
+        env.update(extra)
+        return env
+
+    def test_change_password_rotates_and_keeps_session(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.dict("os.environ", self._env(tmp)):
+                client = TestClient(create_app())
+                client.post("/api/auth/setup", json={"username": "me", "password": "longenough"})
+                # Wrong current password is rejected.
+                self.assertEqual(
+                    client.post(
+                        "/api/auth/change-password",
+                        json={"current_password": "nope", "new_password": "newlongpw"},
+                    ).status_code,
+                    401,
+                )
+                # New password below the policy is a 422 (schema).
+                self.assertEqual(
+                    client.post(
+                        "/api/auth/change-password",
+                        json={"current_password": "longenough", "new_password": "short"},
+                    ).status_code,
+                    422,
+                )
+                # Success: 200 and the session survives the secret rotation.
+                ok = client.post(
+                    "/api/auth/change-password",
+                    json={"current_password": "longenough", "new_password": "newlongpw"},
+                )
+                self.assertEqual(ok.status_code, 200)
+                self.assertTrue(client.get("/api/auth/status").json()["authenticated"])
+            # Fresh process: only the new password works.
+            with patch.dict("os.environ", self._env(tmp)):
+                client = TestClient(create_app())
+                self.assertEqual(
+                    client.post("/api/auth/login", json={"username": "me", "password": "longenough"}).status_code, 401
+                )
+                self.assertEqual(
+                    client.post("/api/auth/login", json={"username": "me", "password": "newlongpw"}).status_code, 200
+                )
+
+    def test_change_password_blocked_when_env_locked(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.dict("os.environ", self._env(tmp, PRISM_WEB_USERNAME="owner", PRISM_WEB_PASSWORD="secret")):
+                client = TestClient(create_app())
+                client.post("/api/auth/login", json={"username": "owner", "password": "secret"})
+                self.assertEqual(
+                    client.post(
+                        "/api/auth/change-password",
+                        json={"current_password": "secret", "new_password": "newlongpw"},
+                    ).status_code,
+                    409,
+                )
+
+
+class WebSettingsTest(unittest.TestCase):
+    def setUp(self) -> None:
+        from prism.web.deps import get_services
+
+        self._get_services = get_services
+        get_services.cache_clear()
+        self._tmp = tempfile.TemporaryDirectory()
+        root = Path(self._tmp.name)
+        self._patch = patch.dict(
+            "os.environ",
+            {
+                "PRISM_WEB_HOST": "127.0.0.1",
+                "PRISM_WEB_USERNAME": "",
+                "PRISM_WEB_PASSWORD": "",
+                "PRISM_WEB_AUTH_FILE": str(root / "web-auth.json"),
+                "PRISM_CONFIG_FILE": str(root / "settings.json"),
+                "SQLITE_PATH": str(root / "prism.sqlite3"),
+                "LANCEDB_PATH": str(root / "lancedb"),
+                "VAULT_PATH": str(root / "vault"),
+                "ARCHIVE_PATH": str(root / "archives"),
+                "LLM_API_KEY": "", "LLM_MODEL": "", "LLM_BASE_URL": "",
+                "EMBEDDING_API_KEY": "", "EMBEDDING_MODEL": "", "EMBEDDING_BASE_URL": "",
+            },
+        )
+        self._patch.start()
+        self.client = TestClient(create_app())
+
+    def tearDown(self) -> None:
+        self._patch.stop()
+        self._get_services.cache_clear()
+        self._tmp.cleanup()
+
+    def test_get_masks_secrets_and_put_reconfigures(self) -> None:
+        cfg = self.client.get("/api/settings").json()
+        self.assertNotIn("value", cfg["llm"]["api_key"])  # the key value is never exposed
+        self.assertFalse(cfg["llm"]["configured"])
+        self.assertFalse(cfg["llm"]["api_key"]["locked"])
+        self.assertFalse(self.client.get("/api/stats").json()["llm_configured"])
+
+        resp = self.client.put(
+            "/api/settings",
+            json={"llm_api_key": "sk-secret-123", "llm_model": "gpt-x", "llm_base_url": "https://prov.example/v1"},
+        )
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertTrue(body["llm"]["configured"])
+        self.assertEqual(body["llm"]["model"]["value"], "gpt-x")
+        self.assertNotIn("sk-secret-123", resp.text)  # secret never echoed back
+        # Reconfigure took effect with no restart.
+        self.assertTrue(self.client.get("/api/stats").json()["llm_configured"])
+
+    def test_env_locked_field_is_not_overwritten(self) -> None:
+        with patch.dict("os.environ", {"LLM_API_KEY": "env-key", "LLM_MODEL": "env-model"}):
+            self._get_services.cache_clear()
+            cfg = self.client.get("/api/settings").json()
+            self.assertTrue(cfg["llm"]["api_key"]["locked"])
+            self.assertEqual(cfg["llm"]["api_key"]["source"], "env")
+            self.client.put("/api/settings", json={"llm_api_key": "hijack"})
+            from prism import settings_store
+
+            self.assertNotIn("llm_api_key", settings_store.load_overrides())
+
 
 class WebApiTest(unittest.TestCase):
     def setUp(self) -> None:
         clear_activity()
         self._tmp = tempfile.TemporaryDirectory()
         root = Path(self._tmp.name)
+        # Pin auth off + loopback so the API stays open regardless of host env.
+        self._env_patch = patch.dict(
+            "os.environ",
+            {
+                "PRISM_WEB_HOST": "127.0.0.1",
+                "PRISM_WEB_USERNAME": "",
+                "PRISM_WEB_PASSWORD": "",
+                "PRISM_WEB_AUTH_FILE": str(root / "web-auth.json"),
+            },
+        )
+        self._env_patch.start()
         self.db = PrismDatabase(root / "prism.sqlite3")
         vault = root / "vault"
         self.vault = vault
@@ -144,6 +396,7 @@ class WebApiTest(unittest.TestCase):
         self.client = TestClient(app)
 
     def tearDown(self) -> None:
+        self._env_patch.stop()
         self._tmp.cleanup()
 
     def test_list_notes_pagination_and_filters(self) -> None:

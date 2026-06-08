@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api } from "./api";
+import { api, setUnauthorizedHandler } from "./api";
 import { P, srcLabel } from "./theme";
 import type { ActivityEntry, AskResult, GraphPayload, Idea, MaintenanceStatus, NoteDetail, Proposal, Stats, TagCount, TreeNode, Usage } from "./types";
 import { TopBar } from "./components/TopBar";
@@ -12,6 +12,7 @@ import { IdeaView } from "./components/IdeaView";
 import { FileViewer, type OpenFile } from "./components/FileViewer";
 import { ActivityLog } from "./components/ActivityLog";
 import { SettingsOverlay } from "./components/SettingsOverlay";
+import { Login } from "./components/Login";
 import type { IdeaStatus } from "./components/Lightbulb";
 
 interface AskState {
@@ -81,9 +82,25 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const selectedIdRef = useRef<string | null>(null);
 
+  // null = still checking; false = show login/setup; true = show vault.
+  const [authed, setAuthed] = useState<boolean | null>(null);
+  const [needsSetup, setNeedsSetup] = useState(false);
+
   useEffect(() => {
     selectedIdRef.current = selectedId;
   }, [selectedId]);
+
+  useEffect(() => {
+    setUnauthorizedHandler(() => setAuthed(false));
+    api
+      .authStatus()
+      .then((s) => {
+        setNeedsSetup(s.needs_setup);
+        setAuthed(s.authenticated);
+      })
+      .catch(() => setAuthed(false));
+    return () => setUnauthorizedHandler(null);
+  }, []);
 
   const selectedAction = selectedId ? processingNotes[selectedId] ?? null : null;
   const clearProcessing = (id: string, action: "reprocess" | "research") =>
@@ -113,8 +130,9 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (authed !== true) return;
     refreshData().catch((e) => setToast(String(e)));
-  }, [refreshData]);
+  }, [authed, refreshData]);
 
   useEffect(() => {
     if (toast) {
@@ -159,6 +177,16 @@ export default function App() {
     setNote(null);
     setRightOpen(false);
     setHighlight(null);
+  }, []);
+
+  const onLogout = useCallback(async () => {
+    try {
+      await api.logout();
+    } catch {
+      /* ignore — fall through to the login screen regardless */
+    }
+    setSettingsOpen(false);
+    setAuthed(false);
   }, []);
 
   const clearFanoutFilters = () => {
@@ -486,6 +514,22 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  if (authed === null) {
+    // Brief auth check; keep the dark canvas to avoid a white flash.
+    return <div style={{ width: "100%", height: "100%", background: P.bg0 }} />;
+  }
+  if (authed === false) {
+    return (
+      <Login
+        needsSetup={needsSetup}
+        onAuthenticated={() => {
+          setNeedsSetup(false);
+          setAuthed(true);
+        }}
+      />
+    );
+  }
+
   return (
     <div style={{ width: "100%", height: "100%", background: P.bg0, color: P.hi, fontFamily: P.sans, display: "flex", flexDirection: "column" }}>
       <TopBar
@@ -616,6 +660,7 @@ export default function App() {
             onRunMaintenance={runTraverse}
             onReviewProposals={openProposals}
             onOpenLog={openActivityLog}
+            onLogout={onLogout}
           />
         )}
       </div>
