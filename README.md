@@ -27,36 +27,13 @@ Needs Docker. From the repo root:
 
 ```sh
 git clone <repo> && cd prism
-cp .env.example .env
+./setup.sh        # scaffolds .env, inits the vault, builds, and starts the stack
 ```
 
-**1. Set the bot credentials** in `.env` — the only required values:
+Then open the **web UI at `http://localhost:8000`**, create your owner account, and add your LLM / embedding / Telegram keys under **Settings → Connections**. Nothing has to be put in `.env` by hand.
 
-```env
-TELEGRAM_BOT_TOKEN=your_bot_token          # from @BotFather
-TELEGRAM_ALLOWED_USER_IDS=your_user_id     # from @userinfobot
-```
-
-LLM and embedding keys are optional here — paste them later in the web UI under **Settings → Connections**. (Set them in `.env` instead to pin/lock them.)
-
-**2. Initialize the vault** (it's its own git repo):
-
-```sh
-mkdir -p runtime/research-vault
-git -C runtime/research-vault init
-printf ".obsidian/workspace*.json\n.trash/\n" > runtime/research-vault/.gitignore
-```
-
-**3. Build and run:**
-
-```sh
-docker compose build
-sudo docker compose up -d
-sudo docker compose logs -f prism
-```
-
-- **Bot** — open Telegram, find your bot, send a link.
-- **Web UI** — open `http://<host>:8000`, create your owner account, then add LLM/embedding keys under **Settings → Connections**.
+- **Telegram bot** — it stays idle until its token + allowed IDs are set (in the UI or `.env`), then connects within ~20s. Get the token from [@BotFather](https://t.me/BotFather), your user ID from [@userinfobot](https://t.me/userinfobot).
+- **Prefer the terminal / no web UI?** Set `LLM_*`, `EMBEDDING_*`, and `TELEGRAM_BOT_TOKEN` + `TELEGRAM_ALLOWED_USER_IDS` in `.env` before running. Env values take precedence and lock the matching UI fields.
 
 > **Fedora/RHEL:** install Docker first — `sudo dnf install docker docker-compose-plugin && sudo systemctl enable --now docker`
 

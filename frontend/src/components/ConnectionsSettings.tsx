@@ -86,6 +86,8 @@ export function ConnectionsSettings() {
   const [embBase, setEmbBase] = useState("");
   const [embModel, setEmbModel] = useState("");
   const [embKey, setEmbKey] = useState("");
+  const [tgIds, setTgIds] = useState("");
+  const [tgToken, setTgToken] = useState("");
 
   const load = (c: SettingsConfig) => {
     setCfg(c);
@@ -93,8 +95,10 @@ export function ConnectionsSettings() {
     setLlmModel(c.llm.model.value);
     setEmbBase(c.embedding.base_url.value);
     setEmbModel(c.embedding.model.value);
+    setTgIds(c.telegram.allowed_user_ids.value);
     setLlmKey("");
     setEmbKey("");
+    setTgToken("");
   };
 
   useEffect(() => {
@@ -116,6 +120,8 @@ export function ConnectionsSettings() {
     if (!cfg.embedding.base_url.locked) body.embedding_base_url = embBase;
     if (!cfg.embedding.model.locked) body.embedding_model = embModel;
     if (!cfg.embedding.api_key.locked && embKey) body.embedding_api_key = embKey;
+    if (!cfg.telegram.allowed_user_ids.locked) body.telegram_allowed_user_ids = tgIds;
+    if (!cfg.telegram.bot_token.locked && tgToken) body.telegram_bot_token = tgToken;
     try {
       const next = await api.saveSettings(body);
       load(next);
@@ -131,8 +137,8 @@ export function ConnectionsSettings() {
   return (
     <div>
       <div style={{ fontFamily: P.sans, fontSize: 11.5, color: P.lo, marginBottom: 12 }}>
-        API keys are stored privately on the server and never shown again. Changes apply to the web app immediately;
-        the Telegram bot picks them up on its next restart.
+        Keys are stored privately on the server and never shown again. LLM and embedding changes apply to the web app
+        immediately; the Telegram bot connects within ~20s of saving.
       </div>
 
       <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 8 }}>
@@ -150,6 +156,16 @@ export function ConnectionsSettings() {
       <TextField label="base url" value={embBase} locked={cfg.embedding.base_url.locked} source={cfg.embedding.base_url.source} onChange={setEmbBase} />
       <TextField label="model" value={embModel} locked={cfg.embedding.model.locked} source={cfg.embedding.model.source} onChange={setEmbModel} />
       <SecretField label="api key" configured={cfg.embedding.api_key.configured} locked={cfg.embedding.api_key.locked} source={cfg.embedding.api_key.source} value={embKey} onChange={setEmbKey} />
+
+      <div style={{ display: "flex", alignItems: "center", gap: 7, margin: "16px 0 4px" }}>
+        <StatusDot ok={cfg.telegram.configured} />
+        <span style={{ fontFamily: P.mono, fontSize: 11, color: P.mid }}>Telegram bot (optional)</span>
+      </div>
+      <div style={{ fontFamily: P.sans, fontSize: 11, color: P.faint, marginBottom: 8 }}>
+        Token from @BotFather; allowed user IDs from @userinfobot (comma-separated).
+      </div>
+      <TextField label="allowed user ids" value={tgIds} locked={cfg.telegram.allowed_user_ids.locked} source={cfg.telegram.allowed_user_ids.source} onChange={setTgIds} />
+      <SecretField label="bot token" configured={cfg.telegram.bot_token.configured} locked={cfg.telegram.bot_token.locked} source={cfg.telegram.bot_token.source} value={tgToken} onChange={setTgToken} />
 
       <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 6 }}>
         <TextAction busy={saving} disabled={saving} onClick={save}>save connections</TextAction>

@@ -4,6 +4,7 @@ import asyncio
 import html
 import logging
 import secrets
+import time
 
 from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
@@ -1216,11 +1217,34 @@ def build_application(settings: Settings) -> Application:
     return application
 
 
+def _await_settings(poll_seconds: int = 20) -> Settings:
+    """Block until Telegram is configured, so the bot container starts idle
+    instead of crash-looping while you finish setup in the web UI.
+
+    Picks up the token/allow-list the moment they appear in env or the runtime
+    config store (`runtime/settings.json`), then connects automatically.
+    """
+    warned = False
+    while True:
+        try:
+            return load_settings()
+        except RuntimeError as exc:
+            if not warned:
+                LOGGER.warning(
+                    "Telegram is not configured yet (%s). Waiting — set TELEGRAM_BOT_TOKEN and "
+                    "TELEGRAM_ALLOWED_USER_IDS in the web UI (Settings) or .env; the bot will "
+                    "connect automatically.",
+                    exc,
+                )
+                warned = True
+            time.sleep(poll_seconds)
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
-    settings = load_settings()
+    settings = _await_settings()
     settings.vault_path.mkdir(parents=True, exist_ok=True)
     settings.archive_path.mkdir(parents=True, exist_ok=True)
     LOGGER.info("Starting PRISM bot with vault at %s, archives at %s, and SQLite at %s", settings.vault_path, settings.archive_path, settings.sqlite_path)
