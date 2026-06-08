@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "prism"
+version = "0.1.0"
+description = "Personal Research Interlinked System"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12"
+dependencies = [
+  "python-telegram-bot>=21.11,<22",
+  "PyYAML>=6.0.2,<7",
+  "httpx>=0.28.1,<0.29",
+  "trafilatura>=2.0.0,<3",
+  "PyMuPDF>=1.25.0,<2",
+  "lancedb>=0.18.0,<0.19",
+  "fastapi>=0.115,<0.116",
+  "uvicorn[standard]>=0.30,<0.35",
+  "pydantic>=2.7,<3",
+  "youtube-transcript-api>=0.6.2,<2",
+  "APScheduler>=3.10,<4",
+  "feedparser>=6.0,<7",
+  "tzdata>=2024.1",
+  "textual>=0.80,<1",
+]
+
+[project.scripts]
+prism-bot = "prism.bot:main"
+prism-web = "prism.web.__main__:main"
+prism-worker = "prism.worker.__main__:main"
+prism-tui = "prism.tui.__main__:main"
+prism-cli = "prism.cli.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"prism.tui" = ["*.tcss"]
+"prism.prompts" = ["*.md"]

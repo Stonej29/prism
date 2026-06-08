@@ -1,0 +1,42 @@
+# PRISM worker feed configuration.
+# Copy to runtime/feeds.yaml (the path in PRISM_FEEDS_PATH, default /data/feeds.yaml).
+# Edits take effect on the next worker restart. The worker starts fine with no
+# feeds configured.
+
+# No feeds are active by default — uncomment one of the examples below (or add
+# your own) and restart the worker. Two feed types:
+feeds: []
+  # "rss": save each feed entry's own link (one note per entry).
+  # - type: rss
+  #   url: https://some-single-topic-blog.com/feed
+  #   max: 20            # newest N entries to consider each run
+  #
+  # "digest": for roundup newsletters where each post links to many items,
+  # follow the "Read more" links (repos / papers / project pages) and save each
+  # as its own note — one tech per note — instead of the digest post itself.
+  # - type: digest
+  #   url: https://your-favorite-ai-newsletter.example/feed
+  #   posts: 4          # expand the newest N posts each run (overlap + dedup avoids misses)
+  #   input_source: ai_search   # tags how these notes entered PRISM (default: ai_search)
+
+schedule:
+  # 5-field cron expressions, interpreted in `timezone` (DST-aware).
+  timezone: Europe/Copenhagen
+  ingestion: "0 7 * * *"   # daily 07:00 — pull feeds
+  traversal: "0 5 * * 1"   # weekly Monday 05:00 — graph maintenance
+  backup: "0 2 * * *"      # daily 02:00 — commit vault + snapshot SQLite
+  reembed: "0 3 * * 0"     # weekly Sunday 03:00 — re-embed stale notes
+
+# Graph traversal each run:
+#   * recomputes automatic related-note links (bounded; never piles up)
+#   * normalizes near-duplicate tags corpus-wide (e.g. foundation-model(s)) — auto
+#   * proposes near-duplicate note merges for review via /proposals (not auto-applied)
+traversal_enabled: true
+
+# Backup: git-commit the vault (local, no push) and snapshot the SQLite DB to
+# <sqlite_dir>/backups/, keeping the most recent 14 snapshots.
+backup_enabled: false
+
+# Re-embed: recompute each note's index-text hash and re-embed only those that
+# changed since last embedded (cheaper than a full `python -m prism.index rebuild`).
+reembed_enabled: false
