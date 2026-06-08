@@ -33,7 +33,7 @@ These paths are intentionally ignored by git.
 
 ## Web API
 
-`src/prism/web/app.py` creates one FastAPI app. Routes live under `/api`; if a built frontend bundle exists, it is mounted as a static single-page app at `/`. Optional Basic Auth is enabled when `PRISM_WEB_USERNAME` and `PRISM_WEB_PASSWORD` are both set.
+`src/prism/web/app.py` creates one FastAPI app. Routes live under `/api`; if a built frontend bundle exists, it is mounted as a static single-page app at `/`. On a network-exposed bind, the web UI uses an owner login backed by a signed session cookie. On first run, the UI can create the owner account and stores the hashed credential under `runtime/`; setting `PRISM_WEB_USERNAME` and `PRISM_WEB_PASSWORD` pins the credential and disables in-UI account creation.
 
 The web process does not require Telegram configuration. It loads shared services lazily through `src/prism/web/deps.py`, which makes tests and local CLI workflows easier to isolate.
 
@@ -51,6 +51,6 @@ Worker jobs can also be triggered manually from Telegram, the web UI, or `prism-
 ## Safety Boundaries
 
 - Telegram command access is restricted by numeric user IDs.
-- The web UI should remain localhost/VPN/LAN only and supports optional Basic Auth.
+- The web UI should remain localhost/VPN/LAN only; network-exposed binds require the owner-login flow or pinned `PRISM_WEB_USERNAME`/`PRISM_WEB_PASSWORD` credentials.
 - URL fetching blocks private and local IP targets by default to reduce SSRF risk.
 - Destructive actions use confirmations in Telegram/TUI, but web access is owner-level access.
