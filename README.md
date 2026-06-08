@@ -21,40 +21,25 @@ Every note also records an `input_source` — how it entered PRISM (`telegram`, 
 
 Every step degrades gracefully: a fetch, LLM, or embedding failure produces a partial note rather than losing the capture.
 
-## Setup
+## Quick start
 
-**1. Clone and configure**
+Needs Docker. From the repo root:
 
 ```sh
-git clone <repo>
-cd prism
+git clone <repo> && cd prism
 cp .env.example .env
 ```
 
-Edit `.env` — at minimum set:
+**1. Set the bot credentials** in `.env` — the only required values:
 
 ```env
-TELEGRAM_BOT_TOKEN=your_bot_token
-TELEGRAM_ALLOWED_USER_IDS=your_telegram_user_id
+TELEGRAM_BOT_TOKEN=your_bot_token          # from @BotFather
+TELEGRAM_ALLOWED_USER_IDS=your_user_id     # from @userinfobot
 ```
 
-Get your bot token from [@BotFather](https://t.me/BotFather). Get your user ID from [@userinfobot](https://t.me/userinfobot).
+LLM and embedding keys are optional here — paste them later in the web UI under **Settings → Connections**. (Set them in `.env` instead to pin/lock them.)
 
-**2. Add LLM and embedding services (optional but recommended)**
-
-Without these, links are still fetched and archived but notes won't be summarized and semantic search won't work. You can either set them in `.env` **or** enter them later in the web UI under **Settings → Connections** (stored privately in `runtime/settings.json`, applied without a restart). Values set in `.env` take precedence and lock the corresponding UI field.
-
-```env
-LLM_BASE_URL=https://openrouter.ai/api/v1   # default; change for other providers
-LLM_API_KEY=your_key
-LLM_MODEL=google/gemini-2.5-flash           # or any OpenAI-compatible model
-
-EMBEDDING_BASE_URL=https://api.openai.com/v1
-EMBEDDING_API_KEY=your_key
-EMBEDDING_MODEL=text-embedding-3-small
-```
-
-**3. Initialize the vault**
+**2. Initialize the vault** (it's its own git repo):
 
 ```sh
 mkdir -p runtime/research-vault
@@ -62,21 +47,18 @@ git -C runtime/research-vault init
 printf ".obsidian/workspace*.json\n.trash/\n" > runtime/research-vault/.gitignore
 ```
 
-**4. Build and run**
+**3. Build and run:**
 
 ```sh
 docker compose build
-sudo docker compose up -d --force-recreate
+sudo docker compose up -d
 sudo docker compose logs -f prism
 ```
 
-Open Telegram, find your bot, and send a link.
+- **Bot** — open Telegram, find your bot, send a link.
+- **Web UI** — open `http://<host>:8000`, create your owner account, then add LLM/embedding keys under **Settings → Connections**.
 
-> **Fedora/RHEL note:** install Docker first:
-> ```sh
-> sudo dnf install docker docker-compose-plugin
-> sudo systemctl enable --now docker
-> ```
+> **Fedora/RHEL:** install Docker first — `sudo dnf install docker docker-compose-plugin && sudo systemctl enable --now docker`
 
 ## Commands
 
