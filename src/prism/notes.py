@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 import secrets
 import shutil
@@ -956,9 +957,9 @@ def normalize_related_notes(value: Any, related_candidates: list[RelatedCandidat
     return related[:10]
 
 
-def related_notes_for_record(record: NoteRecord) -> list[dict[str, str]]:
+def related_notes_for_record(record: NoteRecord) -> list[dict[str, Any]]:
     data = _json_array(record.related_notes_json)
-    normalized: list[dict[str, str]] = []
+    normalized: list[dict[str, Any]] = []
     for item in data:
         if not isinstance(item, dict):
             continue
@@ -968,7 +969,11 @@ def related_notes_for_record(record: NoteRecord) -> list[dict[str, str]]:
         path = str(item.get("path") or "").strip()
         origin = _related_origin(item.get("origin"))
         if note_id:
-            normalized.append({"id": note_id, "title": title, "reason": reason, "path": path, "origin": origin})
+            entry: dict[str, Any] = {"id": note_id, "title": title, "reason": reason, "path": path, "origin": origin}
+            similarity = _related_similarity(item.get("similarity"))
+            if similarity is not None:
+                entry["similarity"] = similarity
+            normalized.append(entry)
     return normalized
 
 
@@ -977,6 +982,18 @@ def _related_origin(value: object) -> str:
     if origin in {"auto", "llm", "manual"}:
         return origin
     return "unknown"
+
+
+def _related_similarity(value: object) -> float | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        similarity = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(similarity):
+        return None
+    return round(min(max(similarity, 0.0), 1.0), 4)
 
 
 def _dedup_preserve(items: list[str]) -> list[str]:

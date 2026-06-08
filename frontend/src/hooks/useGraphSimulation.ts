@@ -16,7 +16,7 @@ import type { GraphEdge, GraphNode } from "../types";
 export interface SimNode extends GraphNode, SimulationNodeDatum {
   x: number;
   y: number;
-  degree: number;
+  centrality: number;
 }
 
 export interface SimLink extends SimulationLinkDatum<SimNode> {
@@ -24,6 +24,7 @@ export interface SimLink extends SimulationLinkDatum<SimNode> {
   target: SimNode;
   reason: string;
   origin: string;
+  similarity?: number;
 }
 
 interface SimState {
@@ -36,8 +37,8 @@ interface SimState {
  * the SVG; each tick bumps a counter (throttled by the sim's own rAF cadence)
  * so the consumer re-reads node positions from the returned arrays.
  *
- * Layout is always topic-grouped (the only mode). Node size encodes semantic
- * connectivity (link degree), so hubs read large at a glance.
+ * Layout is always topic-grouped (the only mode). Node size encodes normalized
+ * betweenness centrality, so bridge notes read large at a glance.
  */
 export function useGraphSimulation(
   nodes: GraphNode[],
@@ -52,12 +53,7 @@ export function useGraphSimulation(
   useEffect(() => {
     if (!width || !height) return;
 
-    // Semantic-link degree per node → drives node size.
-    const degree = new Map<string, number>();
-    for (const e of edges) {
-      degree.set(e.source, (degree.get(e.source) ?? 0) + 1);
-      degree.set(e.target, (degree.get(e.target) ?? 0) + 1);
-    }
+    const centrality = betweennessCentrality(nodes.map((n) => n.id), edges);
 
     // Preserve positions of nodes that already exist across re-runs.
     const prev = new Map(stateRef.current.nodes.map((n) => [n.id, n]));
@@ -65,14 +61,14 @@ export function useGraphSimulation(
       const old = prev.get(n.id);
       return {
         ...n,
-        degree: degree.get(n.id) ?? 0,
+        centrality: centrality.get(n.id) ?? 0,
         x: old?.x ?? width / 2 + (Math.random() - 0.5) * 80,
         y: old?.y ?? height / 2 + (Math.random() - 0.5) * 80,
       };
     });
     const byId = new Map(simNodes.map((n) => [n.id, n]));
     const simLinks = edges
-      .map((e) => ({ source: byId.get(e.source)!, target: byId.get(e.target)!, reason: e.reason, origin: e.origin }))
+      .map((e) => ({ source: byId.get(e.source)!, target: byId.get(e.target)!, reason: e.reason, origin: e.origin, similarity: e.similarity }))
       .filter((l) => l.source && l.target);
 
     stateRef.current = { nodes: simNodes, links: simLinks };
@@ -86,11 +82,11 @@ export function useGraphSimulation(
     };
 
     const sim = forceSimulation(simNodes)
-      .velocityDecay(0.6) // more friction → nodes glide to new positions instead of snapping
+      .velocityDecay(0.6) // more friction -> nodes glide to new positions instead of snapping
       .alphaDecay(0.015) // ease in over a longer, gentler settle
       .force("charge", forceManyBody().strength(-120))
       .force("link", forceLink<SimNode, SimLink>(simLinks).id((d) => d.id).distance(90).strength(0.5))
-      .force("collide", forceCollide<SimNode>().radius((d) => nodeRadius(d.degree) + 6))
+      .force("collide", forceCollide<SimNode>().radius((d) => nodeRadius(d.centrality) + 9))
       .force("center", forceCenter(width / 2, height / 2))
       .force("x", forceX<SimNode>((d) => centroid(d.topic).x).strength(0.12))
       .force("y", forceY<SimNode>((d) => centroid(d.topic).y).strength(0.12));
@@ -120,7 +116,7 @@ export function useGraphSimulation(
     return () => {
       sim.stop();
     };
-    // NOTE: width/height are intentionally omitted — a resize (e.g. folding a panel)
+    // NOTE: width/height are intentionally omitted -- a resize (e.g. folding a panel)
     // must NOT re-run the layout. The effect captures the current size when it re-runs
     // on a data/layout change, which is the only time we want to re-lay-out.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -129,8 +125,69 @@ export function useGraphSimulation(
   return { sim: stateRef.current, tick, simRef };
 }
 
-// Node size encodes semantic connectivity (link degree). Saturates past ~12
-// links so a few mega-hubs don't dwarf everything else.
-export function nodeRadius(degree: number): number {
-  return 5 + (Math.min(Math.max(degree, 0), 12) / 12) * 11;
+function betweennessCentrality(nodeIds: string[], edges: GraphEdge[]): Map<string, number> {
+  const idSet = new Set(nodeIds);
+  const adjacency = new Map<string, string[]>();
+  for (const id of nodeIds) adjacency.set(id, []);
+
+  const seenEdges = new Set<string>();
+  for (const e of edges) {
+    if (!idSet.has(e.source) || !idSet.has(e.target) || e.source === e.target) continue;
+    const key = e.source < e.target ? `${e.source}::${e.target}` : `${e.target}::${e.source}`;
+    if (seenEdges.has(key)) continue;
+    seenEdges.add(key);
+    adjacency.get(e.source)?.push(e.target);
+    adjacency.get(e.target)?.push(e.source);
+  }
+
+  const scores = new Map<string, number>(nodeIds.map((id) => [id, 0]));
+  for (const source of nodeIds) {
+    const stack: string[] = [];
+    const predecessors = new Map<string, string[]>(nodeIds.map((id) => [id, []]));
+    const sigma = new Map<string, number>(nodeIds.map((id) => [id, 0]));
+    const distance = new Map<string, number>(nodeIds.map((id) => [id, -1]));
+    sigma.set(source, 1);
+    distance.set(source, 0);
+
+    const queue = [source];
+    for (let head = 0; head < queue.length; head++) {
+      const v = queue[head];
+      stack.push(v);
+      for (const w of adjacency.get(v) ?? []) {
+        if ((distance.get(w) ?? -1) < 0) {
+          distance.set(w, (distance.get(v) ?? 0) + 1);
+          queue.push(w);
+        }
+        if ((distance.get(w) ?? -1) === (distance.get(v) ?? 0) + 1) {
+          sigma.set(w, (sigma.get(w) ?? 0) + (sigma.get(v) ?? 0));
+          predecessors.get(w)?.push(v);
+        }
+      }
+    }
+
+    const delta = new Map<string, number>(nodeIds.map((id) => [id, 0]));
+    while (stack.length > 0) {
+      const w = stack.pop()!;
+      const sigmaW = sigma.get(w) ?? 0;
+      if (sigmaW > 0) {
+        for (const v of predecessors.get(w) ?? []) {
+          delta.set(v, (delta.get(v) ?? 0) + ((sigma.get(v) ?? 0) / sigmaW) * (1 + (delta.get(w) ?? 0)));
+        }
+      }
+      if (w !== source) scores.set(w, (scores.get(w) ?? 0) + (delta.get(w) ?? 0));
+    }
+  }
+
+  let maxScore = 0;
+  for (const value of scores.values()) maxScore = Math.max(maxScore, value);
+  if (maxScore <= 0) return scores;
+  for (const [id, value] of scores) scores.set(id, value / maxScore);
+  return scores;
+}
+
+// Node size encodes bridge value: normalized betweenness centrality. The square
+// root keeps mid-importance bridge nodes visible without letting one hub dominate.
+export function nodeRadius(centrality: number): number {
+  const t = Math.sqrt(Math.min(Math.max(centrality, 0), 1));
+  return 5.5 + t * 10.5;
 }

@@ -123,6 +123,7 @@ def _refresh_related_links(
                 "id": other_id,
                 "title": other.title,
                 "reason": f"Semantically related (similarity {score:.2f}).",
+                "similarity": round(float(score), 4),
                 "path": other.note_path,
                 "origin": AUTO_ORIGIN,
             })

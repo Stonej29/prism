@@ -16,6 +16,7 @@ export interface RelatedNote {
   reason: string;
   path: string;
   origin: "auto" | "llm" | "manual" | "unknown" | string;
+  similarity?: number;
 }
 
 export interface NoteDetail {
@@ -63,6 +64,7 @@ export interface GraphEdge {
   target: string;
   reason: string;
   origin: "auto" | "llm" | "manual" | "unknown" | string;
+  similarity?: number;
 }
 
 export interface GraphPayload {

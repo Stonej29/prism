@@ -40,13 +40,9 @@ export function srcLabel(kind: string): string {
   return (SRC[kind] ?? SRC.unknown).label;
 }
 
-// Map an overall score (1–10) to a cool→warm color: low = cool blue,
-// high = warm amber. Unscored notes render neutral grey. Used as the graph's
-// node color encoding (source kind stays as the small dot in the file tree).
-export function scoreColor(overall: number | null): string {
-  if (overall == null) return P.unknown;
-  const v = Math.min(Math.max(overall, 1), 10);
-  const t = (v - 1) / 9; // 0..1
-  const hue = 210 - t * 175; // 210° blue → 35° amber
-  return `hsl(${Math.round(hue)} 70% 60%)`;
+// Deterministic, well-spread color per topic cluster. Topic owns hue in the
+// graph; score uses a neutral ring so it cannot be confused with clusters.
+export function topicColor(topic: number): string {
+  if (topic < 0) return P.unknown;
+  return `hsl(${(topic * 67) % 360} 62% 62%)`;
 }

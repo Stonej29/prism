@@ -182,10 +182,13 @@ class TraversalTests(unittest.TestCase):
             self.assertIn("edge_added", kinds)
             self.assertIn("proposal_created", kinds)
 
-            # aaa and bbb are mutually linked; ccc is orthogonal.
-            a_links = {item["id"] for item in related_notes_for_record(db.find_by_note_id("aaa"))}
+            # aaa and bbb are mutually linked with structured similarity; ccc is orthogonal.
+            a_related = related_notes_for_record(db.find_by_note_id("aaa"))
+            a_links = {item["id"] for item in a_related}
             self.assertIn("bbb", a_links)
             self.assertNotIn("ccc", a_links)
+            bbb_link = next(item for item in a_related if item["id"] == "bbb")
+            self.assertGreater(bbb_link["similarity"], 0.9)
 
             # Duplicate proposal keeps the higher-scored note (aaa) and removes bbb.
             pending = db.list_proposals("pending")
