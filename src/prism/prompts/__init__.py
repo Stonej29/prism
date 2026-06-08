@@ -15,23 +15,23 @@ def _replace_tokens(template: str, replacements: dict[str, str]) -> str:
 
 
 def scoring_rubric() -> str:
-    return _read_prompt("scoring_rubric.txt")
+    return _read_prompt("scoring_rubric.md")
 
 
 def note_system_prompt() -> str:
     return _replace_tokens(
-        _read_prompt("note_system.txt"),
+        _read_prompt("note_system.md"),
         {"{{SCORING_RUBRIC}}": scoring_rubric()},
     )
 
 
 def idea_system_prompt() -> str:
-    return _read_prompt("idea_system.txt")
+    return _read_prompt("idea_system.md")
 
 
 def merge_system_prompt() -> str:
     return _replace_tokens(
-        _read_prompt("merge_system.txt"),
+        _read_prompt("merge_system.md"),
         {"{{SCORING_RUBRIC}}": scoring_rubric()},
     )
 
@@ -48,10 +48,10 @@ def profile_system_prompt(mode: str) -> str:
         raise ValueError("mode must be reset or update")
 
     return _replace_tokens(
-        _read_prompt("profile_system.txt"),
+        _read_prompt("profile_system.md"),
         {"{{MODE_INSTRUCTION}}": mode_instruction},
     )
 
 
 def ask_system_prompt() -> str:
-    return _read_prompt("ask_system.txt")
+    return _read_prompt("ask_system.md")

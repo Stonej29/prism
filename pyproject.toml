@@ -38,4 +38,4 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "prism.tui" = ["*.tcss"]
-"prism.prompts" = ["*.txt"]
+"prism.prompts" = ["*.md"]
