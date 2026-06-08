@@ -21,6 +21,12 @@ services:
       PRISM_WEB_HOST: 0.0.0.0
       PRISM_WEB_PORT: 5890
     ports:
+      # Published on all interfaces so you can reach the UI from other devices on
+      # your LAN/VPN (the intended setup). On a non-loopback bind PRISM requires a
+      # login: create the owner account immediately on first run, or pin
+      # PRISM_WEB_USERNAME/PRISM_WEB_PASSWORD in .env beforehand. Never expose this
+      # directly to the public internet. To restrict access to the server itself,
+      # use "127.0.0.1:5890:5890". See SECURITY.md.
       - "5890:5890"
     volumes:
       - ./runtime:/data:z
