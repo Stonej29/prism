@@ -68,6 +68,7 @@ export default function App() {
   const [topicFilters, setTopicFilters] = useState<number[]>([]);
   const [flagFilters, setFlagFilters] = useState<string[]>([]);
   const [highlight, setHighlight] = useState<Set<string> | null>(null);
+  const [filterPreview, setFilterPreview] = useState<Set<string> | null>(null);
   const [minAgeDays, setMinAgeDays] = useState(0); // 0 = show all; higher = only newer
   const [minScore, setMinScore] = useState(0); // 0 = no score filter
 
@@ -196,6 +197,7 @@ export default function App() {
     setTopicFilters([]);
     setFlagFilters([]);
     setHighlight(null);
+    setFilterPreview(null);
   };
 
   const clearAllFilters = () => {
@@ -594,6 +596,7 @@ export default function App() {
           onMinAgeDays={setMinAgeDays}
           onMinScore={setMinScore}
           onTagsChanged={() => { refreshData().catch((e) => setToast(String(e))); }}
+          onPreviewFilter={setFilterPreview}
         />
         <GraphPane
           graph={graph}
@@ -605,6 +608,7 @@ export default function App() {
           minScore={minScore}
           selectedId={selectedId}
           highlightIds={highlight}
+          previewIds={filterPreview}
           onSelect={selectNote}
           onDeselect={deselect}
           onClearHighlight={() => setHighlight(null)}

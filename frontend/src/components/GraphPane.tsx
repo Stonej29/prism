@@ -43,6 +43,7 @@ export function GraphPane({
   minScore,
   selectedId,
   highlightIds,
+  previewIds,
   onSelect,
   onDeselect,
   onClearHighlight,
@@ -61,6 +62,7 @@ export function GraphPane({
   minScore: number;
   selectedId: string | null;
   highlightIds: Set<string> | null;
+  previewIds: Set<string> | null;
   onSelect: (id: string) => void;
   onDeselect: () => void;
   onClearHighlight: () => void;
@@ -193,6 +195,7 @@ export function GraphPane({
     [recentMaintenanceEvents],
   );
   const simNodeById = useMemo(() => new Map(sim.nodes.map((n) => [n.id, n])), [sim.nodes]);
+  const activeIds = previewIds ?? highlightIds;
 
   // Keep nodes screen-stable when the LEFT panel folds (its width change moves the
   // graph's left origin); compensate the pan so the graph doesn't appear to jump.
@@ -335,8 +338,8 @@ export function GraphPane({
         <style>{`@keyframes prismNodeEnter { from { opacity: 0; transform: scale(0.3); } to { opacity: 1; transform: scale(1); } }`}</style>
         <g transform={`translate(${finite(transform.x)},${finite(transform.y)}) scale(${finite(transform.k, 1)})`}>
           {sim.links.map((l, i) => {
-            const active = !!highlightIds;
-            const on = active && highlightIds.has(l.source.id) && highlightIds.has(l.target.id);
+            const active = !!activeIds;
+            const on = active && activeIds.has(l.source.id) && activeIds.has(l.target.id);
             const width = edgeWidth(l.similarity);
             const idleOpacity = l.similarity == null ? 0.52 : 0.55 + Math.min(Math.max(l.similarity, 0), 1) * 0.25;
             return (
@@ -376,8 +379,8 @@ export function GraphPane({
           {sim.nodes.map((n) => {
             const r = nodeRadius(n.centrality);
             const selected = n.id === selectedId;
-            const lit = !!highlightIds && highlightIds.has(n.id);
-            const dim = !!highlightIds && !lit;
+            const lit = !previewIds && !!highlightIds && highlightIds.has(n.id);
+            const dim = !!activeIds && !activeIds.has(n.id);
             const archived = n.status === "archived";
             const showLabel = selected || lit || hover === n.id;
             const maintenancePulse = maintenanceNodeIds.has(n.id);

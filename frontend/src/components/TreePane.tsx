@@ -50,10 +50,12 @@ function SectionHead({ children, open, onClick }: { children: React.ReactNode; o
   );
 }
 
-function FilterRow({ label, count, color, glyph, active, onClick }: { label: string; count?: number; color?: string; glyph?: string; active?: boolean; onClick?: (e: React.MouseEvent<HTMLDivElement>) => void }) {
+function FilterRow({ label, count, color, glyph, active, previewIds, onClick, onPreviewFilter }: { label: string; count?: number; color?: string; glyph?: string; active?: boolean; previewIds?: string[]; onClick?: (e: React.MouseEvent<HTMLDivElement>) => void; onPreviewFilter?: (ids: Set<string> | null) => void }) {
   return (
     <div
       onClick={onClick}
+      onMouseEnter={() => previewIds && onPreviewFilter?.(new Set(previewIds))}
+      onMouseLeave={() => previewIds && onPreviewFilter?.(null)}
       style={{ display: "flex", alignItems: "center", gap: 9, padding: "5px 10px", paddingLeft: 14, borderRadius: 6, background: active ? P.accentDim : "transparent", cursor: "pointer", color: active ? P.hi : P.mid }}
     >
       {color ? (
@@ -98,6 +100,7 @@ export function TreePane({
   onMinAgeDays,
   onMinScore,
   onTagsChanged,
+  onPreviewFilter,
 }: {
   open: boolean;
   onToggle: () => void;
@@ -127,6 +130,7 @@ export function TreePane({
   onMinAgeDays: (v: number) => void;
   onMinScore: (v: number) => void;
   onTagsChanged: () => void;
+  onPreviewFilter: (ids: Set<string> | null) => void;
 }) {
   const [query, setQuery] = useState("");
   const [managingTags, setManagingTags] = useState(false);
@@ -142,9 +146,11 @@ export function TreePane({
     );
   }
 
+  const graphNodes = graph?.nodes ?? [];
+  const idsFor = (predicate: (node: GraphPayload["nodes"][number]) => boolean) => graphNodes.filter(predicate).map((n) => n.id);
   const counts: Record<string, number> = {};
   const topicCounts = new Map<number, number>();
-  for (const n of graph?.nodes ?? []) {
+  for (const n of graphNodes) {
     counts[n.source_kind] = (counts[n.source_kind] ?? 0) + 1;
     if (n.topic >= 0) topicCounts.set(n.topic, (topicCounts.get(n.topic) ?? 0) + 1);
   }
@@ -193,9 +199,33 @@ export function TreePane({
               {fanoutActive && <span onClick={onClearFilters} style={{ fontFamily: P.mono, fontSize: 10, color: P.mid, cursor: "pointer" }}>clear</span>}
             </div>
             <FilterRow glyph="◇" label="All notes" active={!fanoutActive} onClick={onClearFilters} />
-            <FilterRow glyph="★" label="Favorites" count={(graph?.nodes ?? []).filter((n) => n.favorite).length} active={flagFilters.includes("favorite")} onClick={(e) => onToggleFlagFilter("favorite", additive(e))} />
-            <FilterRow glyph="?" label="Unreviewed" count={stats?.notes.unreviewed ?? 0} active={flagFilters.includes("unreviewed")} onClick={(e) => onToggleFlagFilter("unreviewed", additive(e))} />
-            <FilterRow glyph="!" label="Needs attention" count={(graph?.nodes ?? []).filter((n) => n.failed).length} active={flagFilters.includes("failed")} onClick={(e) => onToggleFlagFilter("failed", additive(e))} />
+            <FilterRow
+              glyph="★"
+              label="Favorites"
+              count={graphNodes.filter((n) => n.favorite).length}
+              active={flagFilters.includes("favorite")}
+              previewIds={idsFor((n) => n.favorite)}
+              onPreviewFilter={onPreviewFilter}
+              onClick={(e) => onToggleFlagFilter("favorite", additive(e))}
+            />
+            <FilterRow
+              glyph="?"
+              label="Unreviewed"
+              count={stats?.notes.unreviewed ?? 0}
+              active={flagFilters.includes("unreviewed")}
+              previewIds={idsFor((n) => n.status === "unreviewed")}
+              onPreviewFilter={onPreviewFilter}
+              onClick={(e) => onToggleFlagFilter("unreviewed", additive(e))}
+            />
+            <FilterRow
+              glyph="!"
+              label="Needs attention"
+              count={graphNodes.filter((n) => n.failed).length}
+              active={flagFilters.includes("failed")}
+              previewIds={idsFor((n) => n.failed)}
+              onPreviewFilter={onPreviewFilter}
+              onClick={(e) => onToggleFlagFilter("failed", additive(e))}
+            />
             <div style={{ fontFamily: P.mono, fontSize: 9, letterSpacing: 1, color: P.faint, padding: "8px 12px 4px" }}>BY SOURCE</div>
             {KNOWN_SOURCES.map((kind) => (
               <FilterRow
@@ -204,6 +234,8 @@ export function TreePane({
                 label={srcLabel(kind)}
                 count={counts[kind] ?? 0}
                 active={sourceFilters.includes(kind)}
+                previewIds={idsFor((n) => n.source_kind === kind)}
+                onPreviewFilter={onPreviewFilter}
                 onClick={(e) => onSelectSource(kind, additive(e))}
               />
             ))}
@@ -211,7 +243,16 @@ export function TreePane({
               <>
                 <div style={{ fontFamily: P.mono, fontSize: 9, letterSpacing: 1, color: P.faint, padding: "8px 12px 4px" }}>TOPICS</div>
                 {topicOptions.map((t) => (
-                  <FilterRow key={t.topic} color={topicColor(t.topic)} label={t.label} count={t.count} active={topicFilters.includes(t.topic)} onClick={(e) => onSelectTopic(t.topic, additive(e))} />
+                  <FilterRow
+                    key={t.topic}
+                    color={topicColor(t.topic)}
+                    label={t.label}
+                    count={t.count}
+                    active={topicFilters.includes(t.topic)}
+                    previewIds={idsFor((n) => n.topic === t.topic)}
+                    onPreviewFilter={onPreviewFilter}
+                    onClick={(e) => onSelectTopic(t.topic, additive(e))}
+                  />
                 ))}
               </>
             )}
@@ -222,7 +263,16 @@ export function TreePane({
               )}
             </div>
             {tags.slice(0, 12).map((t) => (
-              <FilterRow key={t.tag} glyph="#" label={t.tag} count={t.count} active={tagFilters.includes(t.tag)} onClick={(e) => onSelectTag(t.tag, additive(e))} />
+              <FilterRow
+                key={t.tag}
+                glyph="#"
+                label={t.tag}
+                count={t.count}
+                active={tagFilters.includes(t.tag)}
+                previewIds={idsFor((n) => n.tags.includes(t.tag))}
+                onPreviewFilter={onPreviewFilter}
+                onClick={(e) => onSelectTag(t.tag, additive(e))}
+              />
             ))}
             {tags.length === 0 && <div style={{ padding: "4px 14px", fontFamily: P.sans, fontSize: 12, color: P.faint }}>No tags yet.</div>}
 
