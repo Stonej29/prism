@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { P, srcColor, srcLabel } from "../theme";
+import { P, srcColor, srcLabel, topicColor } from "../theme";
 import type { GraphPayload, Stats, TagCount, TreeNode, Usage } from "../types";
 import { FileTree } from "./FileTree";
 import type { OpenFile } from "./FileViewer";
@@ -82,6 +82,7 @@ export function TreePane({
   stats,
   sourceFilters,
   tagFilters,
+  topicFilters,
   flagFilters,
   minAgeDays,
   minScore,
@@ -91,6 +92,7 @@ export function TreePane({
   onOpenFile,
   onSelectSource,
   onSelectTag,
+  onSelectTopic,
   onToggleFlagFilter,
   onClearFilters,
   onMinAgeDays,
@@ -109,6 +111,7 @@ export function TreePane({
   stats: Stats | null;
   sourceFilters: string[];
   tagFilters: string[];
+  topicFilters: number[];
   flagFilters: string[];
   minAgeDays: number;
   minScore: number;
@@ -118,6 +121,7 @@ export function TreePane({
   onOpenFile: (f: OpenFile) => void;
   onSelectSource: (s: string, additive?: boolean) => void;
   onSelectTag: (t: string, additive?: boolean) => void;
+  onSelectTopic: (topic: number, additive?: boolean) => void;
   onToggleFlagFilter: (flag: string, additive?: boolean) => void;
   onClearFilters: () => void;
   onMinAgeDays: (v: number) => void;
@@ -139,12 +143,19 @@ export function TreePane({
   }
 
   const counts: Record<string, number> = {};
-  for (const n of graph?.nodes ?? []) counts[n.source_kind] = (counts[n.source_kind] ?? 0) + 1;
+  const topicCounts = new Map<number, number>();
+  for (const n of graph?.nodes ?? []) {
+    counts[n.source_kind] = (counts[n.source_kind] ?? 0) + 1;
+    if (n.topic >= 0) topicCounts.set(n.topic, (topicCounts.get(n.topic) ?? 0) + 1);
+  }
+  const topicOptions = [...topicCounts.entries()]
+    .sort(([aTopic, aCount], [bTopic, bCount]) => bCount - aCount || aTopic - bTopic)
+    .map(([topic, count]) => ({ topic, count, label: graph?.topic_labels?.[String(topic)] ?? `topic ${topic + 1}` }));
   const indexed = stats?.notes.embedding_indexed ?? 0;
   const healthy = stats?.index_configured && (stats?.notes.embedding_failed ?? 0) === 0;
   const llmHealthy = stats?.llm_configured && (stats?.notes.llm_failed ?? 0) === 0;
   const filtering = query.trim().length > 0;
-  const fanoutActive = sourceFilters.length > 0 || tagFilters.length > 0 || flagFilters.length > 0 || minAgeDays > 0 || minScore > 0;
+  const fanoutActive = sourceFilters.length > 0 || tagFilters.length > 0 || topicFilters.length > 0 || flagFilters.length > 0 || minAgeDays > 0 || minScore > 0;
 
   return (
     <div style={{ position: "relative", width, flexShrink: 0, borderRight: `1px solid ${P.line}`, background: P.bg1, display: "flex", flexDirection: "column", minHeight: 0 }}>
@@ -196,6 +207,14 @@ export function TreePane({
                 onClick={(e) => onSelectSource(kind, additive(e))}
               />
             ))}
+            {topicOptions.length > 0 && (
+              <>
+                <div style={{ fontFamily: P.mono, fontSize: 9, letterSpacing: 1, color: P.faint, padding: "8px 12px 4px" }}>TOPICS</div>
+                {topicOptions.map((t) => (
+                  <FilterRow key={t.topic} color={topicColor(t.topic)} label={t.label} count={t.count} active={topicFilters.includes(t.topic)} onClick={(e) => onSelectTopic(t.topic, additive(e))} />
+                ))}
+              </>
+            )}
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 12px 4px" }}>
               <span style={{ fontFamily: P.mono, fontSize: 9, letterSpacing: 1, color: P.faint }}>TAGS</span>
               {tags.length > 0 && (

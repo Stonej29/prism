@@ -27,21 +27,6 @@ function eventNodeIds(event: MaintenanceEvent): string[] {
   return ids;
 }
 
-function scoreStrength(overall: number | null): number {
-  if (overall == null) return 0;
-  return Math.min(Math.max((overall - 1) / 9, 0), 1);
-}
-
-function scoreRingWidth(overall: number | null): number {
-  if (overall == null) return 0;
-  return 0.8 + scoreStrength(overall) * 2.4;
-}
-
-function scoreRingOpacity(overall: number | null): number {
-  if (overall == null) return 0;
-  return 0.22 + scoreStrength(overall) * 0.58;
-}
-
 function edgeWidth(similarity: number | undefined): number {
   if (similarity == null || !Number.isFinite(similarity)) return 1;
   const t = Math.min(Math.max(similarity, 0), 1);
@@ -52,6 +37,7 @@ export function GraphPane({
   graph,
   sourceFilters,
   tagFilters,
+  topicFilters,
   flagFilters,
   minAgeDays,
   minScore,
@@ -69,6 +55,7 @@ export function GraphPane({
   graph: GraphPayload | null;
   sourceFilters: string[];
   tagFilters: string[];
+  topicFilters: number[];
   flagFilters: string[];
   minAgeDays: number;
   minScore: number;
@@ -126,6 +113,7 @@ export function GraphPane({
     const passes = (n: GraphPayload["nodes"][number]) => {
       if (sourceFilters.length > 0 && !sourceFilters.includes(n.source_kind)) return false;
       if (tagFilters.length > 0 && !tagFilters.some((tag) => n.tags.includes(tag))) return false;
+      if (topicFilters.length > 0 && !topicFilters.includes(n.topic)) return false;
       if (flagFilters.includes("favorite") && !n.favorite) return false;
       if (flagFilters.includes("unreviewed") && n.status !== "unreviewed") return false;
       if (flagFilters.includes("failed") && !n.failed) return false;
@@ -136,14 +124,14 @@ export function GraphPane({
       if (minScore > 0 && !(n.overall != null && n.overall >= minScore)) return false;
       return true;
     };
-    const hasFilters = sourceFilters.length > 0 || tagFilters.length > 0 || flagFilters.length > 0 || minAgeDays > 0 || minScore > 0;
+    const hasFilters = sourceFilters.length > 0 || tagFilters.length > 0 || topicFilters.length > 0 || flagFilters.length > 0 || minAgeDays > 0 || minScore > 0;
     if (!hasFilters) return { nodes: graph.nodes, edges: graph.edges };
     const keep = new Set(graph.nodes.filter(passes).map((n) => n.id));
     return {
       nodes: graph.nodes.filter((n) => keep.has(n.id)),
       edges: graph.edges.filter((e) => keep.has(e.source) && keep.has(e.target)),
     };
-  }, [graph, sourceFilters, tagFilters, flagFilters, minAgeDays, minScore]);
+  }, [graph, sourceFilters, tagFilters, topicFilters, flagFilters, minAgeDays, minScore]);
 
   const { sim, simRef } = useGraphSimulation(nodes, edges, size.w, size.h);
 
@@ -260,7 +248,7 @@ export function GraphPane({
     if (!movedRef.current) onDeselect();
   };
 
-  const filterCount = sourceFilters.length + tagFilters.length + flagFilters.length + (minAgeDays > 0 ? 1 : 0) + (minScore > 0 ? 1 : 0);
+  const filterCount = sourceFilters.length + tagFilters.length + topicFilters.length + flagFilters.length + (minAgeDays > 0 ? 1 : 0) + (minScore > 0 ? 1 : 0);
 
   const zoomBy = (factor: number) => {
     const t = transformRef.current;
@@ -395,7 +383,6 @@ export function GraphPane({
             const maintenancePulse = maintenanceNodeIds.has(n.id);
             const processing = !!processingNodeIds?.[n.id];
             const nodeColor = topicColor(n.topic);
-            const scoreWidth = scoreRingWidth(n.overall);
             return (
               <g
                 key={n.id}
@@ -412,7 +399,7 @@ export function GraphPane({
               >
                 {maintenancePulse && (
                   <circle
-                    r={r + scoreWidth + 7}
+                    r={r + 7}
                     fill="none"
                     stroke={P.accent}
                     strokeWidth={1.6}
@@ -427,18 +414,9 @@ export function GraphPane({
                   className={processing ? "prism-node-working" : undefined}
                   style={processing ? ({ "--node-color": nodeColor } as React.CSSProperties) : entering.has(n.id) ? { animation: "prismNodeEnter 650ms ease-out", transformBox: "fill-box", transformOrigin: "center" } : undefined}
                 />
-                {scoreWidth > 0 && (
-                  <circle
-                    r={r + scoreWidth / 2 + 1.2}
-                    fill="none"
-                    stroke={P.hi}
-                    strokeOpacity={scoreRingOpacity(n.overall)}
-                    strokeWidth={scoreWidth}
-                  />
-                )}
                 {(selected || lit || processing) && (
                   <circle
-                    r={r + scoreWidth + 3.6}
+                    r={r + 3.6}
                     fill="none"
                     stroke={processing ? "#8d949b" : P.accent}
                     strokeWidth={selected ? 2.2 : 1.7}
@@ -506,13 +484,11 @@ export function GraphPane({
             {sim.nodes.length} notes · {sim.links.length} links · {new Set(nodes.map((n) => n.topic)).size} topics
           </Mono>
         </div>
-        <div title="Color = topic cluster; size = bridge centrality; ring strength = score; line thickness = semantic similarity" style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 8, background: `${P.bg1}dd`, border: `1px solid ${P.line}`, borderRadius: 8, padding: "7px 12px" }}>
+        <div title="Color = topic cluster; size = bridge centrality; line thickness = semantic similarity" style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 8, background: `${P.bg1}dd`, border: `1px solid ${P.line}`, borderRadius: 8, padding: "7px 12px" }}>
           <Mono c={P.faint}>topic</Mono>
           <span style={{ display: "flex", gap: 3 }}>
             {[0, 1, 2].map((topic) => <span key={topic} style={{ width: 8, height: 8, borderRadius: "50%", background: topicColor(topic) }} />)}
           </span>
-          <Mono c={P.faint}>ring score</Mono>
-          <span style={{ width: 11, height: 11, borderRadius: "50%", border: `2px solid ${P.hi}`, opacity: 0.65 }} />
           <Mono c={P.faint}>size bridge</Mono>
           <span style={{ display: "flex", alignItems: "center", gap: 3 }}>
             <span style={{ width: 6, height: 6, borderRadius: "50%", background: P.mid }} />

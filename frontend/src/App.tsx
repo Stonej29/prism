@@ -65,6 +65,7 @@ export default function App() {
 
   const [sourceFilters, setSourceFilters] = useState<string[]>([]);
   const [tagFilters, setTagFilters] = useState<string[]>([]);
+  const [topicFilters, setTopicFilters] = useState<number[]>([]);
   const [flagFilters, setFlagFilters] = useState<string[]>([]);
   const [highlight, setHighlight] = useState<Set<string> | null>(null);
   const [minAgeDays, setMinAgeDays] = useState(0); // 0 = show all; higher = only newer
@@ -192,6 +193,7 @@ export default function App() {
   const clearFanoutFilters = () => {
     setSourceFilters([]);
     setTagFilters([]);
+    setTopicFilters([]);
     setFlagFilters([]);
     setHighlight(null);
   };
@@ -205,9 +207,10 @@ export default function App() {
   const selectSource = (source: string, additive = false) => {
     setHighlight(null);
     if (!additive) {
-      const selected = sourceFilters.length === 1 && sourceFilters[0] === source && tagFilters.length === 0 && flagFilters.length === 0;
+      const selected = sourceFilters.length === 1 && sourceFilters[0] === source && tagFilters.length === 0 && topicFilters.length === 0 && flagFilters.length === 0;
       setSourceFilters(selected ? [] : [source]);
       setTagFilters([]);
+      setTopicFilters([]);
       setFlagFilters([]);
       return;
     }
@@ -217,22 +220,37 @@ export default function App() {
   const selectTag = (tag: string, additive = false) => {
     setHighlight(null);
     if (!additive) {
-      const selected = tagFilters.length === 1 && tagFilters[0] === tag && sourceFilters.length === 0 && flagFilters.length === 0;
+      const selected = tagFilters.length === 1 && tagFilters[0] === tag && sourceFilters.length === 0 && topicFilters.length === 0 && flagFilters.length === 0;
       setTagFilters(selected ? [] : [tag]);
       setSourceFilters([]);
+      setTopicFilters([]);
       setFlagFilters([]);
       return;
     }
     setTagFilters((prev) => (prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]));
   };
 
+  const selectTopic = (topic: number, additive = false) => {
+    setHighlight(null);
+    if (!additive) {
+      const selected = topicFilters.length === 1 && topicFilters[0] === topic && sourceFilters.length === 0 && tagFilters.length === 0 && flagFilters.length === 0;
+      setTopicFilters(selected ? [] : [topic]);
+      setSourceFilters([]);
+      setTagFilters([]);
+      setFlagFilters([]);
+      return;
+    }
+    setTopicFilters((prev) => (prev.includes(topic) ? prev.filter((t) => t !== topic) : [...prev, topic]));
+  };
+
   const toggleFlagFilter = (flag: string, additive = false) => {
     setHighlight(null);
     if (!additive) {
-      const selected = flagFilters.length === 1 && flagFilters[0] === flag && sourceFilters.length === 0 && tagFilters.length === 0;
+      const selected = flagFilters.length === 1 && flagFilters[0] === flag && sourceFilters.length === 0 && tagFilters.length === 0 && topicFilters.length === 0;
       setFlagFilters(selected ? [] : [flag]);
       setSourceFilters([]);
       setTagFilters([]);
+      setTopicFilters([]);
       return;
     }
     setFlagFilters((prev) => (prev.includes(flag) ? prev.filter((f) => f !== flag) : [...prev, flag]));
@@ -292,8 +310,12 @@ export default function App() {
     }
   };
 
-  // Idea topic follows the active filter: first tag -> first source kind, else topic-less.
-  const ideaTopic = (): string => tagFilters[0] || (sourceFilters[0] ? srcLabel(sourceFilters[0]) : "");
+  // Idea topic follows the active filter: first tag -> first graph topic -> first source kind, else topic-less.
+  const ideaTopic = (): string => {
+    if (tagFilters[0]) return tagFilters[0];
+    if (topicFilters[0] != null) return graph?.topic_labels?.[String(topicFilters[0])] ?? `topic ${topicFilters[0] + 1}`;
+    return sourceFilters[0] ? srcLabel(sourceFilters[0]) : "";
+  };
 
   const generateIdea = async () => {
     const topic = ideaTopic();
@@ -556,6 +578,7 @@ export default function App() {
           stats={stats}
           sourceFilters={sourceFilters}
           tagFilters={tagFilters}
+          topicFilters={topicFilters}
           flagFilters={flagFilters}
           minAgeDays={minAgeDays}
           minScore={minScore}
@@ -565,6 +588,7 @@ export default function App() {
           onOpenFile={setOpenFile}
           onSelectSource={selectSource}
           onSelectTag={selectTag}
+          onSelectTopic={selectTopic}
           onToggleFlagFilter={toggleFlagFilter}
           onClearFilters={clearAllFilters}
           onMinAgeDays={setMinAgeDays}
@@ -575,6 +599,7 @@ export default function App() {
           graph={graph}
           sourceFilters={sourceFilters}
           tagFilters={tagFilters}
+          topicFilters={topicFilters}
           flagFilters={flagFilters}
           minAgeDays={minAgeDays}
           minScore={minScore}
