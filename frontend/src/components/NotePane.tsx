@@ -2,6 +2,7 @@ import { useState } from "react";
 import { ExternalLink, Loader2, RotateCw, Share2, Telescope, Trash2, UserCog } from "lucide-react";
 import { P } from "../theme";
 import type { NoteDetail } from "../types";
+import { PURPOSES } from "../types";
 import { SourceBadge } from "./SourceBadge";
 import { NoteSkeleton } from "./Skeleton";
 import { TextAction } from "./TextAction";
@@ -118,6 +119,7 @@ export function NotePane({
   onEditTags,
   onEditTitle,
   onSetStatus,
+  onSetPurpose,
   onSelectTag,
   onSetFavorite,
 }: {
@@ -140,6 +142,7 @@ export function NotePane({
   onEditTags: (id: string, tags: string[]) => void;
   onEditTitle: (id: string, title: string) => void;
   onSetStatus: (id: string, status: string) => void;
+  onSetPurpose: (id: string, purpose: string | null) => void;
   onSelectTag: (tag: string) => void;
   onSetFavorite: (id: string, value: boolean) => void;
 }) {
@@ -197,6 +200,7 @@ export function NotePane({
   const restScores = ["novelty", "relevance", "credibility", "actionability", "interest"].filter((k) => note.scores[k] != null);
   const overallColor = overall == null ? P.mid : overall >= 7.5 ? P.pdf : overall >= 5 ? P.accent : P.arxiv;
 
+  const confidence = strField(s, "confidence");
   const detailed = strField(s, "detailed_summary");
   const whyMatters = strField(s, "why_it_matters");
   const personal = strField(s, "personal_relevance");
@@ -321,6 +325,32 @@ export function NotePane({
             );
           })}
         </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
+          <span style={{ fontFamily: P.mono, fontSize: 10, color: P.faint, marginRight: 2 }}>purpose</span>
+          {PURPOSES.map((pp) => {
+            const active = note.purpose === pp;
+            return (
+              <span
+                key={pp}
+                onClick={() => !busy && onSetPurpose(note.id, active ? null : pp)}
+                title={active ? "Click to clear purpose" : `Set purpose to ${pp}`}
+                style={{
+                  fontFamily: P.mono,
+                  fontSize: 10,
+                  letterSpacing: 0.5,
+                  padding: "3px 8px",
+                  borderRadius: 5,
+                  cursor: "pointer",
+                  color: active ? P.hi : P.faint,
+                  background: active ? P.bg2 : "transparent",
+                  border: `1px solid ${active ? P.accent : P.line}`,
+                }}
+              >
+                {pp}
+              </span>
+            );
+          })}
+        </div>
       </div>
 
       <div style={{ flex: 1, overflowY: "auto", padding: "0 20px 16px" }}>
@@ -412,9 +442,21 @@ export function NotePane({
           )}
         </Section>
 
+        {(note.details.length > 0 || note.reading_minutes != null) && (
+          <Section title="Details" defaultOpen>
+            <div style={{ display: "flex", flexDirection: "column", gap: 5, fontFamily: P.mono, fontSize: 11, color: P.mid }}>
+              {note.reading_minutes != null && <Meta label="reading" value={`~${note.reading_minutes} min`} />}
+              {note.details.map((d) => (
+                <Meta key={d.label} label={d.label.toLowerCase()} value={String(d.value)} />
+              ))}
+            </div>
+          </Section>
+        )}
         <Section title="Source & metadata">
           <div style={{ display: "flex", flexDirection: "column", gap: 5, fontFamily: P.mono, fontSize: 11, color: P.mid }}>
             <Meta label="url" value={note.source_url} />
+            {confidence && <Meta label="confidence" value={confidence} />}
+            {note.title_source && <Meta label="title from" value={note.title_source} />}
             {note.resolved_url !== note.source_url && <Meta label="resolved" value={note.resolved_url} />}
             <Meta label="saved" value={note.date_saved} />
             {note.fetched_at && <Meta label="fetched" value={note.fetched_at} />}

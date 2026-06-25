@@ -102,7 +102,7 @@ class FetcherIntegrationTests(unittest.TestCase):
             return b"%PDF", "https://arxiv.org/pdf/1908.04064.pdf", "application/pdf"
 
         with tempfile.TemporaryDirectory() as tmp:
-            with patch("prism.fetch._http_get_bytes", side_effect=fake_get), patch("prism.fetch._extract_pdf_text", return_value="PDF text"):
+            with patch("prism.fetch._http_get_bytes", side_effect=fake_get), patch("prism.fetch._extract_pdf", return_value=("PDF text", {})):
                 from prism.fetch import fetch_source
                 result = fetch_source("https://arxiv.org/abs/1908.04064", Path(tmp), "abc123")
 
@@ -119,7 +119,7 @@ class FetcherIntegrationTests(unittest.TestCase):
             return b"%PDF", "https://arxiv.org/pdf/1908.04064.pdf", "application/pdf"
 
         with tempfile.TemporaryDirectory() as tmp:
-            with patch("prism.fetch._http_get_bytes", side_effect=fake_get), patch("prism.fetch._extract_pdf_text", return_value="PDF text"):
+            with patch("prism.fetch._http_get_bytes", side_effect=fake_get), patch("prism.fetch._extract_pdf", return_value=("PDF text", {})):
                 from prism.fetch import fetch_source
                 result = fetch_source("https://arxiv.org/abs/1908.04064", Path(tmp), "abc123")
 
@@ -132,7 +132,7 @@ class FetcherIntegrationTests(unittest.TestCase):
 
     def test_pdf_fetch_archives_pdf_and_extracted_text(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            with patch("prism.fetch._http_get_bytes", return_value=(b"%PDF", "https://example.com/a.pdf", "application/pdf")), patch("prism.fetch._extract_pdf_text", return_value="PDF body"):
+            with patch("prism.fetch._http_get_bytes", return_value=(b"%PDF", "https://example.com/a.pdf", "application/pdf")), patch("prism.fetch._extract_pdf", return_value=("PDF body", {})):
                 from prism.fetch import fetch_source
                 result = fetch_source("https://example.com/a.pdf", Path(tmp), "pdf123")
 
@@ -140,6 +140,25 @@ class FetcherIntegrationTests(unittest.TestCase):
             self.assertEqual(result.extracted_text, "PDF body")
             self.assertTrue((Path(tmp) / "pdf123" / "source.pdf").exists())
             self.assertTrue((Path(tmp) / "pdf123" / "extracted.txt").exists())
+
+    def test_pdf_title_from_metadata_overrides_url_stem(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            meta = {"title": "A Real Paper Title", "author": "J. Doe"}
+            with patch("prism.fetch._http_get_bytes", return_value=(b"%PDF", "https://example.com/2307.12345.pdf", "application/pdf")), patch("prism.fetch._extract_pdf", return_value=("PDF body", meta)):
+                from prism.fetch import fetch_source
+                result = fetch_source("https://example.com/2307.12345.pdf", Path(tmp), "pdfm1")
+            self.assertEqual(result.title, "A Real Paper Title")
+            self.assertEqual(result.metadata.get("title_source"), "pdf_meta")
+            self.assertEqual(result.metadata.get("pdf_author"), "J. Doe")
+
+    def test_pdf_junk_metadata_title_falls_back_to_url(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            meta = {"title": "Microsoft Word - paper.docx"}
+            with patch("prism.fetch._http_get_bytes", return_value=(b"%PDF", "https://example.com/great-paper.pdf", "application/pdf")), patch("prism.fetch._extract_pdf", return_value=("PDF body", meta)):
+                from prism.fetch import fetch_source
+                result = fetch_source("https://example.com/great-paper.pdf", Path(tmp), "pdfm2")
+            self.assertEqual(result.title, "great paper")
+            self.assertEqual(result.metadata.get("title_source"), "url")
 
     def test_github_fetch_archives_readme(self) -> None:
         repo_meta = b'{"description":"Python client","stargazers_count":42,"license":{"spdx_id":"MIT"},"pushed_at":"2024-03-15T10:00:00Z","language":"Python","topics":["api","client"]}'

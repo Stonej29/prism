@@ -1,3 +1,7 @@
+// Single-select content classification, mirrors PURPOSE_VALUES in prism/notes.py.
+// `null` on a note means "Unsorted" (unclassified).
+export const PURPOSES = ["Thesis", "Work", "Self-Host", "Dataset", "Keep"] as const;
+
 export interface NoteSummary {
   id: string;
   title: string;
@@ -8,6 +12,7 @@ export interface NoteSummary {
   tags: string[];
   overall: number | null;
   llm_status: string;
+  purpose: string | null;
 }
 
 export interface RelatedNote {
@@ -43,6 +48,10 @@ export interface NoteDetail {
   structured_summary: Record<string, unknown>;
   related_notes: RelatedNote[];
   favorite: boolean;
+  purpose: string | null;
+  reading_minutes: number | null;
+  title_source: string | null;
+  details: { label: string; value: string | number }[];
 }
 
 export interface GraphNode {
@@ -53,6 +62,7 @@ export interface GraphNode {
   date_saved: string;
   overall: number | null;
   favorite: boolean;
+  purpose: string | null;
   failed: boolean;
   tags: string[];
   topic: number;
@@ -101,6 +111,7 @@ export interface Stats {
     unreviewed: number;
     reviewed: number;
     archived: number;
+    inbox: number;
   };
   tags: number;
   index_configured: boolean;

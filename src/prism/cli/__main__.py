@@ -18,7 +18,7 @@ from prism.cli.render import (
 )
 from prism.cli_core import CliCore
 from prism.config import load_settings
-from prism.notes import NOTE_STATUSES
+from prism.notes import NOTE_STATUSES, PURPOSE_VALUES
 
 
 def _core() -> CliCore:
@@ -31,6 +31,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("save", help="Save a URL")
     p.add_argument("url")
+    p.add_argument("--force", action="store_true", help="Save even if it looks like a duplicate")
 
     p = sub.add_parser("find", help="Semantic search of your notes")
     p.add_argument("query", nargs="+")
@@ -85,6 +86,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("status", choices=NOTE_STATUSES)
     p.add_argument("note_id", nargs="+")
 
+    p = sub.add_parser("set-purpose", help="Set a note's purpose (or 'none' to clear)")
+    p.add_argument("note_id")
+    p.add_argument("purpose", help=f"One of {', '.join(PURPOSE_VALUES)}, or none")
+
     sub.add_parser("reprocess", help="Re-run LLM generation for a note").add_argument("note_id")
     sub.add_parser("reprocess-all", help="Re-run LLM generation for every note")
     sub.add_parser("repersonalize", help="Re-run only personalization for a note").add_argument("note_id")
@@ -118,11 +123,14 @@ def main(argv: list[str] | None = None) -> int:
 
 # --- handlers -------------------------------------------------------------
 def _save(core: CliCore, args) -> int:
-    result = core.save_url(args.url)
+    result = core.save_url(args.url, force=args.force)
     if result.created:
         print(f"Saved [{result.record.note_id}] {result.record.title}")
+        if result.similar_note_id:
+            print(f"  (looks similar to [{result.similar_note_id}], similarity {result.similarity})")
     else:
         print(f"Duplicate ({result.duplicate_reason}): [{result.record.note_id}] {result.record.title}")
+        print("  Re-run with --force to save anyway.")
     return 0
 
 
@@ -272,6 +280,12 @@ def _set_status(core: CliCore, args) -> int:
     return 0 if ok else 1
 
 
+def _set_purpose(core: CliCore, args) -> int:
+    result = core.set_purpose(args.note_id, args.purpose)
+    print(result.message)
+    return 0 if result.ok else 1
+
+
 def _reembed(core: CliCore, args) -> int:
     s = core.reembed()
     print(f"{s.checked} checked, {s.stale} stale, {s.reindexed} reindexed, {s.failed} failed")
@@ -392,6 +406,7 @@ _HANDLERS = {
     "backup": _backup,
     "rename": _rename,
     "set-status": _set_status,
+    "set-purpose": _set_purpose,
     "reprocess": _reprocess,
     "reprocess-all": _reprocess_all,
     "repersonalize": _repersonalize,

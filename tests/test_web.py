@@ -548,6 +548,66 @@ class WebApiTest(unittest.TestCase):
         self.client.put("/api/notes/aaa111/favorite", json={"value": False})
         self.assertFalse(self.client.get("/api/notes/aaa111").json()["favorite"])
 
+    def test_purpose_round_trip(self) -> None:
+        self.db.insert_note(make_note("aaa111"))
+        self.assertIsNone(self.client.get("/api/notes/aaa111").json()["purpose"])
+
+        # Canonicalizes loose casing/separators to the canonical value.
+        set_resp = self.client.put("/api/notes/aaa111/purpose", json={"purpose": "self host"})
+        self.assertEqual(set_resp.json()["purpose"], "Self-Host")
+
+        # Reflected in detail, summary list, and graph node payload.
+        self.assertEqual(self.client.get("/api/notes/aaa111").json()["purpose"], "Self-Host")
+        node = next(n for n in self.client.get("/api/graph").json()["nodes"] if n["id"] == "aaa111")
+        self.assertEqual(node["purpose"], "Self-Host")
+
+        # An unrecognized value is rejected; clearing sets it back to null.
+        self.assertEqual(self.client.put("/api/notes/aaa111/purpose", json={"purpose": "nonsense"}).status_code, 400)
+        cleared = self.client.put("/api/notes/aaa111/purpose", json={"purpose": "none"}).json()
+        self.assertIsNone(cleared["purpose"])
+
+    def test_inbox_excludes_keep_and_archived(self) -> None:
+        import dataclasses
+        self.db.insert_note(make_note("inbox01"))  # unreviewed, no purpose -> in inbox
+        keep = dataclasses.replace(make_note("keep01"), purpose="Keep")
+        self.db.insert_note(keep)
+        archived = dataclasses.replace(make_note("arch01"), status="archived")
+        self.db.insert_note(archived)
+        reviewed = dataclasses.replace(make_note("rev01"), status="reviewed")
+        self.db.insert_note(reviewed)
+
+        resp = self.client.get("/api/inbox").json()
+        ids = {item["id"] for item in resp["items"]}
+        self.assertIn("inbox01", ids)
+        self.assertNotIn("keep01", ids)
+        self.assertNotIn("arch01", ids)
+        self.assertNotIn("rev01", ids)
+        self.assertEqual(resp["count"], 1)
+
+    def test_rediscovery_on_this_day_and_forgotten_gems(self) -> None:
+        import dataclasses
+        # A note saved on today's calendar day in a past year.
+        today_md = __import__("datetime").datetime.now(__import__("datetime").UTC).strftime("%m-%d")
+        on_day = dataclasses.replace(make_note("today01"), date_saved=f"2020-{today_md}T00:00:00Z")
+        self.db.insert_note(on_day)
+        otd = self.client.get("/api/rediscovery", params={"strategy": "on_this_day"}).json()
+        self.assertIn("today01", {i["id"] for i in otd["items"]})
+
+        # Forgotten gem: high score, unreviewed, old; a Keep note of equal age is excluded.
+        gem = dataclasses.replace(make_note("gem01"), date_saved="2020-01-01T00:00:00Z",
+                                  scores_json=json.dumps({"overall": 9}))
+        keep_old = dataclasses.replace(make_note("keepold"), date_saved="2020-01-01T00:00:00Z",
+                                       purpose="Keep", scores_json=json.dumps({"overall": 9}))
+        self.db.insert_note(gem)
+        self.db.insert_note(keep_old)
+        gems = self.client.get("/api/rediscovery", params={"strategy": "forgotten_gems"}).json()
+        gem_ids = {i["id"] for i in gems["items"]}
+        self.assertIn("gem01", gem_ids)
+        self.assertNotIn("keepold", gem_ids)
+
+        # related requires a note_id.
+        self.assertEqual(self.client.get("/api/rediscovery", params={"strategy": "related"}).status_code, 400)
+
     def test_delete_tag_removes_from_all_notes(self) -> None:
         self.db.insert_note(make_note("aaa111", tags=("graph", "rl")))
         self.db.insert_note(make_note("bbb222", tags=("graph",)))

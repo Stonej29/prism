@@ -10,7 +10,7 @@ from typing import Any
 import yaml
 
 from prism.config import DEFAULT_LLM_BASE_URL
-from prism.db import IdeaRecord, PrismDatabase
+from prism.db import IdeaRecord, NoteRecord, PrismDatabase
 from prism.index import NoteIndexer, RelatedCandidate
 from prism.llm import LLMClient, LLMConfig, build_idea_context
 from prism.notes import (
@@ -64,12 +64,20 @@ class IdeaService:
         self.profile_path.parent.mkdir(parents=True, exist_ok=True)
         self.profile_path.write_text(content, encoding="utf-8")
 
-    def generate_idea(self, topic: str | None = None, prefer_favorite: bool = False) -> IdeaResult:
+    def generate_idea(
+        self,
+        topic: str | None = None,
+        prefer_favorite: bool = False,
+        *,
+        purpose: str | None = None,
+        note_ids: list[str] | None = None,
+        tags: list[str] | None = None,
+    ) -> IdeaResult:
         topic = (topic or "").strip() or None
         if not self.llm_config.is_configured:
             return IdeaResult(record=None, ok=False, message="Idea generation needs LLM_API_KEY and LLM_MODEL.")
 
-        candidates = self._gather_knowledge(topic, prefer_favorite)
+        candidates = self._gather_knowledge(topic, prefer_favorite, purpose=purpose, note_ids=note_ids, tags=tags)
         created = datetime.now(UTC).replace(microsecond=0)
         created_at = created.isoformat().replace("+00:00", "Z")
         idea_id = self._new_idea_id()
@@ -157,7 +165,58 @@ class IdeaService:
         self.database.delete_idea(record.idea_id)
         return record
 
-    def _gather_knowledge(self, topic: str | None, prefer_favorite: bool = False) -> list[RelatedCandidate]:
+    def _candidate_from_record(self, record: NoteRecord) -> RelatedCandidate:
+        return RelatedCandidate(
+            note_id=record.note_id,
+            title=record.title,
+            summary=record.summary,
+            note_path=record.note_path,
+            source_url=record.source_url,
+            tags=tags_for_record(record),
+            score=0.0,
+        )
+
+    def _gather_knowledge(
+        self,
+        topic: str | None,
+        prefer_favorite: bool = False,
+        *,
+        purpose: str | None = None,
+        note_ids: list[str] | None = None,
+        tags: list[str] | None = None,
+    ) -> list[RelatedCandidate]:
+        # "Project Mode": an explicit note selection always wins.
+        if note_ids:
+            records = [self.database.find_by_note_id(nid.strip().lower()) for nid in note_ids]
+            cands = [self._candidate_from_record(r) for r in records if r and r.llm_status == "generated"]
+            return cands[:KNOWLEDGE_LIMIT]
+        # Selected tags (optionally narrowed by purpose).
+        if tags:
+            seen: set[str] = set()
+            cands = []
+            for tag in tags:
+                for r in self.database.list_notes_with_tag(tag):
+                    if r.llm_status != "generated" or r.note_id in seen:
+                        continue
+                    if purpose and r.purpose != purpose:
+                        continue
+                    seen.add(r.note_id)
+                    cands.append(self._candidate_from_record(r))
+            if cands:
+                return cands[:KNOWLEDGE_LIMIT]
+        # Purpose collection: seed from notes of that purpose (semantic-narrowed if a topic is given).
+        if purpose:
+            if topic and self.indexer and self.indexer.is_configured:
+                try:
+                    results = self.indexer.search_text(topic, limit=KNOWLEDGE_LIMIT * 2)
+                except Exception:
+                    results = []
+                narrowed = [c for c in results if self._candidate_purpose(c.note_id) == purpose]
+                if narrowed:
+                    return narrowed[:KNOWLEDGE_LIMIT]
+            by_purpose = [self._candidate_from_record(r) for r in self.database.list_notes_by_purpose(purpose, KNOWLEDGE_LIMIT) if r.llm_status == "generated"]
+            if by_purpose:
+                return by_purpose[:KNOWLEDGE_LIMIT]
         # Steered ideation: when asked to focus on favorites, seed the knowledge
         # from notes the user starred (topped up with semantic/recent candidates
         # if there are few favorites).
@@ -178,17 +237,13 @@ class IdeaService:
                 return results
         return self._recent_candidates()
 
+    def _candidate_purpose(self, note_id: str) -> str | None:
+        record = self.database.find_by_note_id(note_id)
+        return record.purpose if record else None
+
     def _favorite_candidates(self) -> list[RelatedCandidate]:
         return [
-            RelatedCandidate(
-                note_id=record.note_id,
-                title=record.title,
-                summary=record.summary,
-                note_path=record.note_path,
-                source_url=record.source_url,
-                tags=tags_for_record(record),
-                score=0.0,
-            )
+            self._candidate_from_record(record)
             for record in self.database.list_favorite_notes(KNOWLEDGE_LIMIT)
             if record.llm_status == "generated"
         ]
@@ -198,17 +253,7 @@ class IdeaService:
         for record in self.database.list_recent_notes(40):
             if record.llm_status != "generated":
                 continue
-            candidates.append(
-                RelatedCandidate(
-                    note_id=record.note_id,
-                    title=record.title,
-                    summary=record.summary,
-                    note_path=record.note_path,
-                    source_url=record.source_url,
-                    tags=tags_for_record(record),
-                    score=0.0,
-                )
-            )
+            candidates.append(self._candidate_from_record(record))
             if len(candidates) >= KNOWLEDGE_LIMIT:
                 break
         return candidates

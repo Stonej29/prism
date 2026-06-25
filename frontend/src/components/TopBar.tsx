@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Lightbulb, Plus, Settings } from "lucide-react";
+import { Inbox, Lightbulb, Plus, Settings } from "lucide-react";
 import { P } from "../theme";
 import { Omnibar } from "./Omnibar";
 import type { IdeaStatus } from "./Lightbulb";
@@ -11,6 +11,9 @@ export function TopBar({
   busy,
   saving,
   ideaStatus,
+  inboxCount,
+  inboxActive,
+  onOpenInbox,
   onAsk,
   onFind,
   onSave,
@@ -20,6 +23,9 @@ export function TopBar({
   busy: boolean;
   saving: boolean;
   ideaStatus: IdeaStatus;
+  inboxCount: number;
+  inboxActive: boolean;
+  onOpenInbox: () => void;
   onAsk: (q: string) => void;
   onFind: (q: string) => void;
   onSave: (url: string) => void;
@@ -75,6 +81,27 @@ export function TopBar({
       </div>
 
       <Omnibar busy={busy} onAsk={onAsk} onFind={onFind} />
+
+      <div
+        onClick={onOpenInbox}
+        title={inboxCount > 0 ? `${inboxCount} note${inboxCount === 1 ? "" : "s"} to review` : "Review queue (inbox)"}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          padding: "4px 10px",
+          borderRadius: 6,
+          cursor: "pointer",
+          fontFamily: P.mono,
+          fontSize: 11,
+          color: inboxActive ? P.hi : P.mid,
+          background: inboxActive ? P.bg2 : "transparent",
+          border: `1px solid ${inboxActive ? P.accent : P.line}`,
+        }}
+      >
+        <Inbox size={14} />
+        <span style={{ color: inboxCount > 0 ? "#ffd66e" : P.faint }}>{inboxCount}</span>
+      </div>
 
       <div ref={actionsRef} style={{ display: "flex", alignItems: "center", gap: 4 }}>
         <IconButton

@@ -147,8 +147,8 @@ class CliCore:
         )
 
     # Blocking / network operations ----------------------------------------
-    def save_url(self, url: str, input_source: str = INPUT_SOURCE) -> SaveResult:
-        return self.notes.save_url(url, input_source)
+    def save_url(self, url: str, input_source: str = INPUT_SOURCE, *, force: bool = False) -> SaveResult:
+        return self.notes.save_url(url, input_source, force=force)
 
     def ask(self, question: str, limit: int = 6) -> AskResult:
         return self.notes.ask(question, limit)
@@ -189,8 +189,15 @@ class CliCore:
             )
         return SearchResult(ok=False, message="No results found.", candidates=[])
 
-    def generate_idea(self, topic: str | None = None) -> IdeaResult:
-        return self.ideas.generate_idea(topic)
+    def generate_idea(
+        self,
+        topic: str | None = None,
+        *,
+        purpose: str | None = None,
+        note_ids: list[str] | None = None,
+        tags: list[str] | None = None,
+    ) -> IdeaResult:
+        return self.ideas.generate_idea(topic, purpose=purpose, note_ids=note_ids, tags=tags)
 
     def rate_idea(self, idea_id: str, rating: int) -> IdeaRecord | None:
         return self.ideas.record_rating(idea_id.strip().lower(), rating)
@@ -235,6 +242,16 @@ class CliCore:
 
     def set_status_bulk(self, note_ids: list[str], status: str) -> list[EditResult]:
         return [self.set_status(note_id, status) for note_id in note_ids]
+
+    def set_purpose(self, note_id: str, purpose: str | None) -> EditResult:
+        record = self.note(note_id)
+        if not record:
+            return EditResult(ok=False, message=f"No note found for {note_id}.")
+        try:
+            updated = self.notes.set_purpose(record, purpose)
+        except ValueError as exc:
+            return EditResult(ok=False, message=str(exc))
+        return EditResult(ok=True, message=f"Set {updated.note_id} purpose to {updated.purpose or 'Unsorted'}", record=updated)
 
     def delete_note(self, note_id: str) -> DeleteResult:
         return self.notes.delete_note(note_id)

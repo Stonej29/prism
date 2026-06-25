@@ -90,6 +90,7 @@ def build_graph(records: list[NoteRecord], vectors: dict[str, list[float]] | Non
             "date_saved": r.date_saved,
             "overall": scores.get("overall"),
             "favorite": bool(r.favorite),
+            "purpose": r.purpose,
             "failed": r.fetch_status == "failed" or r.llm_status == "failed",
             "tags": tags_by_id[r.note_id],
             "topic": topic.get(r.note_id, -1),

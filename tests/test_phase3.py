@@ -13,7 +13,7 @@ from prism.db import NoteRecord, PrismDatabase
 from prism.fetch import FetchResult
 from prism.index import canonical_index_text
 from prism.llm import LLMClient, LLMConfig, LLMGeneration
-from prism.notes import NoteService, render_note, scores_for_record, structured_summary, tags_for_record
+from prism.notes import NoteService, normalize_purpose, render_note, scores_for_record, structured_summary, tags_for_record
 
 
 def fetch_result(root: Path, text: str = "Extracted article text") -> FetchResult:
@@ -298,6 +298,19 @@ class Phase3DatabaseTests(unittest.TestCase):
             self.assertIsNone(record.structured_summary_json)
 
 
+class NormalizePurposeTests(unittest.TestCase):
+    def test_canonicalizes_loose_input(self) -> None:
+        self.assertEqual(normalize_purpose("self host"), "Self-Host")
+        self.assertEqual(normalize_purpose("SELF_HOST"), "Self-Host")
+        self.assertEqual(normalize_purpose("thesis"), "Thesis")
+        self.assertEqual(normalize_purpose("Dataset"), "Dataset")
+
+    def test_unknown_and_empty_become_none(self) -> None:
+        self.assertIsNone(normalize_purpose("made up"))
+        self.assertIsNone(normalize_purpose(""))
+        self.assertIsNone(normalize_purpose(None))
+
+
 class Phase3NoteServiceTests(unittest.TestCase):
     def test_llm_config_missing_saves_archive_note_with_skipped_status(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -332,6 +345,45 @@ class Phase3NoteServiceTests(unittest.TestCase):
             self.assertIn("relevance_score: 9", note_text)
             self.assertIn("## Detailed Summary", note_text)
             self.assertIn("Claim one", note_text)
+
+    def test_ground_truth_classifies_and_persists_purpose(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = PrismDatabase(root / "prism.sqlite3")
+            service = NoteService(root / "vault", db, root / "archives", LLMConfig("https://llm.example", "key", "model-a"))
+            # LLM returns a loosely-cased purpose; it should canonicalize to "Self-Host".
+            generation = LLMGeneration({**structured(), "purpose": "self host"}, "model-a")
+
+            with patch("prism.notes.fetch_source", return_value=fetch_result(root)), patch("prism.notes.LLMClient.generate_note", return_value=generation), _patch_personalize():
+                result = service.save_url("https://example.com/article")
+
+            self.assertEqual(result.record.purpose, "Self-Host")
+            self.assertEqual(db.find_by_note_id(result.record.note_id).purpose, "Self-Host")
+            note_text = (root / "vault" / result.record.note_path).read_text(encoding="utf-8")
+            self.assertIn("purpose: Self-Host", note_text)
+
+    def test_reading_minutes_stored_in_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = PrismDatabase(root / "prism.sqlite3")
+            service = NoteService(root / "vault", db, root / "archives", LLMConfig("https://x", None, None))
+            long_text = " ".join(["word"] * 600)  # 600 words ~ 3 min at 200 wpm
+            with patch("prism.notes.fetch_source", return_value=fetch_result(root, long_text)):
+                result = service.save_url("https://example.com/article")
+            meta = json.loads(result.record.metadata_json or "{}")
+            self.assertEqual(meta.get("reading_minutes"), 3)
+
+    def test_unrecognized_purpose_becomes_unsorted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = PrismDatabase(root / "prism.sqlite3")
+            service = NoteService(root / "vault", db, root / "archives", LLMConfig("https://llm.example", "key", "model-a"))
+            generation = LLMGeneration({**structured(), "purpose": "made up"}, "model-a")
+
+            with patch("prism.notes.fetch_source", return_value=fetch_result(root)), patch("prism.notes.LLMClient.generate_note", return_value=generation), _patch_personalize():
+                result = service.save_url("https://example.com/article")
+
+            self.assertIsNone(result.record.purpose)
 
     def test_malformed_llm_response_falls_back_with_failed_status(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -771,6 +823,68 @@ class PersonalizationSplitTests(unittest.TestCase):
                 result = service.update_profile("now into reinforcement learning")
             self.assertTrue(result.ok)
             self.assertIn("Re-personalized 1/1", result.message)
+
+
+class Phase12DedupTests(unittest.TestCase):
+    def _service(self, root: Path) -> NoteService:
+        db = PrismDatabase(root / "prism.sqlite3")
+        return NoteService(root / "vault", db, root / "archives", LLMConfig("https://x", None, None))
+
+    def _fetch(self, root: Path, *, source_url: str, resolved_url: str | None = None, content_hash: str = "h1") -> FetchResult:
+        archive = root / "archives" / "shared"
+        archive.mkdir(parents=True, exist_ok=True)
+        (archive / "extracted.txt").write_text("body text", encoding="utf-8")
+        return FetchResult(
+            source_url=source_url,
+            resolved_url=resolved_url or source_url,
+            source_kind="website",
+            title="A Title",
+            summary="Desc",
+            extracted_text="body text",
+            local_archive=str(archive),
+            pdf_path=None,
+            content_hash=content_hash,
+            fetch_status="fetched",
+            fetch_error=None,
+            fetched_at="2026-01-01T00:00:00Z",
+            metadata={},
+        )
+
+    def test_content_hash_duplicate_and_force_override(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            service = self._service(root)
+            with patch("prism.notes.fetch_source", return_value=self._fetch(root, source_url="https://a.com/1", content_hash="dup")):
+                first = service.save_url("https://a.com/1")
+            self.assertTrue(first.created)
+
+            # A different URL with identical content is a content_hash duplicate.
+            with patch("prism.notes.fetch_source", return_value=self._fetch(root, source_url="https://b.com/2", content_hash="dup")):
+                dup = service.save_url("https://b.com/2")
+            self.assertFalse(dup.created)
+            self.assertEqual(dup.duplicate_reason, "content_hash")
+            self.assertEqual(dup.record.note_id, first.record.note_id)
+
+            # force=True bypasses the check and creates a fresh note.
+            with patch("prism.notes.fetch_source", return_value=self._fetch(root, source_url="https://b.com/2", content_hash="dup")):
+                forced = service.save_url("https://b.com/2", force=True)
+            self.assertTrue(forced.created)
+            self.assertNotEqual(forced.record.note_id, first.record.note_id)
+
+    def test_resolved_url_duplicate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            service = self._service(root)
+            with patch("prism.notes.fetch_source", return_value=self._fetch(root, source_url="https://canonical.com/x", content_hash="h1")):
+                first = service.save_url("https://canonical.com/x")
+            self.assertTrue(first.created)
+
+            # A shortener resolving to the same final URL (different content hash) is caught.
+            with patch("prism.notes.fetch_source", return_value=self._fetch(root, source_url="https://sho.rt/abc", resolved_url="https://canonical.com/x", content_hash="h2")):
+                dup = service.save_url("https://sho.rt/abc")
+            self.assertFalse(dup.created)
+            self.assertEqual(dup.duplicate_reason, "resolved_url")
+            self.assertEqual(dup.record.note_id, first.record.note_id)
 
 
 if __name__ == "__main__":

@@ -36,6 +36,7 @@ def note_summary_dto(record: NoteRecord) -> dict[str, Any]:
         "overall": scores.get("overall"),
         "llm_status": record.llm_status,
         "favorite": bool(record.favorite),
+        "purpose": record.purpose,
     }
 
 
@@ -67,7 +68,37 @@ def note_to_dto(record: NoteRecord) -> dict[str, Any]:
         "structured_summary": structured_summary(record),
         "related_notes": related_notes_for_record(record),
         "favorite": bool(record.favorite),
+        "purpose": record.purpose,
+        "reading_minutes": metadata.get("reading_minutes"),
+        "title_source": metadata.get("title_source"),
+        "details": _curated_metadata(metadata),
     }
+
+
+# Source-specific metadata keys worth showing in the note "Details" block, in display order.
+_DETAIL_KEYS = (
+    ("authors", "Authors"),
+    ("author_name", "Channel"),
+    ("pdf_author", "Author"),
+    ("published", "Published"),
+    ("venue", "Venue"),
+    ("stars", "Stars"),
+    ("language", "Language"),
+    ("license", "License"),
+    ("content_type", "Type"),
+)
+
+
+def _curated_metadata(metadata: dict[str, Any]) -> list[dict[str, Any]]:
+    """A small, display-ready subset of fetch metadata (label/value pairs)."""
+    details: list[dict[str, Any]] = []
+    for key, label in _DETAIL_KEYS:
+        value = metadata.get(key)
+        if isinstance(value, list):
+            value = ", ".join(str(v) for v in value if v)
+        if value not in (None, "", []):
+            details.append({"label": label, "value": value})
+    return details
 
 
 def idea_to_dto(record: IdeaRecord) -> dict[str, Any]:

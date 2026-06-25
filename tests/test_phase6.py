@@ -264,6 +264,24 @@ class Phase6IdeaServiceTests(unittest.TestCase):
             service, _ = self._service(tmp)
             self.assertIsNone(service.record_rating("missing", 3))
 
+    def test_project_mode_scopes_knowledge_by_purpose(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            service, db = self._service(tmp)
+            db.insert_note(note(note_id="work1", source_url="https://e.com/w", resolved_url="https://e.com/w", note_path="notes/w.md", purpose="Work"))
+            db.insert_note(note(note_id="thesis1", source_url="https://e.com/t", resolved_url="https://e.com/t", note_path="notes/t.md", purpose="Thesis"))
+            # No indexer, no topic -> purpose seeds directly from list_notes_by_purpose.
+            gathered = service._gather_knowledge(None, purpose="Work")
+            ids = {c.note_id for c in gathered}
+            self.assertEqual(ids, {"work1"})
+
+    def test_project_mode_explicit_note_ids(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            service, db = self._service(tmp)
+            db.insert_note(note(note_id="n1", source_url="https://e.com/1", resolved_url="https://e.com/1", note_path="notes/1.md"))
+            db.insert_note(note(note_id="n2", source_url="https://e.com/2", resolved_url="https://e.com/2", note_path="notes/2.md"))
+            gathered = service._gather_knowledge(None, note_ids=["n2"])
+            self.assertEqual([c.note_id for c in gathered], ["n2"])
+
 
 class Phase6RenderTests(unittest.TestCase):
     def test_render_idea_sections_links_and_rating(self) -> None:

@@ -67,6 +67,7 @@ export default function App() {
   const [tagFilters, setTagFilters] = useState<string[]>([]);
   const [topicFilters, setTopicFilters] = useState<number[]>([]);
   const [flagFilters, setFlagFilters] = useState<string[]>([]);
+  const [purposeFilters, setPurposeFilters] = useState<string[]>([]);
   const [highlight, setHighlight] = useState<Set<string> | null>(null);
   const [filterPreview, setFilterPreview] = useState<Set<string> | null>(null);
   const [minAgeDays, setMinAgeDays] = useState(0); // 0 = show all; higher = only newer
@@ -196,6 +197,7 @@ export default function App() {
     setTagFilters([]);
     setTopicFilters([]);
     setFlagFilters([]);
+    setPurposeFilters([]);
     setHighlight(null);
     setFilterPreview(null);
   };
@@ -209,11 +211,12 @@ export default function App() {
   const selectSource = (source: string, additive = false) => {
     setHighlight(null);
     if (!additive) {
-      const selected = sourceFilters.length === 1 && sourceFilters[0] === source && tagFilters.length === 0 && topicFilters.length === 0 && flagFilters.length === 0;
+      const selected = sourceFilters.length === 1 && sourceFilters[0] === source && tagFilters.length === 0 && topicFilters.length === 0 && flagFilters.length === 0 && purposeFilters.length === 0;
       setSourceFilters(selected ? [] : [source]);
       setTagFilters([]);
       setTopicFilters([]);
       setFlagFilters([]);
+      setPurposeFilters([]);
       return;
     }
     setSourceFilters((prev) => (prev.includes(source) ? prev.filter((s) => s !== source) : [...prev, source]));
@@ -222,11 +225,12 @@ export default function App() {
   const selectTag = (tag: string, additive = false) => {
     setHighlight(null);
     if (!additive) {
-      const selected = tagFilters.length === 1 && tagFilters[0] === tag && sourceFilters.length === 0 && topicFilters.length === 0 && flagFilters.length === 0;
+      const selected = tagFilters.length === 1 && tagFilters[0] === tag && sourceFilters.length === 0 && topicFilters.length === 0 && flagFilters.length === 0 && purposeFilters.length === 0;
       setTagFilters(selected ? [] : [tag]);
       setSourceFilters([]);
       setTopicFilters([]);
       setFlagFilters([]);
+      setPurposeFilters([]);
       return;
     }
     setTagFilters((prev) => (prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]));
@@ -235,11 +239,12 @@ export default function App() {
   const selectTopic = (topic: number, additive = false) => {
     setHighlight(null);
     if (!additive) {
-      const selected = topicFilters.length === 1 && topicFilters[0] === topic && sourceFilters.length === 0 && tagFilters.length === 0 && flagFilters.length === 0;
+      const selected = topicFilters.length === 1 && topicFilters[0] === topic && sourceFilters.length === 0 && tagFilters.length === 0 && flagFilters.length === 0 && purposeFilters.length === 0;
       setTopicFilters(selected ? [] : [topic]);
       setSourceFilters([]);
       setTagFilters([]);
       setFlagFilters([]);
+      setPurposeFilters([]);
       return;
     }
     setTopicFilters((prev) => (prev.includes(topic) ? prev.filter((t) => t !== topic) : [...prev, topic]));
@@ -248,14 +253,56 @@ export default function App() {
   const toggleFlagFilter = (flag: string, additive = false) => {
     setHighlight(null);
     if (!additive) {
-      const selected = flagFilters.length === 1 && flagFilters[0] === flag && sourceFilters.length === 0 && tagFilters.length === 0 && topicFilters.length === 0;
+      const selected = flagFilters.length === 1 && flagFilters[0] === flag && sourceFilters.length === 0 && tagFilters.length === 0 && topicFilters.length === 0 && purposeFilters.length === 0;
       setFlagFilters(selected ? [] : [flag]);
       setSourceFilters([]);
       setTagFilters([]);
       setTopicFilters([]);
+      setPurposeFilters([]);
       return;
     }
     setFlagFilters((prev) => (prev.includes(flag) ? prev.filter((f) => f !== flag) : [...prev, flag]));
+  };
+
+  const applyView = (v: { purposeFilters?: string[]; sourceFilters?: string[]; tagFilters?: string[]; flagFilters?: string[]; minScore?: number; minAgeDays?: number }) => {
+    setHighlight(null);
+    setFilterPreview(null);
+    setPurposeFilters(v.purposeFilters ?? []);
+    setSourceFilters(v.sourceFilters ?? []);
+    setTagFilters(v.tagFilters ?? []);
+    setTopicFilters([]);
+    setFlagFilters(v.flagFilters ?? []);
+    setMinScore(v.minScore ?? 0);
+    setMinAgeDays(v.minAgeDays ?? 0);
+  };
+
+  const selectPurpose = (purpose: string, additive = false) => {
+    setHighlight(null);
+    if (!additive) {
+      const selected = purposeFilters.length === 1 && purposeFilters[0] === purpose && sourceFilters.length === 0 && tagFilters.length === 0 && topicFilters.length === 0 && flagFilters.length === 0;
+      setPurposeFilters(selected ? [] : [purpose]);
+      setSourceFilters([]);
+      setTagFilters([]);
+      setTopicFilters([]);
+      setFlagFilters([]);
+      return;
+    }
+    setPurposeFilters((prev) => (prev.includes(purpose) ? prev.filter((p) => p !== purpose) : [...prev, purpose]));
+  };
+
+  const onRediscover = async (strategy: string) => {
+    try {
+      const res = await api.rediscovery(strategy);
+      if (!res.items.length) {
+        setToast(strategy === "on_this_day" ? "Nothing saved on this day yet." : "No forgotten gems right now.");
+        return;
+      }
+      setHighlight(new Set(res.items.map((i) => i.id)));
+      selectNote(res.items[0].id);
+      setToast(`${res.items.length} ${strategy === "on_this_day" ? "from this day in the past" : "forgotten gem(s)"} — highlighted`);
+    } catch (e) {
+      setToast(String(e));
+    }
   };
 
   const onShowRelated = (id: string) => {
@@ -298,13 +345,30 @@ export default function App() {
     }
   };
 
-  const onSave = async (url: string) => {
+  const DUP_REASON_LABEL: Record<string, string> = {
+    source_url: "same URL",
+    resolved_url: "same final URL",
+    content_hash: "same content",
+  };
+
+  const onSave = async (url: string, force = false) => {
     setSaving(true);
     try {
-      const res = await api.saveUrl(url);
+      const res = await api.saveUrl(url, force);
+      if (!res.created) {
+        // Duplicate: offer a "save anyway" override rather than silently dropping it.
+        const reason = res.duplicate_reason ? DUP_REASON_LABEL[res.duplicate_reason] ?? res.duplicate_reason : "duplicate";
+        selectNote(res.note.id);
+        if (window.confirm(`Already saved "${res.note.title}" (${reason}).\n\nSave a fresh copy anyway?`)) {
+          setSaving(false);
+          return onSave(url, true);
+        }
+        setToast(`Already saved (${reason})`);
+        return;
+      }
       await refreshData();
       selectNote(res.note.id);
-      setToast(res.created ? `Saved: ${res.note.title}` : `Already saved (${res.duplicate_reason})`);
+      setToast(res.similar_note_id ? `Saved: ${res.note.title} (looks similar to an existing note)` : `Saved: ${res.note.title}`);
     } catch (e) {
       setToast(String(e));
     } finally {
@@ -323,7 +387,11 @@ export default function App() {
     const topic = ideaTopic();
     setIdeaJob((j) => ({ ...j, status: "loading", topic }));
     try {
-      const res = await api.generateIdea(topic || undefined, flagFilters.includes("favorite"));
+      // Project Mode: scope idea source-knowledge to the active purpose/tag filters.
+      const res = await api.generateIdea(topic || undefined, flagFilters.includes("favorite"), {
+        purpose: purposeFilters[0] ?? null,
+        tags: tagFilters.length ? tagFilters : undefined,
+      });
       if (!res.ok) {
         setToast(res.message);
         setIdeaJob((j) => ({ ...j, status: "idle" }));
@@ -441,6 +509,19 @@ export default function App() {
       const updated = await api.setFavorite(id, value);
       setNote(updated);
       await refreshData(); // node's favorite flag changed
+    } catch (e) {
+      setToast(String(e));
+    } finally {
+      setPaneBusy(false);
+    }
+  };
+
+  const onSetPurpose = async (id: string, purpose: string | null) => {
+    setPaneBusy(true);
+    try {
+      const updated = await api.setPurpose(id, purpose);
+      setNote(updated);
+      await refreshData(); // node purpose + inbox count changed
     } catch (e) {
       setToast(String(e));
     } finally {
@@ -574,6 +655,9 @@ export default function App() {
         busy={busy || ask.loading}
         saving={saving}
         ideaStatus={ideaJob.status}
+        inboxCount={stats?.notes.inbox ?? 0}
+        inboxActive={flagFilters.includes("inbox")}
+        onOpenInbox={() => toggleFlagFilter("inbox")}
         onAsk={onAsk}
         onFind={onFind}
         onSave={onSave}
@@ -596,6 +680,7 @@ export default function App() {
           tagFilters={tagFilters}
           topicFilters={topicFilters}
           flagFilters={flagFilters}
+          purposeFilters={purposeFilters}
           minAgeDays={minAgeDays}
           minScore={minScore}
           usage={usage}
@@ -606,6 +691,10 @@ export default function App() {
           onSelectTag={selectTag}
           onSelectTopic={selectTopic}
           onToggleFlagFilter={toggleFlagFilter}
+          onSelectPurpose={selectPurpose}
+          onRediscover={onRediscover}
+          onApplyView={applyView}
+          currentView={{ purposeFilters, sourceFilters, tagFilters, flagFilters, minScore, minAgeDays }}
           onClearFilters={clearAllFilters}
           onMinAgeDays={setMinAgeDays}
           onMinScore={setMinScore}
@@ -618,6 +707,7 @@ export default function App() {
           tagFilters={tagFilters}
           topicFilters={topicFilters}
           flagFilters={flagFilters}
+          purposeFilters={purposeFilters}
           minAgeDays={minAgeDays}
           minScore={minScore}
           selectedId={selectedId}
@@ -652,6 +742,7 @@ export default function App() {
           onEditTags={onEditTags}
           onEditTitle={onEditTitle}
           onSetStatus={onSetStatus}
+          onSetPurpose={onSetPurpose}
           onSelectTag={(tag) => selectTag(tag)}
           onSetFavorite={onSetFavorite}
         />

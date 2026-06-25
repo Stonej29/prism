@@ -23,6 +23,7 @@ TUI_COMMANDS: list[tuple[str, str, str]] = [
     ("traverse", "traverse", "Run graph maintenance now"),
     ("rename", "rename <id> <title>", "Rename a note"),
     ("status_set", "status_set <id> <status>", "Set a note's review status"),
+    ("purpose", "purpose <id> <value>", "Set a note's purpose (Thesis/Work/Self-Host/Dataset/Keep/none)"),
     ("reprocess", "reprocess <id>", "Re-run LLM generation for a note"),
     ("reprocess_all", "reprocess_all", "Re-run LLM generation for every note"),
     ("repersonalize", "repersonalize <id>", "Re-run only personalization for a note"),

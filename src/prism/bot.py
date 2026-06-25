@@ -24,6 +24,7 @@ from prism.index import NoteIndexer
 from prism.llm import LLMConfig
 from prism.notes import (
     NOTE_STATUSES,
+    PURPOSE_VALUES,
     NoteService,
     _json_array,
     extract_first_url,
@@ -61,6 +62,7 @@ COMMANDS = [
     ("traverse", "Run graph maintenance now"),
     ("rename", "Rename a note"),
     ("status_set", "Set a note's review status"),
+    ("purpose", "Set a note's purpose (Thesis/Work/Self-Host/Dataset/Keep/none)"),
     ("reprocess", "Re-run LLM generation for a note"),
     ("reprocess_all", "Re-run LLM generation for every note"),
     ("repersonalize", "Re-run only personalization for a note"),
@@ -93,6 +95,9 @@ class PrismBot:
         self.proposals = ProposalService(self.database, self.notes)
         self._semantic_pages: dict[str, tuple[str, list]] = {}
         self._wipe_codes: dict[int, str] = {}
+        # token -> URL, for the "Save anyway" duplicate override (callback_data is too
+        # small to carry a full URL).
+        self._save_anyway_urls: dict[str, str] = {}
 
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         del context
@@ -110,24 +115,35 @@ class PrismBot:
 
         existing = self.database.find_by_source_url(source_url)
         if existing:
-            await message.reply_text(_already_saved_reply(existing), parse_mode=HTML_PARSE_MODE)
+            await message.reply_text(
+                _already_saved_reply(existing, "source_url"),
+                parse_mode=HTML_PARSE_MODE,
+                reply_markup=self._save_anyway_keyboard(source_url),
+            )
             return
 
         await message.reply_text("Saving...")
         asyncio.create_task(self._save_url_task(source_url, message))
 
-    async def _save_url_task(self, source_url: str, message) -> None:
+    async def _save_url_task(self, source_url: str, message, force: bool = False) -> None:
         try:
-            result = await asyncio.to_thread(self.notes.save_url, source_url, "telegram")
+            result = await asyncio.to_thread(self.notes.save_url, source_url, "telegram", force=force)
         except Exception as exc:
             LOGGER.exception("Background save_url failed for %s", source_url)
             await message.reply_text(f"Failed to save {source_url}: {type(exc).__name__}: {exc}")
             return
         record = result.record
         if result.created:
-            await message.reply_text(self._saved_reply(record), parse_mode=HTML_PARSE_MODE)
+            text = self._saved_reply(record)
+            if result.similar_note_id:
+                text += "\n\n<i>Looks similar to</i> " + _cmd("more", result.similar_note_id)
+            await message.reply_text(text, parse_mode=HTML_PARSE_MODE)
         else:
-            await message.reply_text(_already_saved_reply(record), parse_mode=HTML_PARSE_MODE)
+            await message.reply_text(
+                _already_saved_reply(record, result.duplicate_reason),
+                parse_mode=HTML_PARSE_MODE,
+                reply_markup=self._save_anyway_keyboard(source_url),
+            )
 
     async def handle_document(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         del context
@@ -379,6 +395,33 @@ class PrismBot:
             await message.reply_text(f"Set status failed: {type(exc).__name__}: {exc}")
             return
         await message.reply_text(f"Set {updated.note_id} status to <b>{_h(updated.status)}</b>", parse_mode=HTML_PARSE_MODE)
+
+    async def handle_purpose(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self._is_allowed(update):
+            return
+        message = update.effective_message
+        if not message:
+            return
+        if len(context.args) < 2:
+            await message.reply_text(f"Usage: /purpose <id> <{'/'.join(PURPOSE_VALUES)}/none>")
+            return
+        note_id = context.args[0].strip().lower()
+        purpose = " ".join(context.args[1:]).strip()
+        record = self.database.find_by_note_id(note_id)
+        if not record:
+            await message.reply_text(f"No note found for {note_id}.")
+            return
+        try:
+            updated = await asyncio.to_thread(self.notes.set_purpose, record, purpose)
+        except ValueError as exc:
+            await message.reply_text(str(exc))
+            return
+        except Exception as exc:
+            LOGGER.exception("Set purpose failed for %s", note_id)
+            await message.reply_text(f"Set purpose failed: {type(exc).__name__}: {exc}")
+            return
+        label = updated.purpose or "Unsorted"
+        await message.reply_text(f"Set {updated.note_id} purpose to <b>{_h(label)}</b>", parse_mode=HTML_PARSE_MODE)
 
     async def handle_retry_failed(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._is_allowed(update):
@@ -836,6 +879,38 @@ class PrismBot:
             self._semantic_pages = {}
         return self._semantic_pages
 
+    def _save_anyway_cache(self) -> dict[str, str]:
+        if not hasattr(self, "_save_anyway_urls"):
+            self._save_anyway_urls: dict[str, str] = {}
+        return self._save_anyway_urls
+
+    def _save_anyway_keyboard(self, url: str) -> InlineKeyboardMarkup:
+        cache = self._save_anyway_cache()
+        token = secrets.token_urlsafe(6)[:8]
+        cache[token] = url
+        if len(cache) > 100:
+            for old in list(cache)[:50]:
+                cache.pop(old, None)
+        return InlineKeyboardMarkup([[InlineKeyboardButton("Save anyway", callback_data=f"saveanyway:{token}")]])
+
+    async def handle_save_anyway(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        del context
+        query = update.callback_query
+        if not query:
+            return
+        await query.answer()
+        user = update.effective_user
+        if not user or user.id not in self.settings.telegram_allowed_user_ids:
+            return
+        token = (query.data or "").split(":", 1)[-1]
+        url = self._save_anyway_cache().pop(token, None)
+        await query.edit_message_reply_markup(reply_markup=None)
+        if not url:
+            await query.message.reply_text("That save-anyway option expired. Send the URL again.")
+            return
+        await query.message.reply_text("Saving anyway...")
+        asyncio.create_task(self._save_url_task(url, query.message, force=True))
+
     def _store_semantic_page(self, title: str, results: list) -> str:
         cache = self._semantic_cache()
         token = secrets.token_urlsafe(6)[:8]
@@ -852,7 +927,7 @@ class PrismBot:
             page, more = rows[:PAGE_SIZE], len(rows) > PAGE_SIZE
             text = _recent_reply(page) if page else None
         elif kind == "inbox":
-            rows = self.database.list_recent_notes(PAGE_SIZE + 1, offset, status="unreviewed")
+            rows = self.database.list_inbox_notes(PAGE_SIZE + 1, offset)
             page, more = rows[:PAGE_SIZE], len(rows) > PAGE_SIZE
             text = _recent_reply(page) if page else None
         elif kind == "ideas":
@@ -907,14 +982,24 @@ class PrismBot:
         return False
 
 
-def _already_saved_reply(record) -> str:
+_DUPLICATE_REASON_TEXT = {
+    "source_url": "same URL",
+    "resolved_url": "same final URL after redirects",
+    "content_hash": "same content",
+}
+
+
+def _already_saved_reply(record, reason: str | None = None) -> str:
     s = structured_summary(record)
     generated = record.llm_status == "generated"
     quick = s.get("quick_summary") if generated else None
     summary = quick.strip() if isinstance(quick, str) and quick.strip() else record.summary
     tags = tags_for_record(record)
     tags_line = "<b>Tags:</b> " + " ".join(f"#{_h(t)}" for t in tags) if tags else ""
-    parts = [f"<b>Already saved:</b> {_h(record.title)}", _h(summary)]
+    header = "<b>Already saved:</b> " + _h(record.title)
+    if reason and reason in _DUPLICATE_REASON_TEXT:
+        header += f" <i>({_DUPLICATE_REASON_TEXT[reason]})</i>"
+    parts = [header, _h(summary)]
     if tags_line:
         parts.append(tags_line)
     parts.append(_cmd("more", record.note_id))
@@ -1251,6 +1336,7 @@ def build_application(settings: Settings) -> Application:
     application.add_handler(CommandHandler("more", bot.handle_more))
     application.add_handler(CommandHandler("rename", bot.handle_rename))
     application.add_handler(CommandHandler("status_set", bot.handle_status_set))
+    application.add_handler(CommandHandler("purpose", bot.handle_purpose))
     application.add_handler(CommandHandler("reprocess", bot.handle_reprocess))
     application.add_handler(CommandHandler("reprocess_all", bot.handle_reprocess_all))
     application.add_handler(CommandHandler("repersonalize", bot.handle_repersonalize))
@@ -1276,6 +1362,7 @@ def build_application(settings: Settings) -> Application:
     application.add_handler(CallbackQueryHandler(bot.handle_delete_callback, pattern="^delete:"))
     application.add_handler(CallbackQueryHandler(bot.handle_page, pattern="^pg:"))
     application.add_handler(CallbackQueryHandler(bot.handle_semantic_page, pattern="^sp:"))
+    application.add_handler(CallbackQueryHandler(bot.handle_save_anyway, pattern="^saveanyway:"))
     application.add_handler(MessageHandler(filters.Document.ALL, bot.handle_document))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot.handle_message))
     return application

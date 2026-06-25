@@ -7,6 +7,8 @@ from pydantic import BaseModel, Field
 class SaveUrlBody(BaseModel):
     url: str = Field(..., min_length=1)
     input_source: str = Field(default="web_ui", min_length=1)
+    # Skip the duplicate checks and save a fresh note anyway ("save anyway" override).
+    force: bool = False
 
 
 class AskBody(BaseModel):
@@ -17,6 +19,11 @@ class AskBody(BaseModel):
 class GenerateIdeaBody(BaseModel):
     topic: str | None = None
     prefer_favorite: bool = False
+    # Project Mode: scope the idea's source knowledge to a purpose, an explicit note set,
+    # or selected tags (instead of the whole vault).
+    purpose: str | None = None
+    note_ids: list[str] | None = None
+    tags: list[str] | None = None
 
 
 class RateIdeaBody(BaseModel):
@@ -33,6 +40,12 @@ class RenameBody(BaseModel):
 
 class SetStatusBody(BaseModel):
     status: str = Field(..., min_length=1)
+
+
+class SetPurposeBody(BaseModel):
+    # None / "" / "none" / "unsorted" clears the purpose; any other value must be a
+    # recognized purpose (validated server-side against PURPOSE_VALUES).
+    purpose: str | None = None
 
 
 class BulkStatusBody(BaseModel):

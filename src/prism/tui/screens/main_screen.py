@@ -240,6 +240,8 @@ class AtlasScreen(Screen):
             self._dispatch_rename(rest)
         elif first == "status_set":
             self._dispatch_status_set(rest)
+        elif first == "purpose":
+            self._dispatch_purpose(rest)
         elif first == "reprocess":
             self._dispatch_blocking(rest, "Usage: reprocess <id>", lambda q: self._op_reprocess(q), "Reprocessing…")
         elif first == "reprocess_all":
@@ -271,12 +273,14 @@ class AtlasScreen(Screen):
         self._run(lambda: op(arg))
 
     def _dispatch_save(self, rest: str) -> None:
+        force = "--force" in rest.split()
+        rest = rest.replace("--force", "").strip()
         url = extract_first_url(rest) or rest
         if not url:
-            self.set_status("Usage: save <url>")
+            self.set_status("Usage: save [--force] <url>")
             return
         self.set_status(f"Saving {url}…")
-        self._run(lambda: self._op_save(url))
+        self._run(lambda: self._op_save(url, force))
 
     def _dispatch_rename(self, rest: str) -> None:
         parts = rest.split(maxsplit=1)
@@ -295,6 +299,15 @@ class AtlasScreen(Screen):
         note_id, status = parts[0], parts[1]
         self.set_status(f"Setting status of {note_id}…")
         self._run(lambda: self._op_status_set(note_id, status))
+
+    def _dispatch_purpose(self, rest: str) -> None:
+        parts = rest.split(maxsplit=1)
+        if len(parts) < 2:
+            self.set_status("Usage: purpose <id> <value>")
+            return
+        note_id, purpose = parts[0], parts[1]
+        self.set_status(f"Setting purpose of {note_id}…")
+        self._run(lambda: self._op_purpose(note_id, purpose))
 
     def _dispatch_delete(self, rest: str) -> None:
         if not rest:
@@ -327,9 +340,12 @@ class AtlasScreen(Screen):
         self.post_message(result)
 
     # Operations (run inside _run, on a worker thread) ---------------------
-    def _op_save(self, url: str) -> WorkerResult:
-        r = self.core.save_url(url)
-        status = f"Saved: {r.record.title}" if r.created else f"Duplicate ({r.duplicate_reason}): {r.record.title}"
+    def _op_save(self, url: str, force: bool = False) -> WorkerResult:
+        r = self.core.save_url(url, force=force)
+        if r.created:
+            status = f"Saved: {r.record.title}"
+        else:
+            status = f"Duplicate ({r.duplicate_reason}): {r.record.title} — add --force to save anyway"
         return WorkerResult(status, render.note_markdown(r.record), refresh=True)
 
     def _op_ask(self, q: str) -> WorkerResult:
@@ -368,6 +384,11 @@ class AtlasScreen(Screen):
 
     def _op_status_set(self, note_id: str, status: str) -> WorkerResult:
         r = self.core.set_status(note_id, status)
+        detail = render.note_markdown(r.record) if r.record else None
+        return WorkerResult(r.message, detail, refresh=True)
+
+    def _op_purpose(self, note_id: str, purpose: str) -> WorkerResult:
+        r = self.core.set_purpose(note_id, purpose)
         detail = render.note_markdown(r.record) if r.record else None
         return WorkerResult(r.message, detail, refresh=True)
 

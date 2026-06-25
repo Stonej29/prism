@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { P, srcColor, srcLabel, topicColor } from "../theme";
 import type { GraphPayload, Stats, TagCount, TreeNode, Usage } from "../types";
+import { PURPOSES } from "../types";
+import { GraphPresets, type GraphView } from "./GraphPresets";
 import { FileTree } from "./FileTree";
 import type { OpenFile } from "./FileViewer";
 import { ResizeHandle } from "./ResizeHandle";
@@ -86,6 +88,7 @@ export function TreePane({
   tagFilters,
   topicFilters,
   flagFilters,
+  purposeFilters,
   minAgeDays,
   minScore,
   usage,
@@ -96,6 +99,10 @@ export function TreePane({
   onSelectTag,
   onSelectTopic,
   onToggleFlagFilter,
+  onSelectPurpose,
+  onRediscover,
+  onApplyView,
+  currentView,
   onClearFilters,
   onMinAgeDays,
   onMinScore,
@@ -116,6 +123,7 @@ export function TreePane({
   tagFilters: string[];
   topicFilters: number[];
   flagFilters: string[];
+  purposeFilters: string[];
   minAgeDays: number;
   minScore: number;
   usage: Usage | null;
@@ -126,6 +134,10 @@ export function TreePane({
   onSelectTag: (t: string, additive?: boolean) => void;
   onSelectTopic: (topic: number, additive?: boolean) => void;
   onToggleFlagFilter: (flag: string, additive?: boolean) => void;
+  onSelectPurpose: (purpose: string, additive?: boolean) => void;
+  onRediscover: (strategy: string) => void;
+  onApplyView: (view: GraphView) => void;
+  currentView: GraphView;
   onClearFilters: () => void;
   onMinAgeDays: (v: number) => void;
   onMinScore: (v: number) => void;
@@ -149,9 +161,11 @@ export function TreePane({
   const graphNodes = graph?.nodes ?? [];
   const idsFor = (predicate: (node: GraphPayload["nodes"][number]) => boolean) => graphNodes.filter(predicate).map((n) => n.id);
   const counts: Record<string, number> = {};
+  const purposeCounts: Record<string, number> = {};
   const topicCounts = new Map<number, number>();
   for (const n of graphNodes) {
     counts[n.source_kind] = (counts[n.source_kind] ?? 0) + 1;
+    if (n.purpose) purposeCounts[n.purpose] = (purposeCounts[n.purpose] ?? 0) + 1;
     if (n.topic >= 0) topicCounts.set(n.topic, (topicCounts.get(n.topic) ?? 0) + 1);
   }
   const topicOptions = [...topicCounts.entries()]
@@ -161,7 +175,7 @@ export function TreePane({
   const healthy = stats?.index_configured && (stats?.notes.embedding_failed ?? 0) === 0;
   const llmHealthy = stats?.llm_configured && (stats?.notes.llm_failed ?? 0) === 0;
   const filtering = query.trim().length > 0;
-  const fanoutActive = sourceFilters.length > 0 || tagFilters.length > 0 || topicFilters.length > 0 || flagFilters.length > 0 || minAgeDays > 0 || minScore > 0;
+  const fanoutActive = sourceFilters.length > 0 || tagFilters.length > 0 || topicFilters.length > 0 || flagFilters.length > 0 || purposeFilters.length > 0 || minAgeDays > 0 || minScore > 0;
 
   return (
     <div style={{ position: "relative", width, flexShrink: 0, borderRight: `1px solid ${P.line}`, background: P.bg1, display: "flex", flexDirection: "column", minHeight: 0 }}>
@@ -198,6 +212,8 @@ export function TreePane({
               <span style={{ fontFamily: P.mono, fontSize: 10, color: P.faint, flex: 1 }}>Ctrl-click to combine</span>
               {fanoutActive && <span onClick={onClearFilters} style={{ fontFamily: P.mono, fontSize: 10, color: P.mid, cursor: "pointer" }}>clear</span>}
             </div>
+            <div style={{ fontFamily: P.mono, fontSize: 9, letterSpacing: 1, color: P.faint, padding: "0 12px 2px" }}>VIEWS</div>
+            <GraphPresets current={currentView} onApply={onApplyView} />
             <FilterRow glyph="◇" label="All notes" active={!fanoutActive} onClick={onClearFilters} />
             <FilterRow
               glyph="★"
@@ -209,8 +225,17 @@ export function TreePane({
               onClick={(e) => onToggleFlagFilter("favorite", additive(e))}
             />
             <FilterRow
+              glyph="◆"
+              label="Inbox (to read)"
+              count={stats?.notes.inbox ?? 0}
+              active={flagFilters.includes("inbox")}
+              previewIds={idsFor((n) => n.status === "unreviewed" && n.purpose !== "Keep")}
+              onPreviewFilter={onPreviewFilter}
+              onClick={(e) => onToggleFlagFilter("inbox", additive(e))}
+            />
+            <FilterRow
               glyph="?"
-              label="Unreviewed"
+              label="Unreviewed (all)"
               count={stats?.notes.unreviewed ?? 0}
               active={flagFilters.includes("unreviewed")}
               previewIds={idsFor((n) => n.status === "unreviewed")}
@@ -239,6 +264,22 @@ export function TreePane({
                 onClick={(e) => onSelectSource(kind, additive(e))}
               />
             ))}
+            {PURPOSES.some((p) => (purposeCounts[p] ?? 0) > 0) && (
+              <>
+                <div style={{ fontFamily: P.mono, fontSize: 9, letterSpacing: 1, color: P.faint, padding: "8px 12px 4px" }}>BY PURPOSE</div>
+                {PURPOSES.filter((p) => (purposeCounts[p] ?? 0) > 0).map((p) => (
+                  <FilterRow
+                    key={p}
+                    label={p}
+                    count={purposeCounts[p] ?? 0}
+                    active={purposeFilters.includes(p)}
+                    previewIds={idsFor((n) => n.purpose === p)}
+                    onPreviewFilter={onPreviewFilter}
+                    onClick={(e) => onSelectPurpose(p, additive(e))}
+                  />
+                ))}
+              </>
+            )}
             {topicOptions.length > 0 && (
               <>
                 <div style={{ fontFamily: P.mono, fontSize: 9, letterSpacing: 1, color: P.faint, padding: "8px 12px 4px" }}>TOPICS</div>
@@ -297,6 +338,10 @@ export function TreePane({
               <input type="range" min={0} max={10} step={1} value={minScore} onChange={(e) => onMinScore(Number(e.target.value))} style={{ flex: 1, accentColor: P.mid }} />
               <span style={{ fontFamily: P.mono, fontSize: 11, color: minScore > 0 ? P.hi : P.lo, width: 30, textAlign: "right" }}>{minScore > 0 ? `>=${minScore}` : "off"}</span>
             </div>
+
+            <div style={{ fontFamily: P.mono, fontSize: 9, letterSpacing: 1, color: P.faint, padding: "10px 12px 4px" }}>REDISCOVER</div>
+            <FilterRow glyph="◷" label="On this day" onClick={() => onRediscover("on_this_day")} />
+            <FilterRow glyph="✦" label="Forgotten gems" onClick={() => onRediscover("forgotten_gems")} />
           </div>
         )}
       </div>

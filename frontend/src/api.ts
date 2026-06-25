@@ -60,10 +60,10 @@ export const api = {
 
   note: (id: string) => req<NoteDetail>(`/notes/${id}`),
 
-  saveUrl: (url: string) =>
-    req<{ created: boolean; duplicate_reason: string | null; note: NoteDetail }>(`/notes`, {
+  saveUrl: (url: string, force = false) =>
+    req<{ created: boolean; duplicate_reason: string | null; similar_note_id: string | null; similarity: number | null; note: NoteDetail }>(`/notes`, {
       method: "POST",
-      body: JSON.stringify({ url }),
+      body: JSON.stringify({ url, force }),
     }),
 
   reprocess: (id: string) =>
@@ -94,6 +94,17 @@ export const api = {
 
   setFavorite: (id: string, value: boolean) =>
     req<NoteDetail>(`/notes/${id}/favorite`, { method: "PUT", body: JSON.stringify({ value }) }),
+
+  setPurpose: (id: string, purpose: string | null) =>
+    req<NoteDetail>(`/notes/${id}/purpose`, { method: "PUT", body: JSON.stringify({ purpose }) }),
+
+  inbox: (sort = "newest") =>
+    req<{ items: NoteSummary[]; sort: string; count: number }>(`/inbox?sort=${encodeURIComponent(sort)}`),
+
+  rediscovery: (strategy: string, noteId?: string) =>
+    req<{ strategy: string; items: { id: string; title: string }[] }>(
+      `/rediscovery?strategy=${encodeURIComponent(strategy)}${noteId ? `&note_id=${encodeURIComponent(noteId)}` : ""}`,
+    ),
 
   setStatusBulk: (ids: string[], status: string) =>
     req<{ status: string; results: { id: string; ok: boolean; status?: string }[] }>(`/notes/status`, {
@@ -141,8 +152,17 @@ export const api = {
 
   ideas: () => req<{ items: Idea[] }>(`/ideas`),
 
-  generateIdea: (topic?: string, preferFavorite = false) =>
-    req<IdeaResult>(`/ideas`, { method: "POST", body: JSON.stringify({ topic: topic || null, prefer_favorite: preferFavorite }) }),
+  generateIdea: (topic?: string, preferFavorite = false, opts?: { purpose?: string | null; tags?: string[]; note_ids?: string[] }) =>
+    req<IdeaResult>(`/ideas`, {
+      method: "POST",
+      body: JSON.stringify({
+        topic: topic || null,
+        prefer_favorite: preferFavorite,
+        purpose: opts?.purpose ?? null,
+        tags: opts?.tags ?? null,
+        note_ids: opts?.note_ids ?? null,
+      }),
+    }),
 
   rateIdea: (id: string, rating: number) =>
     req<Idea>(`/ideas/${id}/rating`, { method: "POST", body: JSON.stringify({ rating }) }),

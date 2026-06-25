@@ -146,7 +146,7 @@ class ReadMoreLinkTests(unittest.TestCase):
 class UploadFetchTests(unittest.TestCase):
     def test_fetch_upload_archives_pdf(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            with patch("prism.fetch._extract_pdf_text", return_value="PDF body text"):
+            with patch("prism.fetch._extract_pdf", return_value=("PDF body text", {})):
                 result = fetch_upload(b"%PDF-1.4 data", "My File.pdf", Path(tmp), "up1", "application/pdf")
             self.assertEqual(result.source_kind, "pdf")
             self.assertEqual(result.extracted_text, "PDF body text")
@@ -173,7 +173,7 @@ class SaveUploadDedupTests(unittest.TestCase):
     def test_save_upload_dedups_identical_bytes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             service = self._service(Path(tmp))
-            with patch("prism.fetch._extract_pdf_text", return_value="stable text"):
+            with patch("prism.fetch._extract_pdf", return_value=("stable text", {})):
                 first = service.save_upload("doc.pdf", b"%PDF bytes", "application/pdf", "telegram")
                 second = service.save_upload("doc.pdf", b"%PDF bytes", "application/pdf", "telegram")
             self.assertTrue(first.created)

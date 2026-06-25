@@ -6,7 +6,7 @@ import re
 import secrets
 import shutil
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -49,12 +49,42 @@ Preferences: describe what makes a note useful, which tradeoffs matter, and what
 
 NOTE_STATUSES = ("unreviewed", "reviewed", "archived")
 
+# Single-select content classification, auto-assigned by the LLM ground-truth pass and
+# user-editable. `None` ("Unsorted") means unclassified (LLM unsure or unconfigured).
+# `Keep` = worth retaining but not worth reading, so it is excluded from the review queue.
+PURPOSE_VALUES = ("Thesis", "Work", "Self-Host", "Dataset", "Keep")
+
+
+def normalize_purpose(value: str | None) -> str | None:
+    """Map a free-form purpose to its canonical casing, or None if unrecognized.
+
+    Matching is case- and separator-insensitive so the LLM (or a user) can pass
+    "self host", "self_host", "SELF-HOST" etc. and still land on "Self-Host".
+    """
+    if not value or not isinstance(value, str):
+        return None
+    key = re.sub(r"[\s_-]+", "", value).strip().lower()
+    for canonical in PURPOSE_VALUES:
+        if re.sub(r"[\s_-]+", "", canonical).lower() == key:
+            return canonical
+    return None
+
+
+# A near-identical embedding match flags a likely duplicate. Advisory only — it never
+# blocks a save (different content hashes with near-identical text are common, e.g. a
+# v2 of a paper), it just surfaces "this looks similar to …" so the user can decide.
+SEMANTIC_DUP_THRESHOLD = 0.92
+
 
 @dataclass(frozen=True)
 class SaveResult:
     record: NoteRecord
     created: bool
+    # Why a save was rejected as a duplicate: "source_url" | "resolved_url" | "content_hash".
     duplicate_reason: str | None = None
+    # Advisory near-duplicate hint set when a NEW note was still created (created=True).
+    similar_note_id: str | None = None
+    similarity: float | None = None
 
 
 @dataclass(frozen=True)
@@ -146,14 +176,15 @@ class NoteService:
         self.archive_path.mkdir(parents=True, exist_ok=True)
         ensure_profile(self.profile_path)
 
-    def save_url(self, source_url: str, input_source: str = "telegram") -> SaveResult:
-        existing = self.database.find_by_source_url(source_url)
-        if existing:
-            return SaveResult(record=existing, created=False, duplicate_reason="source_url")
+    def save_url(self, source_url: str, input_source: str = "telegram", *, force: bool = False) -> SaveResult:
+        if not force:
+            existing = self.database.find_by_source_url(source_url)
+            if existing:
+                return SaveResult(record=existing, created=False, duplicate_reason="source_url")
 
         note_id = self._new_note_id()
         fetch = fetch_source(source_url, self.archive_path, note_id)
-        return self._persist_fetch(source_url, fetch, note_id, input_source)
+        return self._persist_fetch(source_url, fetch, note_id, input_source, force=force)
 
     def save_upload(
         self,
@@ -161,26 +192,42 @@ class NoteService:
         data: bytes,
         content_type: str | None = None,
         input_source: str = "telegram",
+        *,
+        force: bool = False,
     ) -> SaveResult:
         note_id = self._new_note_id()
         fetch = fetch_upload(data, filename, self.archive_path, note_id, content_type)
-        existing = self.database.find_by_source_url(fetch.source_url)
-        if existing:
-            return SaveResult(record=existing, created=False, duplicate_reason="source_url")
-        return self._persist_fetch(fetch.source_url, fetch, note_id, input_source)
+        if not force:
+            existing = self.database.find_by_source_url(fetch.source_url)
+            if existing:
+                return SaveResult(record=existing, created=False, duplicate_reason="source_url")
+        return self._persist_fetch(fetch.source_url, fetch, note_id, input_source, force=force)
 
-    def _persist_fetch(self, source_url: str, fetch: FetchResult, note_id: str, input_source: str) -> SaveResult:
+    def _persist_fetch(self, source_url: str, fetch: FetchResult, note_id: str, input_source: str, *, force: bool = False) -> SaveResult:
         saved_at = datetime.now(UTC).replace(microsecond=0)
 
-        duplicate = self.database.find_by_content_hash(fetch.content_hash)
-        if duplicate:
-            return SaveResult(record=duplicate, created=False, duplicate_reason="content_hash")
+        if not force:
+            # The final URL after redirects may collide with a note saved under a different
+            # original URL (e.g. a shortener vs. the canonical link).
+            if fetch.resolved_url and fetch.resolved_url != source_url:
+                by_resolved = self.database.find_by_resolved_url(fetch.resolved_url)
+                if by_resolved:
+                    return SaveResult(record=by_resolved, created=False, duplicate_reason="resolved_url")
+            duplicate = self.database.find_by_content_hash(fetch.content_hash)
+            if duplicate:
+                return SaveResult(record=duplicate, created=False, duplicate_reason="content_hash")
 
         title = clean_title(fetch.title) or placeholder_title(source_url)
         filename = f"{saved_at.date().isoformat()}-{slugify(title)}.md"
         note_path = self._unique_note_path(filename)
         relative_note_path = str(note_path.relative_to(self.vault_path))
         summary = summary_for_fetch(source_url, fetch)
+
+        # Reading-time estimate (~200 wpm), computed here where the extracted text lives.
+        words = len(fetch.extracted_text.split())
+        metadata = dict(fetch.metadata)
+        if words:
+            metadata["reading_minutes"] = max(1, round(words / 200))
 
         record = NoteRecord(
             note_id=note_id,
@@ -199,13 +246,19 @@ class NoteService:
             fetch_status=fetch.fetch_status,
             fetch_error=fetch.fetch_error,
             fetched_at=fetch.fetched_at,
-            metadata_json=json.dumps(fetch.metadata, ensure_ascii=True, sort_keys=True),
+            metadata_json=json.dumps(metadata, ensure_ascii=True, sort_keys=True),
         )
-        record = self._apply_llm(record, fetch.extracted_text, fetch.metadata)
+        # Compute related candidates once and reuse them both for the LLM context and for
+        # the advisory near-duplicate hint (avoids a second embedding round-trip).
+        related = self._related_candidates(record, fetch.extracted_text)
+        similar_note_id, similarity = None, None
+        if related and related[0].score >= SEMANTIC_DUP_THRESHOLD:
+            similar_note_id, similarity = related[0].note_id, round(related[0].score, 4)
+        record = self._apply_llm(record, fetch.extracted_text, metadata, related_candidates=related)
         note_path.write_text(render_note(record, fetch.extracted_text), encoding="utf-8")
         self.database.insert_note(record)
         record = self._index_after_persist(record)
-        return SaveResult(record=record, created=True)
+        return SaveResult(record=record, created=True, similar_note_id=similar_note_id, similarity=similarity)
 
     def _refetch(self, record: NoteRecord) -> NoteRecord:
         """Retry the original fetch in place (browser headers + reader fallback may
@@ -456,6 +509,25 @@ class NoteService:
         if status not in NOTE_STATUSES:
             raise ValueError(f"Status must be one of {', '.join(NOTE_STATUSES)}")
         updated = replace(record, status=status)
+        self.database.update_note(updated)
+        self._render_to_disk(updated)
+        return updated
+
+    def set_purpose(self, record: NoteRecord, purpose: str | None) -> NoteRecord:
+        """Set a note's purpose classification in SQLite and rewrite its frontmatter.
+
+        Purpose is not part of the embedded text (see `canonical_index_text`), so no
+        re-indexing is needed. An empty/"none"/"unsorted" value clears the purpose;
+        any other unrecognized value raises ValueError.
+        """
+        cleaned = (purpose or "").strip()
+        if cleaned.lower() in ("", "none", "unsorted"):
+            normalized: str | None = None
+        else:
+            normalized = normalize_purpose(cleaned)
+            if normalized is None:
+                raise ValueError(f"Purpose must be one of {', '.join(PURPOSE_VALUES)} (or none)")
+        updated = replace(record, purpose=normalized)
         self.database.update_note(updated)
         self._render_to_disk(updated)
         return updated
@@ -725,16 +797,16 @@ class NoteService:
             "source_url": record.source_url if record else candidate.source_url,
         }
 
-    def _apply_llm(self, record: NoteRecord, extracted_text: str, metadata: dict[str, Any], force: bool = False, *, web: bool = False) -> NoteRecord:
+    def _apply_llm(self, record: NoteRecord, extracted_text: str, metadata: dict[str, Any], force: bool = False, *, web: bool = False, related_candidates: list[RelatedCandidate] | None = None) -> NoteRecord:
         """Full note generation = ground-truth pass (call 1) then personalization (call 2)."""
-        record = self._apply_ground_truth(record, extracted_text, metadata, force=force, web=web)
+        record = self._apply_ground_truth(record, extracted_text, metadata, force=force, web=web, related_candidates=related_candidates)
         if record.llm_status == "generated":
             # Personalization is non-blocking here: a ground-truth note still has value, so a
             # call-2 failure leaves the note un-personalized rather than failing the whole save.
             record = self._apply_personalization(record)
         return record
 
-    def _apply_ground_truth(self, record: NoteRecord, extracted_text: str, metadata: dict[str, Any], force: bool = False, *, web: bool = False) -> NoteRecord:
+    def _apply_ground_truth(self, record: NoteRecord, extracted_text: str, metadata: dict[str, Any], force: bool = False, *, web: bool = False, related_candidates: list[RelatedCandidate] | None = None) -> NoteRecord:
         """Call 1: summarize the source objectively (profile-independent). Writes the
         ground-truth fields, tags, related_notes, and the novelty/credibility scores."""
         if record.fetch_status != "fetched":
@@ -745,7 +817,8 @@ class NoteService:
             return replace(record, llm_status="skipped", llm_error="no extracted text available")
 
         try:
-            related_candidates = self._related_candidates(record, extracted_text)
+            if related_candidates is None:
+                related_candidates = self._related_candidates(record, extracted_text)
             context = build_llm_context(
                 title=record.title,
                 source_kind=record.source_kind,
@@ -770,6 +843,9 @@ class NoteService:
             summary = _string_field(structured, "quick_summary") or record.summary
             tags = _tags(structured.get("tags"))
             scores = _scores(structured)
+            # Auto-classify into a single purpose; fall back to the existing value (or
+            # Unsorted) when the LLM omits it or returns something unrecognized.
+            purpose = normalize_purpose(structured.get("purpose")) or record.purpose
             generated_at = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
             metadata_json = record.metadata_json
             if web and generation.web_sources:
@@ -788,6 +864,7 @@ class NoteService:
                 structured_summary_json=json.dumps(structured, ensure_ascii=True, sort_keys=True),
                 related_notes_json=json.dumps(structured.get("related_notes", []), ensure_ascii=True, sort_keys=True),
                 metadata_json=metadata_json,
+                purpose=purpose,
             )
         except Exception as exc:
             if force or record.llm_status != "generated":
@@ -834,6 +911,31 @@ class NoteService:
                 # Surface the failure to the caller but keep the existing (stale) note intact.
                 raise RuntimeError(f"{type(exc).__name__}: {exc}") from exc
             return record
+
+    def rediscover_on_this_day(self, limit: int = 12) -> list[NoteRecord]:
+        """Notes saved on today's calendar day in previous periods."""
+        month_day = datetime.now(UTC).strftime("%m-%d")
+        return self.database.list_notes_on_day(month_day, limit)
+
+    def rediscover_forgotten_gems(self, limit: int = 12, *, min_overall: float = 7.0, older_than_days: int = 30) -> list[NoteRecord]:
+        """High-scoring notes that were saved a while ago and never reviewed."""
+        cutoff = (datetime.now(UTC) - timedelta(days=older_than_days)).replace(microsecond=0)
+        cutoff_iso = cutoff.isoformat().replace("+00:00", "Z")
+        candidates = self.database.list_stale_unreviewed(cutoff_iso, limit=200)
+        scored = [(r, scores_for_record(r).get("overall", 0) or 0) for r in candidates]
+        gems = [r for r, score in scored if float(score) >= min_overall]
+        gems.sort(key=lambda r: float(scores_for_record(r).get("overall", 0) or 0), reverse=True)
+        return gems[:limit]
+
+    def rediscover_related(self, note_id: str, limit: int = 8) -> list[RelatedCandidate]:
+        """Live semantic neighbours of an existing note (distinct from stored related links)."""
+        record = self.database.find_by_note_id(note_id.strip().lower())
+        if not record or not self.indexer or not self.indexer.is_configured:
+            return []
+        try:
+            return self.indexer.search_text(canonical_index_text(record), limit=limit, exclude_note_id=record.note_id)
+        except Exception:
+            return []
 
     def _related_candidates(self, record: NoteRecord, extracted_text: str) -> list[RelatedCandidate]:
         if not self.indexer or not self.indexer.is_configured:
@@ -974,6 +1076,7 @@ def render_note(record: NoteRecord, extracted_text: str = "") -> str:
         "llm_model": record.llm_model,
         "confidence": structured.get("confidence") if generated else None,
         "status": record.status,
+        "purpose": record.purpose,
         "tags": tags,
         "relevance_score": scores.get("relevance"),
         "novelty_score": scores.get("novelty"),
@@ -1075,6 +1178,8 @@ def _merge_candidates(*groups: list[RelatedCandidate], limit: int) -> list[Relat
 def normalize_structured_summary(data: dict[str, Any], related_candidates: list[RelatedCandidate] | None = None) -> dict[str, Any]:
     normalized = dict(data)
     normalized["tags"] = _tags(normalized.get("tags"))
+    if "purpose" in normalized:
+        normalized["purpose"] = normalize_purpose(normalized.get("purpose"))
     normalized["related_notes"] = normalize_related_notes(normalized.get("related_notes"), related_candidates or [])
     for key, value in _scores(normalized).items():
         normalized[key] = value

@@ -10,7 +10,7 @@ from prism.notes import NOTE_STATUSES, NoteService, _tags
 from prism.web.activity import log_activity
 from prism.web.deps import get_db, get_notes
 from prism.web.routes import filter_notes, gather_all_notes
-from prism.web.schemas import BulkStatusBody, EditTagsBody, FavoriteBody, RenameBody, SaveUrlBody, SetStatusBody
+from prism.web.schemas import BulkStatusBody, EditTagsBody, FavoriteBody, RenameBody, SaveUrlBody, SetPurposeBody, SetStatusBody
 from prism.web.serializers import note_summary_dto, note_to_dto
 
 router = APIRouter(prefix="/notes", tags=["notes"])
@@ -62,7 +62,7 @@ def get_note(note_id: str, db: PrismDatabase = Depends(get_db)) -> dict:
 def save_url(body: SaveUrlBody, notes: NoteService = Depends(get_notes)) -> dict:
     url = body.url.strip()
     try:
-        result = notes.save_url(url, body.input_source.strip() or "web_ui")
+        result = notes.save_url(url, body.input_source.strip() or "web_ui", force=body.force)
     except Exception as exc:
         log_activity("save url", "failed", f"{type(exc).__name__}: {exc}", url=url)
         raise
@@ -72,6 +72,8 @@ def save_url(body: SaveUrlBody, notes: NoteService = Depends(get_notes)) -> dict
     return {
         "created": result.created,
         "duplicate_reason": result.duplicate_reason,
+        "similar_note_id": result.similar_note_id,
+        "similarity": result.similarity,
         "note": note_to_dto(result.record),
     }
 
@@ -191,6 +193,18 @@ def set_status(note_id: str, body: SetStatusBody, db: PrismDatabase = Depends(ge
         raise HTTPException(status_code=404, detail=f"No note found for {note_id}")
     try:
         updated = notes.set_status(record, body.status)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return note_to_dto(updated)
+
+
+@router.put("/{note_id}/purpose")
+def set_purpose(note_id: str, body: SetPurposeBody, db: PrismDatabase = Depends(get_db), notes: NoteService = Depends(get_notes)) -> dict:
+    record = db.find_by_note_id(note_id.strip().lower())
+    if not record:
+        raise HTTPException(status_code=404, detail=f"No note found for {note_id}")
+    try:
+        updated = notes.set_purpose(record, body.purpose)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return note_to_dto(updated)

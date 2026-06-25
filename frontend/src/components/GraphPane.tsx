@@ -39,6 +39,7 @@ export function GraphPane({
   tagFilters,
   topicFilters,
   flagFilters,
+  purposeFilters,
   minAgeDays,
   minScore,
   selectedId,
@@ -58,6 +59,7 @@ export function GraphPane({
   tagFilters: string[];
   topicFilters: number[];
   flagFilters: string[];
+  purposeFilters: string[];
   minAgeDays: number;
   minScore: number;
   selectedId: string | null;
@@ -116,8 +118,11 @@ export function GraphPane({
       if (sourceFilters.length > 0 && !sourceFilters.includes(n.source_kind)) return false;
       if (tagFilters.length > 0 && !tagFilters.some((tag) => n.tags.includes(tag))) return false;
       if (topicFilters.length > 0 && !topicFilters.includes(n.topic)) return false;
+      if (purposeFilters.length > 0 && !(n.purpose != null && purposeFilters.includes(n.purpose))) return false;
       if (flagFilters.includes("favorite") && !n.favorite) return false;
       if (flagFilters.includes("unreviewed") && n.status !== "unreviewed") return false;
+      // Inbox = the review queue: unreviewed AND not "Keep" (kept knowledge needn't be read).
+      if (flagFilters.includes("inbox") && !(n.status === "unreviewed" && n.purpose !== "Keep")) return false;
       if (flagFilters.includes("failed") && !n.failed) return false;
       if (minAgeDays > 0) {
         const saved = Date.parse(n.date_saved ?? "");
@@ -126,14 +131,14 @@ export function GraphPane({
       if (minScore > 0 && !(n.overall != null && n.overall >= minScore)) return false;
       return true;
     };
-    const hasFilters = sourceFilters.length > 0 || tagFilters.length > 0 || topicFilters.length > 0 || flagFilters.length > 0 || minAgeDays > 0 || minScore > 0;
+    const hasFilters = sourceFilters.length > 0 || tagFilters.length > 0 || topicFilters.length > 0 || flagFilters.length > 0 || purposeFilters.length > 0 || minAgeDays > 0 || minScore > 0;
     if (!hasFilters) return { nodes: graph.nodes, edges: graph.edges };
     const keep = new Set(graph.nodes.filter(passes).map((n) => n.id));
     return {
       nodes: graph.nodes.filter((n) => keep.has(n.id)),
       edges: graph.edges.filter((e) => keep.has(e.source) && keep.has(e.target)),
     };
-  }, [graph, sourceFilters, tagFilters, topicFilters, flagFilters, minAgeDays, minScore]);
+  }, [graph, sourceFilters, tagFilters, topicFilters, flagFilters, purposeFilters, minAgeDays, minScore]);
 
   const { sim, simRef } = useGraphSimulation(nodes, edges, size.w, size.h);
 
@@ -251,7 +256,7 @@ export function GraphPane({
     if (!movedRef.current) onDeselect();
   };
 
-  const filterCount = sourceFilters.length + tagFilters.length + topicFilters.length + flagFilters.length + (minAgeDays > 0 ? 1 : 0) + (minScore > 0 ? 1 : 0);
+  const filterCount = sourceFilters.length + tagFilters.length + topicFilters.length + flagFilters.length + purposeFilters.length + (minAgeDays > 0 ? 1 : 0) + (minScore > 0 ? 1 : 0);
 
   const zoomBy = (factor: number) => {
     const t = transformRef.current;

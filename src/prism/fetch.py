@@ -181,8 +181,18 @@ def _fetch_arxiv(source_url: str, archive_dir: Path, fetched_at: str) -> FetchRe
 
     pdf_path = archive_dir / "source.pdf"
     pdf_path.write_bytes(pdf_bytes)
-    pdf_text = _extract_pdf_text(pdf_bytes)
+    pdf_text, pdf_meta = _extract_pdf(pdf_bytes)
     extracted = "\n\n".join(part for part in [entry.get("summary"), pdf_text] if part).strip()
+
+    # Title cascade: arXiv metadata > clean PDF /Title > URL stem.
+    url_title = _title_from_url(pdf_resolved)
+    pdf_title = _clean_pdf_title(pdf_meta.get("title"), url_title)
+    if entry.get("title"):
+        title, title_source = entry["title"], "arxiv"
+    elif pdf_title:
+        title, title_source = pdf_title, "pdf_meta"
+    else:
+        title, title_source = url_title, "url"
 
     metadata = {
         "source_url": source_url,
@@ -191,6 +201,8 @@ def _fetch_arxiv(source_url: str, archive_dir: Path, fetched_at: str) -> FetchRe
         "pdf_url": pdf_resolved,
         "content_type": pdf_content_type,
         "arxiv_id": arxiv_id,
+        "title_source": title_source,
+        **_pdf_metadata_fields(pdf_meta),
         **entry,
     }
     _write_text(archive_dir / "extracted.txt", extracted)
@@ -199,7 +211,7 @@ def _fetch_arxiv(source_url: str, archive_dir: Path, fetched_at: str) -> FetchRe
         source_url=source_url,
         resolved_url=pdf_resolved,
         source_kind="paper",
-        title=entry.get("title") or _title_from_url(pdf_resolved),
+        title=title,
         summary=entry.get("summary"),
         extracted_text=extracted,
         local_archive=str(archive_dir),
@@ -216,9 +228,17 @@ def _fetch_pdf(source_url: str, archive_dir: Path, fetched_at: str, source_kind:
     pdf_bytes, resolved_url, content_type = _http_get_bytes(source_url)
     pdf_path = archive_dir / "source.pdf"
     pdf_path.write_bytes(pdf_bytes)
-    extracted = _extract_pdf_text(pdf_bytes)
-    title = _title_from_url(resolved_url)
-    metadata = {"source_url": source_url, "resolved_url": resolved_url, "content_type": content_type}
+    extracted, pdf_meta = _extract_pdf(pdf_bytes)
+    url_title = _title_from_url(resolved_url)
+    pdf_title = _clean_pdf_title(pdf_meta.get("title"), url_title)
+    title = pdf_title or url_title
+    metadata = {
+        "source_url": source_url,
+        "resolved_url": resolved_url,
+        "content_type": content_type,
+        "title_source": "pdf_meta" if pdf_title else "url",
+        **_pdf_metadata_fields(pdf_meta),
+    }
     _write_text(archive_dir / "extracted.txt", extracted)
     _write_json(archive_dir / "metadata.json", metadata)
     return FetchResult(
@@ -261,9 +281,18 @@ def fetch_upload(
             raise ValueError(f"Unsupported upload type: {content_type or safe_name}")
         pdf_path = archive_dir / "source.pdf"
         pdf_path.write_bytes(data)
-        extracted = _extract_pdf_text(data)
-        title = _title_from_filename(safe_name)
-        metadata = {"source_url": source_url, "filename": safe_name, "content_type": content_type, "upload": True}
+        extracted, pdf_meta = _extract_pdf(data)
+        name_title = _title_from_filename(safe_name)
+        pdf_title = _clean_pdf_title(pdf_meta.get("title"), name_title)
+        title = pdf_title or name_title
+        metadata = {
+            "source_url": source_url,
+            "filename": safe_name,
+            "content_type": content_type,
+            "upload": True,
+            "title_source": "pdf_meta" if pdf_title else "filename",
+            **_pdf_metadata_fields(pdf_meta),
+        }
         _write_text(archive_dir / "extracted.txt", extracted)
         _write_json(archive_dir / "metadata.json", metadata)
         return FetchResult(
@@ -583,15 +612,23 @@ def _fetch_website(source_url: str, archive_dir: Path, fetched_at: str) -> Fetch
     if content_type and "application/pdf" in content_type.lower():
         pdf_path = archive_dir / "source.pdf"
         pdf_path.write_bytes(html_bytes)
-        extracted_pdf = _extract_pdf_text(html_bytes)
-        pdf_metadata = {"source_url": source_url, "resolved_url": resolved_url, "content_type": content_type}
+        extracted_pdf, pdf_meta = _extract_pdf(html_bytes)
+        url_title = _title_from_url(resolved_url)
+        pdf_title = _clean_pdf_title(pdf_meta.get("title"), url_title)
+        pdf_metadata = {
+            "source_url": source_url,
+            "resolved_url": resolved_url,
+            "content_type": content_type,
+            "title_source": "pdf_meta" if pdf_title else "url",
+            **_pdf_metadata_fields(pdf_meta),
+        }
         _write_text(archive_dir / "extracted.txt", extracted_pdf)
         _write_json(archive_dir / "metadata.json", pdf_metadata)
         return FetchResult(
             source_url=source_url,
             resolved_url=resolved_url,
             source_kind="pdf",
-            title=_title_from_url(resolved_url),
+            title=pdf_title or url_title,
             summary=None,
             extracted_text=extracted_pdf,
             local_archive=str(archive_dir),
@@ -607,7 +644,13 @@ def _fetch_website(source_url: str, archive_dir: Path, fetched_at: str) -> Fetch
     _write_text(archive_dir / "raw.html", html)
 
     title, extracted, metadata = extract_website_text(html, resolved_url, archive_dir)
-    metadata.update({"source_url": source_url, "resolved_url": resolved_url, "content_type": content_type})
+    metadata.update({
+        "source_url": source_url,
+        "resolved_url": resolved_url,
+        "content_type": content_type,
+        "title_source": "html" if title else "url",
+    })
+    title = title or _title_from_url(resolved_url)
     _write_text(archive_dir / "extracted.txt", extracted)
     _write_json(archive_dir / "metadata.json", metadata)
     return FetchResult(
@@ -791,14 +834,64 @@ def _blocked_ip(addr: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     )
 
 
-def _extract_pdf_text(pdf_bytes: bytes) -> str:
+def _extract_pdf(pdf_bytes: bytes) -> tuple[str, dict[str, Any]]:
+    """Return (extracted text, document metadata) from a PDF in a single parse."""
     try:
         import fitz
     except ImportError as exc:
         raise RuntimeError("PyMuPDF is required to extract PDF text") from exc
 
     with fitz.open(stream=pdf_bytes, filetype="pdf") as document:
-        return "\n\n".join(page.get_text("text").strip() for page in document if page.get_text("text").strip())
+        text = "\n\n".join(page.get_text("text").strip() for page in document if page.get_text("text").strip())
+        metadata = dict(document.metadata or {})
+    return text, metadata
+
+
+def _extract_pdf_text(pdf_bytes: bytes) -> str:
+    return _extract_pdf(pdf_bytes)[0]
+
+
+# PDF /Title fields are frequently authoring-tool junk rather than the real document title.
+_PDF_TITLE_JUNK_RE = re.compile(
+    r"^(microsoft word|microsoft powerpoint|powerpoint presentation|untitled|slide\s*\d*|presentation\d*|document\d*|print|paper|main|temp)\b",
+    re.IGNORECASE,
+)
+
+
+def _norm_title_key(value: str) -> str:
+    return re.sub(r"[\s\-_]+", "", value).lower()
+
+
+def _clean_pdf_title(raw: str | None, fallback_title: str | None = None) -> str | None:
+    """Return a trustworthy PDF /Title, or None when it looks like junk.
+
+    Rejects authoring-tool defaults, file-name-like values, and anything that just
+    reproduces the URL/filename stem we'd otherwise derive.
+    """
+    if not raw or not isinstance(raw, str):
+        return None
+    title = re.sub(r"\s+", " ", raw).strip()
+    if len(title) < 4:
+        return None
+    if _PDF_TITLE_JUNK_RE.match(title):
+        return None
+    if title.lower().endswith((".pdf", ".doc", ".docx", ".tex")):
+        return None
+    if fallback_title and _norm_title_key(title) == _norm_title_key(fallback_title):
+        return None
+    return title
+
+
+def _pdf_metadata_fields(meta: dict[str, Any]) -> dict[str, Any]:
+    """A curated subset of PDF document metadata worth surfacing (Phase 7)."""
+    fields: dict[str, Any] = {}
+    for src, dst in (("author", "pdf_author"), ("subject", "pdf_subject"), ("keywords", "pdf_keywords"), ("creationDate", "pdf_created")):
+        value = meta.get(src)
+        if isinstance(value, str):
+            value = value.strip()
+        if value:
+            fields[dst] = value
+    return fields
 
 
 def _extract_html(html: str, resolved_url: str) -> tuple[str | None, str, dict[str, Any]]:
