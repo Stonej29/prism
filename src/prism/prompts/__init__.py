@@ -62,3 +62,7 @@ def profile_system_prompt(mode: str) -> str:
 
 def ask_system_prompt() -> str:
     return _read_prompt("ask_system.md")
+
+
+def chat_system_prompt() -> str:
+    return _read_prompt("chat_system.md")

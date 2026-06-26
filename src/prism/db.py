@@ -101,6 +101,15 @@ class ProposalRecord:
     resolved_at: str | None = None
 
 
+@dataclass(frozen=True)
+class ChatMessageRecord:
+    id: int
+    note_id: str
+    role: str  # "user" | "assistant"
+    content: str
+    created_at: str
+
+
 class PrismDatabase:
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -299,6 +308,7 @@ class PrismDatabase:
 
     def delete_note(self, note_id: str) -> bool:
         with self.connect() as conn:
+            conn.execute("DELETE FROM note_chats WHERE note_id = ?", (note_id,))
             cursor = conn.execute("DELETE FROM notes WHERE note_id = ?", (note_id,))
         return cursor.rowcount > 0
 
@@ -314,6 +324,7 @@ class PrismDatabase:
             conn.execute("DELETE FROM notes")
             conn.execute("DELETE FROM ideas")
             conn.execute("DELETE FROM proposals")
+            conn.execute("DELETE FROM note_chats")
         return int(note_count), int(idea_count)
 
     def list_notes_for_reindexing(self) -> list[NoteRecord]:
@@ -762,6 +773,20 @@ class PrismDatabase:
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS note_chats (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    note_id TEXT NOT NULL,
+                    role TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_note_chats_note ON note_chats(note_id)"
+            )
 
     def add_token_usage(self, prompt_tokens: int, completion_tokens: int, total_tokens: int, day: str | None = None) -> None:
         """Accumulate one call's token usage into the per-day running totals."""
@@ -801,6 +826,43 @@ class PrismDatabase:
             today_total_tokens=(day["t"] if day else 0) or 0,
             today_calls=(day["n"] if day else 0) or 0,
         )
+
+    # --- per-note chat history -------------------------------------------------
+
+    def add_chat_message(self, note_id: str, role: str, content: str) -> ChatMessageRecord:
+        """Append one chat turn for a note and return the stored record."""
+        created_at = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        with self.connect() as conn:
+            cursor = conn.execute(
+                "INSERT INTO note_chats (note_id, role, content, created_at) VALUES (?, ?, ?, ?)",
+                (note_id, role, content, created_at),
+            )
+            new_id = int(cursor.lastrowid)
+        return ChatMessageRecord(id=new_id, note_id=note_id, role=role, content=content, created_at=created_at)
+
+    def list_chat_messages(self, note_id: str) -> list[ChatMessageRecord]:
+        """Return a note's chat turns in chronological order."""
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT id, note_id, role, content, created_at FROM note_chats WHERE note_id = ? ORDER BY id",
+                (note_id,),
+            ).fetchall()
+        return [
+            ChatMessageRecord(
+                id=row["id"],
+                note_id=row["note_id"],
+                role=row["role"],
+                content=row["content"],
+                created_at=row["created_at"],
+            )
+            for row in rows
+        ]
+
+    def clear_chat_messages(self, note_id: str) -> int:
+        """Delete all chat turns for a note; returns how many were removed."""
+        with self.connect() as conn:
+            cursor = conn.execute("DELETE FROM note_chats WHERE note_id = ?", (note_id,))
+        return cursor.rowcount
 
 
 _NOTE_COLUMNS = """

@@ -403,6 +403,8 @@ class WebApiTest(unittest.TestCase):
         app.dependency_overrides[get_indexer] = lambda: indexer
         app.dependency_overrides[get_proposals] = lambda: ProposalService(self.db, notes)
         app.dependency_overrides[get_settings] = lambda: _settings(vault)
+        self.app = app
+        self.archive = archive
         self.client = TestClient(app)
 
     def tearDown(self) -> None:
@@ -1037,6 +1039,66 @@ class WebApiTest(unittest.TestCase):
         self.assertEqual(self.client.get("/api/file", params={"root": "vault", "path": "../secrets"}).status_code, 400)
         self.assertEqual(self.client.get("/api/file", params={"root": "vault", "path": "notes/missing.md"}).status_code, 404)
         self.assertEqual(self.client.get("/api/file", params={"root": "nope", "path": "x"}).status_code, 400)
+
+    def _configured_notes(self) -> NoteService:
+        """A NoteService over the same db/vault but with a configured LLM, so chat
+        reaches the (patched) LLM client instead of the unconfigured guard."""
+        llm = LLMConfig("https://example.com", "key", "model")
+        indexer = NoteIndexer(self.vault.parent / "lancedb", EmbeddingConfig("https://example.com", None, None))
+        return NoteService(self.vault, self.db, self.archive, llm, indexer)
+
+    def test_chat_history_empty_and_persists_user_when_unconfigured(self) -> None:
+        self.db.insert_note(make_note("aaa111"))
+        # Fresh note → no history.
+        hist = self.client.get("/api/notes/aaa111/chat").json()
+        self.assertEqual(hist["messages"], [])
+
+        # LLM unconfigured → graceful failure, but the user turn is still recorded.
+        resp = self.client.post("/api/notes/aaa111/chat", json={"message": "what is this?"})
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertFalse(body["ok"])
+        self.assertIn("LLM", body["message"])
+        again = self.client.get("/api/notes/aaa111/chat").json()
+        self.assertEqual([m["role"] for m in again["messages"]], ["user"])
+        self.assertEqual(again["messages"][0]["content"], "what is this?")
+
+    def test_chat_round_trip_persists_both_turns(self) -> None:
+        self.db.insert_note(make_note("aaa111"))
+        self.app.dependency_overrides[get_notes] = lambda: self._configured_notes()
+        with patch("prism.llm.LLMClient.chat", return_value="Grounded answer.") as mock_chat:
+            resp = self.client.post("/api/notes/aaa111/chat", json={"message": "summarize"})
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertTrue(body["ok"])
+        self.assertEqual([m["role"] for m in body["messages"]], ["user", "assistant"])
+        self.assertEqual(body["messages"][1]["content"], "Grounded answer.")
+        mock_chat.assert_called_once()
+        # The note's text/summary should be in the context handed to the LLM.
+        ctx = mock_chat.call_args.kwargs["note_context"]
+        self.assertEqual(ctx["id"], "aaa111")
+
+        # History reloads with both turns ordered.
+        hist = self.client.get("/api/notes/aaa111/chat").json()
+        self.assertEqual([m["role"] for m in hist["messages"]], ["user", "assistant"])
+
+    def test_chat_clear_and_delete_cascade(self) -> None:
+        self.db.insert_note(make_note("aaa111"))
+        self.db.add_chat_message("aaa111", "user", "hi")
+        self.db.add_chat_message("aaa111", "assistant", "hello")
+        self.assertEqual(len(self.client.get("/api/notes/aaa111/chat").json()["messages"]), 2)
+
+        # Explicit clear empties it.
+        self.assertEqual(self.client.delete("/api/notes/aaa111/chat").status_code, 200)
+        self.assertEqual(self.client.get("/api/notes/aaa111/chat").json()["messages"], [])
+
+        # Deleting the note removes its chat rows too.
+        self.db.add_chat_message("aaa111", "user", "again")
+        self.client.delete("/api/notes/aaa111")
+        self.assertEqual(self.db.list_chat_messages("aaa111"), [])
+
+    def test_chat_history_404_for_unknown_note(self) -> None:
+        self.assertEqual(self.client.get("/api/notes/nope/chat").status_code, 404)
 
 
 if __name__ == "__main__":

@@ -9,7 +9,7 @@ import dataclasses
 from typing import Any
 from urllib.parse import quote
 
-from prism.db import IdeaRecord, NoteRecord, NoteStats, ProposalRecord
+from prism.db import ChatMessageRecord, IdeaRecord, NoteRecord, NoteStats, ProposalRecord
 from prism.index import RelatedCandidate
 from prism.notes import (
     _json_array,
@@ -148,6 +148,14 @@ def candidate_dto(candidate: RelatedCandidate) -> dict[str, Any]:
         "path": candidate.note_path,
         "tags": candidate.tags,
         "score": round(candidate.score, 4),
+    }
+
+
+def chat_message_dto(record: ChatMessageRecord) -> dict[str, Any]:
+    return {
+        "role": record.role,
+        "content": record.content,
+        "created_at": record.created_at,
     }
 
 

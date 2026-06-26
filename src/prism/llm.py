@@ -10,6 +10,7 @@ import httpx
 
 from prism.prompts import (
     ask_system_prompt,
+    chat_system_prompt,
     idea_system_prompt,
     merge_system_prompt,
     note_system_prompt,
@@ -146,6 +147,41 @@ class LLMClient:
                 {"role": "user", "content": json.dumps(context, ensure_ascii=True)},
             ],
         }
+        data = self._post(payload)
+        return _assistant_content(data).strip()
+
+    def chat(
+        self,
+        *,
+        note_context: dict[str, Any],
+        history: list[dict[str, str]],
+        user_message: str,
+        web: bool = False,
+    ) -> str:
+        """Free-form conversation grounded in a single note's context.
+
+        The system turn carries the chat instructions plus the note JSON; prior
+        ``history`` turns ({"role","content"}) and the new ``user_message`` follow.
+        Set ``web=True`` to enable OpenRouter web search (note-only by default).
+        """
+        if not self.config.is_configured:
+            raise RuntimeError("LLM_API_KEY and LLM_MODEL are required")
+        system = chat_system_prompt() + "\n\n" + json.dumps({"note": note_context}, ensure_ascii=True)
+        messages: list[dict[str, str]] = [{"role": "system", "content": system}]
+        for turn in history:
+            role = turn.get("role")
+            content = turn.get("content")
+            if role in ("user", "assistant") and content:
+                messages.append({"role": role, "content": content})
+        messages.append({"role": "user", "content": user_message})
+        payload: dict[str, Any] = {
+            "model": self.config.model,
+            "temperature": 0.3,
+            "max_tokens": 1200,
+            "messages": messages,
+        }
+        if web:
+            payload["plugins"] = [{"id": "web"}]
         data = self._post(payload)
         return _assistant_content(data).strip()
 

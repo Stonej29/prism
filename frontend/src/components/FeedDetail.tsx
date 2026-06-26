@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
-import { Check, ChevronLeft, ExternalLink, Pencil } from "lucide-react";
+import { Check, ChevronLeft, ExternalLink, MessageCircle, Pencil } from "lucide-react";
 import { api } from "../api";
 import { P, srcColor, srcLabel } from "../theme";
 import { PURPOSES } from "../types";
 import type { NoteDetail } from "../types";
+import { ChatPanel } from "./ChatPanel";
 import { ImageGallery } from "./ImageGallery";
 import { Spinner } from "./Spinner";
 
@@ -71,6 +72,7 @@ export function FeedDetail({
   const [titleDraft, setTitleDraft] = useState("");
   const [tagsDraft, setTagsDraft] = useState("");
   const [saving, setSaving] = useState(false);
+  const [chatOpen, setChatOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -311,6 +313,13 @@ export function FeedDetail({
             <Check size={17} strokeWidth={2} />
             {read ? "Read" : "Mark read"}
           </button>
+          <button
+            onClick={() => setChatOpen(true)}
+            style={{ display: "inline-flex", alignItems: "center", gap: 8, minHeight: 44, background: "none", border: "none", padding: 0, color: P.mid, fontFamily: P.mono, fontSize: 14, cursor: "pointer" }}
+          >
+            <MessageCircle size={16} strokeWidth={2} />
+            Chat
+          </button>
           <a
             href={note.source_url}
             target="_blank"
@@ -318,9 +327,13 @@ export function FeedDetail({
             style={{ display: "inline-flex", alignItems: "center", gap: 8, minHeight: 44, color: P.mid, fontFamily: P.mono, fontSize: 14, textDecoration: "none" }}
           >
             <ExternalLink size={16} strokeWidth={2} />
-            Open original
+            Open
           </a>
         </div>
+      )}
+
+      {note && chatOpen && (
+        <ChatPanel noteId={note.id} noteTitle={note.title} fullscreen onClose={() => setChatOpen(false)} />
       )}
     </div>
   );

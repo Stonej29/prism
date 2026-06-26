@@ -2,6 +2,7 @@ import type {
   ActivityPayload,
   AskResult,
   Candidate,
+  ChatMessage,
   GraphPayload,
   Idea,
   IdeaResult,
@@ -78,6 +79,18 @@ export const api = {
 
   extractImages: (id: string) =>
     req<{ ok: boolean; message: string; note: NoteDetail }>(`/notes/${id}/extract-images`, { method: "POST" }),
+
+  chatHistory: (id: string) =>
+    req<{ ok: boolean; messages: ChatMessage[] }>(`/notes/${id}/chat`),
+
+  chat: (id: string, message: string) =>
+    req<{ ok: boolean; message: string; messages: ChatMessage[] }>(`/notes/${id}/chat`, {
+      method: "POST",
+      body: JSON.stringify({ message }),
+    }),
+
+  clearChat: (id: string) =>
+    req<{ ok: boolean }>(`/notes/${id}/chat`, { method: "DELETE" }),
 
   retryFailed: () =>
     req<{ total: number; retried: number; repaired: number; failed: number; skipped: number; messages: string[] }>(

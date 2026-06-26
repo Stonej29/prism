@@ -10,8 +10,8 @@ from prism.notes import NOTE_STATUSES, NoteService, _tags
 from prism.web.activity import log_activity
 from prism.web.deps import get_db, get_notes
 from prism.web.routes import filter_notes, gather_all_notes
-from prism.web.schemas import BulkStatusBody, EditTagsBody, FavoriteBody, RenameBody, SaveUrlBody, SetPurposeBody, SetStatusBody
-from prism.web.serializers import note_summary_dto, note_to_dto
+from prism.web.schemas import BulkStatusBody, ChatBody, EditTagsBody, FavoriteBody, RenameBody, SaveUrlBody, SetPurposeBody, SetStatusBody
+from prism.web.serializers import chat_message_dto, note_summary_dto, note_to_dto
 
 router = APIRouter(prefix="/notes", tags=["notes"])
 
@@ -158,6 +158,33 @@ def extract_images(note_id: str, notes: NoteService = Depends(get_notes)) -> dic
         raise HTTPException(status_code=404, detail=result.message)
     log_activity("extract_images", "ok" if result.ok else "failed", result.message, note_id=result.record.note_id)
     return {"ok": result.ok, "message": result.message, "note": note_to_dto(result.record)}
+
+
+@router.get("/{note_id}/chat")
+def get_chat(note_id: str, notes: NoteService = Depends(get_notes)) -> dict:
+    result = notes.get_chat(note_id)
+    if not result.ok and not result.messages:
+        raise HTTPException(status_code=404, detail=result.message)
+    return {"ok": result.ok, "messages": [chat_message_dto(m) for m in result.messages]}
+
+
+@router.post("/{note_id}/chat")
+def chat(note_id: str, body: ChatBody, notes: NoteService = Depends(get_notes)) -> dict:
+    try:
+        result = notes.chat_with_note(note_id, body.message)
+    except Exception as exc:
+        log_activity("chat", "failed", f"{type(exc).__name__}: {exc}", note_id=note_id)
+        raise
+    log_activity("chat", "ok" if result.ok else "failed", result.message or "replied", note_id=note_id)
+    return {"ok": result.ok, "message": result.message, "messages": [chat_message_dto(m) for m in result.messages]}
+
+
+@router.delete("/{note_id}/chat")
+def clear_chat(note_id: str, notes: NoteService = Depends(get_notes)) -> dict:
+    result = notes.clear_chat(note_id)
+    if not result.ok:
+        raise HTTPException(status_code=404, detail=result.message)
+    return {"ok": result.ok}
 
 
 @router.delete("/{note_id}")

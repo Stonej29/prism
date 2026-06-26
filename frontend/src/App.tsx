@@ -6,7 +6,8 @@ import { TopBar } from "./components/TopBar";
 import { TreePane } from "./components/TreePane";
 import { GraphPane } from "./components/GraphPane";
 import { NotePane } from "./components/NotePane";
-import { AskOverlay } from "./components/AskOverlay";
+import { AskOverlay, Backdrop } from "./components/AskOverlay";
+import { ChatPanel } from "./components/ChatPanel";
 import { ProposalsOverlay } from "./components/ProposalsOverlay";
 import { IdeaView } from "./components/IdeaView";
 import { FileViewer, type OpenFile } from "./components/FileViewer";
@@ -79,6 +80,7 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [saving, setSaving] = useState(false);
   const [ask, setAsk] = useState<AskState>({ open: false, question: "", result: null, loading: false });
+  const [chatNote, setChatNote] = useState<{ id: string; title: string } | null>(null);
   const [ideaJob, setIdeaJob] = useState<IdeaJob>({ status: "idle", idea: null, open: false, topic: "" });
   const [openFile, setOpenFile] = useState<OpenFile | null>(null);
   const [toast, setToast] = useState<string | null>(null);
@@ -774,6 +776,7 @@ export default function App() {
           onRepersonalize={onRepersonalize}
           onResearch={onResearch}
           onExtractImages={onExtractImages}
+          onChat={(id) => setChatNote({ id, title: note?.title ?? "" })}
           onDelete={onDelete}
           onEditTags={onEditTags}
           onEditTitle={onEditTitle}
@@ -801,6 +804,15 @@ export default function App() {
               selectNote(id);
             }}
           />
+        )}
+        {chatNote && (
+          <Backdrop onClose={() => setChatNote(null)}>
+            <ChatPanel
+              noteId={chatNote.id}
+              noteTitle={chatNote.title}
+              onClose={() => setChatNote(null)}
+            />
+          </Backdrop>
         )}
         {ideaJob.open && (
           <IdeaView

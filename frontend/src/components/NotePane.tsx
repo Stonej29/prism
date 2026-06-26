@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ExternalLink, Images, Loader2, RotateCw, Share2, Telescope, Trash2, UserCog } from "lucide-react";
+import { ExternalLink, Images, Loader2, MessageCircle, RotateCw, Share2, Telescope, Trash2, UserCog } from "lucide-react";
 import { P } from "../theme";
 import type { NoteDetail } from "../types";
 import { PURPOSES } from "../types";
@@ -118,6 +118,7 @@ export function NotePane({
   onRepersonalize,
   onResearch,
   onExtractImages,
+  onChat,
   onDelete,
   onEditTags,
   onEditTitle,
@@ -143,6 +144,7 @@ export function NotePane({
   onRepersonalize: (id: string) => void;
   onResearch: (id: string) => void;
   onExtractImages: (id: string) => void;
+  onChat: (id: string) => void;
   onDelete: (id: string) => void;
   onEditTags: (id: string, tags: string[]) => void;
   onEditTitle: (id: string, title: string) => void;
@@ -483,6 +485,7 @@ export function NotePane({
         <IconButton icon={UserCog} busy={repersonalizing} disabled={busy && !repersonalizing} title="Re-personalize against your profile" onClick={() => onRepersonalize(note.id)} />
         <IconButton icon={Telescope} busy={researching} disabled={busy && !researching} title="Research with web search" onClick={() => onResearch(note.id)} />
         <IconButton icon={Images} busy={extractingImages} disabled={busy && !extractingImages} title="Extract source images" onClick={() => onExtractImages(note.id)} />
+        <IconButton icon={MessageCircle} disabled={busy} title="Chat with this note" onClick={() => onChat(note.id)} />
         <span style={{ marginLeft: "auto" }}>
           <IconButton icon={Trash2} danger disabled={busy} title="Delete note" onClick={() => { if (confirm(`Delete \"${note.title}\"?`)) onDelete(note.id); }} />
         </span>

@@ -14,7 +14,7 @@ from urllib.parse import urlparse
 import yaml
 
 from prism.config import DEFAULT_LLM_BASE_URL
-from prism.db import NoteRecord, PrismDatabase
+from prism.db import ChatMessageRecord, NoteRecord, PrismDatabase
 from prism import images as image_extract
 from prism.fetch import FetchResult, extract_website_text, fetch_source, fetch_upload
 from prism.index import NoteIndexer, RelatedCandidate, canonical_index_text
@@ -26,6 +26,10 @@ PREVIEW_LIMIT = 1500
 ASK_QUICK_LIMIT = 600
 ASK_DETAILED_LIMIT = 1200
 ASK_CLAIM_LIMIT = 300
+# Per-note chat: how much source text to feed as context, and how many prior turns
+# to replay into the prompt (keeps the request bounded as a conversation grows).
+CHAT_TEXT_LIMIT = 12000
+CHAT_HISTORY_TURNS = 20
 SCORE_FIELDS = ("relevance", "novelty", "credibility", "actionability", "interest", "overall")
 # Ground truth vs. personalization split. The personalization pass (call 2) regenerates
 # only PERSONAL_PROSE_FIELDS + PERSONAL_SCORE_FIELDS from the note's ground truth + profile;
@@ -108,6 +112,13 @@ class DeleteResult:
     ok: bool
     message: str
     title: str | None = None
+
+
+@dataclass(frozen=True)
+class ChatResult:
+    ok: bool
+    message: str
+    messages: list[ChatMessageRecord]
 
 
 @dataclass(frozen=True)
@@ -861,6 +872,87 @@ class NoteService:
             "key_claims": key_claims[:5],
             "tags": tags_for_record(record) if record else candidate.tags,
             "source_url": record.source_url if record else candidate.source_url,
+        }
+
+    def get_chat(self, note_id: str) -> ChatResult:
+        """Return a note's stored chat history (ok even when the LLM is unconfigured)."""
+        nid = note_id.strip().lower()
+        record = self.database.find_by_note_id(nid)
+        if not record:
+            return ChatResult(ok=False, message=f"No note found for {note_id}.", messages=[])
+        return ChatResult(ok=True, message="", messages=self.database.list_chat_messages(nid))
+
+    def clear_chat(self, note_id: str) -> ChatResult:
+        """Delete a note's chat history."""
+        nid = note_id.strip().lower()
+        record = self.database.find_by_note_id(nid)
+        if not record:
+            return ChatResult(ok=False, message=f"No note found for {note_id}.", messages=[])
+        self.database.clear_chat_messages(nid)
+        return ChatResult(ok=True, message="", messages=[])
+
+    def chat_with_note(self, note_id: str, user_message: str) -> ChatResult:
+        """Answer one conversational turn grounded in a single note.
+
+        The user message is persisted before the LLM call so a failed answer still
+        records the question. Prior turns (capped) are replayed for continuity.
+        """
+        nid = note_id.strip().lower()
+        record = self.database.find_by_note_id(nid)
+        if not record:
+            return ChatResult(ok=False, message=f"No note found for {note_id}.", messages=[])
+        message = user_message.strip()
+        if not message:
+            return ChatResult(ok=False, message="Type a message.", messages=self.database.list_chat_messages(nid))
+
+        # Snapshot prior turns for the prompt BEFORE recording this one (so the new
+        # message isn't replayed twice), then persist the question immediately so it
+        # is never lost — even if the LLM is unconfigured or the call fails.
+        history = self.database.list_chat_messages(nid)
+        prior = [{"role": m.role, "content": m.content} for m in history[-CHAT_HISTORY_TURNS:]]
+        self.database.add_chat_message(nid, "user", message)
+
+        if not self.llm_config.is_configured:
+            return ChatResult(
+                ok=False,
+                message="Chat needs LLM_API_KEY and LLM_MODEL.",
+                messages=self.database.list_chat_messages(nid),
+            )
+
+        note_context = self._chat_note_context(record)
+        try:
+            answer = LLMClient(self.llm_config).chat(
+                note_context=note_context, history=prior, user_message=message
+            )
+        except Exception as exc:
+            return ChatResult(
+                ok=False,
+                message=f"Chat failed: {type(exc).__name__}: {exc}",
+                messages=self.database.list_chat_messages(nid),
+            )
+        if not answer:
+            return ChatResult(
+                ok=False,
+                message="The model returned an empty answer.",
+                messages=self.database.list_chat_messages(nid),
+            )
+        self.database.add_chat_message(nid, "assistant", answer)
+        return ChatResult(ok=True, message="", messages=self.database.list_chat_messages(nid))
+
+    def _chat_note_context(self, record: NoteRecord) -> dict[str, Any]:
+        structured = structured_summary(record)
+        claims = structured.get("key_claims")
+        key_claims = [str(c).strip() for c in claims if str(c).strip()] if isinstance(claims, list) else []
+        return {
+            "id": record.note_id,
+            "title": record.title,
+            "source_url": record.source_url,
+            "source_kind": record.source_kind,
+            "quick_summary": _string_field(structured, "quick_summary") or record.summary,
+            "detailed_summary": _string_field(structured, "detailed_summary"),
+            "key_claims": key_claims[:8],
+            "tags": tags_for_record(record),
+            "extracted_text": self._read_extracted(record)[:CHAT_TEXT_LIMIT],
         }
 
     def _apply_llm(self, record: NoteRecord, extracted_text: str, metadata: dict[str, Any], force: bool = False, *, web: bool = False, related_candidates: list[RelatedCandidate] | None = None) -> NoteRecord:

@@ -24,6 +24,12 @@ export interface NoteImage {
   height?: number | null;
 }
 
+export interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
+  created_at: string;
+}
+
 export interface RelatedNote {
   id: string;
   title: string;
