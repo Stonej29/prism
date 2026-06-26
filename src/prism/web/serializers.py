@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import dataclasses
 from typing import Any
+from urllib.parse import quote
 
 from prism.db import IdeaRecord, NoteRecord, NoteStats, ProposalRecord
 from prism.index import RelatedCandidate
@@ -19,6 +20,21 @@ from prism.notes import (
     tags_for_record,
 )
 from prism.proposals import describe_proposal, proposal_note_ids, proposal_payload
+
+
+def images_for_record(record: NoteRecord) -> list[dict[str, Any]]:
+    """Extracted-image entries as servable URLs (via the /api/file archive route)."""
+    metadata = _json_object(record.metadata_json)
+    out: list[dict[str, Any]] = []
+    for entry in metadata.get("images") or []:
+        if not isinstance(entry, dict):
+            continue
+        name = entry.get("file")
+        if not name:
+            continue
+        path = quote(f"{record.note_id}/images/{name}")
+        out.append({"url": f"/api/file?root=archive&path={path}", "width": entry.get("w"), "height": entry.get("h")})
+    return out
 
 
 def note_summary_dto(record: NoteRecord) -> dict[str, Any]:
@@ -37,6 +53,9 @@ def note_summary_dto(record: NoteRecord) -> dict[str, Any]:
         "llm_status": record.llm_status,
         "favorite": bool(record.favorite),
         "purpose": record.purpose,
+        "date_reviewed": record.date_reviewed,
+        "thumbnail": (imgs[0]["url"] if (imgs := images_for_record(record)) else None),
+        "image_count": len(imgs),
     }
 
 
@@ -69,6 +88,8 @@ def note_to_dto(record: NoteRecord) -> dict[str, Any]:
         "related_notes": related_notes_for_record(record),
         "favorite": bool(record.favorite),
         "purpose": record.purpose,
+        "date_reviewed": record.date_reviewed,
+        "images": images_for_record(record),
         "reading_minutes": metadata.get("reading_minutes"),
         "title_source": metadata.get("title_source"),
         "details": _curated_metadata(metadata),

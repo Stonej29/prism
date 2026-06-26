@@ -13,6 +13,15 @@ export interface NoteSummary {
   overall: number | null;
   llm_status: string;
   purpose: string | null;
+  date_reviewed?: string | null;
+  thumbnail?: string | null;
+  image_count?: number;
+}
+
+export interface NoteImage {
+  url: string;
+  width?: number | null;
+  height?: number | null;
 }
 
 export interface RelatedNote {
@@ -49,6 +58,8 @@ export interface NoteDetail {
   related_notes: RelatedNote[];
   favorite: boolean;
   purpose: string | null;
+  date_reviewed?: string | null;
+  images?: NoteImage[];
   reading_minutes: number | null;
   title_source: string | null;
   details: { label: string; value: string | number }[];

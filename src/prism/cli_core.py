@@ -21,6 +21,7 @@ from prism.index import RelatedCandidate
 from prism.notes import (
     AskResult,
     DeleteResult,
+    ExtractImagesAllSummary,
     ProfileResult,
     RepersonalizeSummary,
     ReprocessAllSummary,
@@ -210,6 +211,12 @@ class CliCore:
 
     def reprocess_all(self) -> ReprocessAllSummary:
         return self.notes.reprocess_all()
+
+    def extract_images(self, note_id: str) -> ReprocessResult:
+        return self.notes.extract_images(note_id)
+
+    def extract_images_all(self) -> ExtractImagesAllSummary:
+        return self.notes.extract_images_all()
 
     def repersonalize(self, note_id: str) -> ReprocessResult:
         return self.notes.repersonalize(note_id)

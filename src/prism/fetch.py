@@ -8,7 +8,7 @@ import logging
 import re
 import socket
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from html.parser import HTMLParser
 from pathlib import Path
@@ -84,16 +84,18 @@ def fetch_source(source_url: str, archive_root: Path, note_id: str) -> FetchResu
     try:
         archive_dir.mkdir(parents=True, exist_ok=True)
         if source_kind == "paper" and parse_arxiv_id(source_url):
-            return _fetch_arxiv(source_url, archive_dir, fetched_at)
-        if source_kind == "github":
-            return _fetch_github_repo(source_url, archive_dir, fetched_at)
-        if source_kind == "pdf":
-            return _fetch_pdf(source_url, archive_dir, fetched_at, source_kind="pdf")
-        if source_kind == "youtube":
-            return _fetch_youtube(source_url, archive_dir, fetched_at)
-        if source_kind == "huggingface":
-            return _fetch_huggingface(source_url, archive_dir, fetched_at)
-        return _fetch_website(source_url, archive_dir, fetched_at)
+            result = _fetch_arxiv(source_url, archive_dir, fetched_at)
+        elif source_kind == "github":
+            result = _fetch_github_repo(source_url, archive_dir, fetched_at)
+        elif source_kind == "pdf":
+            result = _fetch_pdf(source_url, archive_dir, fetched_at, source_kind="pdf")
+        elif source_kind == "youtube":
+            result = _fetch_youtube(source_url, archive_dir, fetched_at)
+        elif source_kind == "huggingface":
+            result = _fetch_huggingface(source_url, archive_dir, fetched_at)
+        else:
+            result = _fetch_website(source_url, archive_dir, fetched_at)
+        return _attach_images(result, archive_dir)
     except Exception as exc:  # Fetch failures should still produce a note.
         metadata = {"source_url": source_url, "error_type": type(exc).__name__}
         _write_json(archive_dir / "metadata.json", metadata)
@@ -112,6 +114,31 @@ def fetch_source(source_url: str, archive_root: Path, note_id: str) -> FetchResu
             fetched_at=fetched_at,
             metadata=metadata,
         )
+
+
+def _attach_images(result: FetchResult, archive_dir: Path) -> FetchResult:
+    """Extract source images into the archive and merge them into metadata.
+
+    Best-effort: extraction errors leave the note unchanged. Gated by
+    PRISM_IMAGE_EXTRACTION so it can be disabled without code changes.
+    """
+    from prism import images
+
+    if result.fetch_status == "failed" or not images.extraction_enabled():
+        return result
+    try:
+        extracted = images.extract_images_for_archive(archive_dir, result.source_kind, result.metadata)
+    except Exception as exc:  # noqa: BLE001 - never break a capture
+        LOGGER.warning("Image extraction failed for %s: %s", archive_dir, exc)
+        return result
+    if not extracted:
+        return result
+    metadata = {**result.metadata, "images": extracted}
+    try:
+        _write_json(archive_dir / "metadata.json", metadata)
+    except OSError as exc:
+        LOGGER.warning("Could not rewrite metadata.json with images for %s: %s", archive_dir, exc)
+    return replace(result, metadata=metadata)
 
 
 def detect_source_kind(url: str) -> str:

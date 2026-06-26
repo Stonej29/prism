@@ -57,6 +57,15 @@ def run_reembed_once() -> None:
     run_reembed(services)
 
 
+def run_extract_images_once() -> None:
+    services, _ = _build()
+    summary = services.notes.extract_images_all()
+    LOGGER.info(
+        "Image backfill: %d image(s) across %d/%d note(s), %d failed",
+        summary.images, summary.processed, summary.total, len(summary.errors),
+    )
+
+
 def run_scheduler() -> None:
     from apscheduler.schedulers.blocking import BlockingScheduler
     from apscheduler.triggers.cron import CronTrigger
@@ -171,8 +180,11 @@ def main(argv: list[str] | None = None) -> None:
     if args and args[0] == "reembed":
         run_reembed_once()
         return
+    if args and args[0] == "extract_images":
+        run_extract_images_once()
+        return
     if args and args[0] not in {"run", "serve"}:
-        print("Usage: prism-worker [run|ingest|backup|reembed]")
+        print("Usage: prism-worker [run|ingest|backup|reembed|extract_images]")
         raise SystemExit(2)
     run_scheduler()
 

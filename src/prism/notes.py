@@ -15,6 +15,7 @@ import yaml
 
 from prism.config import DEFAULT_LLM_BASE_URL
 from prism.db import NoteRecord, PrismDatabase
+from prism import images as image_extract
 from prism.fetch import FetchResult, extract_website_text, fetch_source, fetch_upload
 from prism.index import NoteIndexer, RelatedCandidate, canonical_index_text
 from prism.llm import LLMClient, LLMConfig, build_ask_context, build_llm_context, build_merge_context
@@ -146,6 +147,14 @@ class ReprocessAllSummary:
     total: int
     reprocessed: int
     failed: int
+    errors: list[str]
+
+
+@dataclass(frozen=True)
+class ExtractImagesAllSummary:
+    total: int
+    processed: int
+    images: int
     errors: list[str]
 
 
@@ -343,6 +352,58 @@ class NoteService:
                 errors.append(f"{record.note_id}: {result.message}")
         return ReprocessAllSummary(total=len(records), reprocessed=reprocessed, failed=len(errors), errors=errors)
 
+    def extract_images(self, note_id: str) -> ReprocessResult:
+        """Extract (or refresh) source images for one note from its existing archive.
+
+        Reads the already-archived source (source.pdf / raw.html / readme.md / YouTube id) —
+        no re-fetch — downscales images into <archive>/images/, and stores the list in the
+        note's metadata. Images aren't part of the embedded text or markdown body, so no
+        re-embed / re-render is needed."""
+        record = self.database.find_by_note_id(note_id.strip().lower())
+        if not record:
+            return ReprocessResult(record=None, ok=False, message=f"No note found for {note_id}.")
+        if not record.local_archive:
+            return ReprocessResult(record=record, ok=False, message=f"Cannot extract images for {record.note_id}: no local archive recorded.")
+
+        metadata = _json_object(record.metadata_json)
+        try:
+            extracted = image_extract.extract_images_for_archive(Path(record.local_archive), record.source_kind, metadata)
+        except Exception as exc:  # noqa: BLE001 - non-blocking
+            return ReprocessResult(record=record, ok=False, message=f"Image extraction failed for {record.note_id}: {exc}")
+
+        metadata["images"] = extracted
+        metadata_json = json.dumps(metadata, ensure_ascii=True, sort_keys=True)
+        updated = replace(record, metadata_json=metadata_json)
+        self.database.update_note(updated)
+        # Keep the on-disk metadata.json in step with the DB.
+        try:
+            (Path(record.local_archive) / "metadata.json").write_text(
+                json.dumps(metadata, ensure_ascii=True, indent=2, sort_keys=True), encoding="utf-8"
+            )
+        except OSError:
+            pass
+        return ReprocessResult(record=updated, ok=True, message=f"Extracted {len(extracted)} image(s) for {record.note_id}.")
+
+    def extract_images_all(self) -> ExtractImagesAllSummary:
+        """Backfill images for every fetched note from its archive. Non-blocking."""
+        records = [r for r in self.database.list_notes_for_reindexing() if r.fetch_status == "fetched"]
+        processed = 0
+        total_images = 0
+        errors: list[str] = []
+        for record in records:
+            try:
+                result = self.extract_images(record.note_id)
+            except Exception as exc:  # noqa: BLE001 - collect and continue
+                errors.append(f"{record.note_id}: {exc}")
+                continue
+            if result.ok:
+                processed += 1
+                if result.record:
+                    total_images += len(_json_object(result.record.metadata_json).get("images") or [])
+            else:
+                errors.append(f"{record.note_id}: {result.message}")
+        return ExtractImagesAllSummary(total=len(records), processed=processed, images=total_images, errors=errors)
+
     def repersonalize(self, note_id: str) -> ReprocessResult:
         """Re-run only the personalization pass (call 2) for one note against the current
         profile. Cheap: no fetch, no re-summarize, no re-embed - the ground truth, tags,
@@ -508,7 +569,12 @@ class NoteService:
         """
         if status not in NOTE_STATUSES:
             raise ValueError(f"Status must be one of {', '.join(NOTE_STATUSES)}")
-        updated = replace(record, status=status)
+        changes: dict[str, object] = {"status": status}
+        # Stamp when a note is first marked read so the feed can show "read 3d ago"
+        # and time-based ordering/analytics work. Earlier reads aren't overwritten.
+        if status == "reviewed" and not record.date_reviewed:
+            changes["date_reviewed"] = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        updated = replace(record, **changes)
         self.database.update_note(updated)
         self._render_to_disk(updated)
         return updated

@@ -2,19 +2,68 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>PRISM — Research Memory</title>
+    <!-- PWA: installable, full-screen on iOS "Add to Home Screen" -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <meta name="theme-color" content="#0a0c10" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="PRISM" />
     <style>
+      /* Theme tokens. Dark is the default; [data-theme="light"] overrides. */
+      :root, :root[data-theme="dark"] {
+        --p-bg0: #0a0c10;
+        --p-bg1: #0f1217;
+        --p-bg2: #161a21;
+        --p-line: #232830;
+        --p-hi: #e6e9ef;
+        --p-mid: #9aa3b2;
+        --p-lo: #6b7280;
+        --p-faint: #4b5563;
+        --p-accent: #6ea8fe;
+        --p-accent-dim: rgba(110, 168, 254, 0.14);
+        --p-scrollbar: #2a313b;
+        color-scheme: dark;
+      }
+      :root[data-theme="light"] {
+        --p-bg0: #ffffff;
+        --p-bg1: #f7f8fa;
+        --p-bg2: #eef1f5;
+        --p-line: #e2e6ec;
+        --p-hi: #14171c;
+        --p-mid: #545d6b;
+        --p-lo: #8a93a2;
+        --p-faint: #aab2bf;
+        --p-accent: #2f6fed;
+        --p-accent-dim: rgba(47, 111, 237, 0.10);
+        --p-scrollbar: #c7ced8;
+        color-scheme: light;
+      }
       * { box-sizing: border-box; }
       html, body, #root { height: 100%; margin: 0; }
-      body { background: #0a0c10; overflow: hidden; }
+      body { background: var(--p-bg0); overflow: hidden; transition: background 0.15s ease; }
       ::-webkit-scrollbar { width: 9px; height: 9px; }
-      ::-webkit-scrollbar-thumb { background: #2a313b; border-radius: 6px; }
+      ::-webkit-scrollbar-thumb { background: var(--p-scrollbar); border-radius: 6px; }
       ::-webkit-scrollbar-track { background: transparent; }
       @keyframes prism-spin { to { transform: rotate(360deg); } }
       .prism-spin { animation: prism-spin 0.9s linear infinite; }
     </style>
+    <script>
+      // Resolve the theme before first paint to avoid a flash.
+      (function () {
+        try {
+          var saved = localStorage.getItem("prism-theme");
+          var theme = saved || (window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+          document.documentElement.setAttribute("data-theme", theme);
+        } catch (e) {
+          document.documentElement.setAttribute("data-theme", "dark");
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

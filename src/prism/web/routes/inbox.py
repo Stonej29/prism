@@ -14,17 +14,22 @@ _SORTS = ("newest", "oldest", "relevance", "by_purpose")
 @router.get("/inbox")
 def get_inbox(
     sort: str = "newest",
+    purpose: str | None = None,
     limit: int = 50,
     offset: int = 0,
     db: PrismDatabase = Depends(get_db),
 ) -> dict:
-    """The review queue: unreviewed notes worth reading (Keep + archived excluded)."""
+    """The review queue: unreviewed notes worth reading (Keep + archived excluded).
+
+    ``purpose`` optionally narrows to a single class ("Unsorted" => unclassified).
+    """
     if sort not in _SORTS:
         sort = "newest"
-    records = db.list_inbox_notes(limit, offset, sort)
+    records = db.list_inbox_notes(limit, offset, sort, purpose)
     stats = db.get_note_stats()
     return {
         "items": [note_summary_dto(r) for r in records],
         "sort": sort,
+        "purpose": purpose,
         "count": stats.inbox,
     }

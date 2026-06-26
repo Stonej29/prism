@@ -1,8 +1,9 @@
 import { useState } from "react";
-import { ExternalLink, Loader2, RotateCw, Share2, Telescope, Trash2, UserCog } from "lucide-react";
+import { ExternalLink, Images, Loader2, RotateCw, Share2, Telescope, Trash2, UserCog } from "lucide-react";
 import { P } from "../theme";
 import type { NoteDetail } from "../types";
 import { PURPOSES } from "../types";
+import { ImageGallery } from "./ImageGallery";
 import { SourceBadge } from "./SourceBadge";
 import { NoteSkeleton } from "./Skeleton";
 import { TextAction } from "./TextAction";
@@ -106,6 +107,7 @@ export function NotePane({
   reprocessing,
   repersonalizing,
   researching,
+  extractingImages,
   open,
   onToggle,
   width,
@@ -115,6 +117,7 @@ export function NotePane({
   onReprocess,
   onRepersonalize,
   onResearch,
+  onExtractImages,
   onDelete,
   onEditTags,
   onEditTitle,
@@ -129,6 +132,7 @@ export function NotePane({
   reprocessing: boolean;
   repersonalizing: boolean;
   researching: boolean;
+  extractingImages: boolean;
   open: boolean;
   onToggle: () => void;
   width: number;
@@ -138,6 +142,7 @@ export function NotePane({
   onReprocess: (id: string) => void;
   onRepersonalize: (id: string) => void;
   onResearch: (id: string) => void;
+  onExtractImages: (id: string) => void;
   onDelete: (id: string) => void;
   onEditTags: (id: string, tags: string[]) => void;
   onEditTitle: (id: string, title: string) => void;
@@ -355,6 +360,9 @@ export function NotePane({
 
       <div style={{ flex: 1, overflowY: "auto", padding: "0 20px 16px" }}>
         {summary && <Section title="Summary" defaultOpen><TextBlock>{summary}</TextBlock></Section>}
+        {note.images && note.images.length > 0 && (
+          <Section title={`Images (${note.images.length})`} defaultOpen><ImageGallery images={note.images} /></Section>
+        )}
         {detailed && <Section title="Detailed summary" defaultOpen><TextBlock>{detailed}</TextBlock></Section>}
 
         {claims.length > 0 && (
@@ -474,6 +482,7 @@ export function NotePane({
         <IconButton icon={RotateCw} busy={reprocessing} disabled={busy && !reprocessing} title="Reprocess from saved text" onClick={() => onReprocess(note.id)} />
         <IconButton icon={UserCog} busy={repersonalizing} disabled={busy && !repersonalizing} title="Re-personalize against your profile" onClick={() => onRepersonalize(note.id)} />
         <IconButton icon={Telescope} busy={researching} disabled={busy && !researching} title="Research with web search" onClick={() => onResearch(note.id)} />
+        <IconButton icon={Images} busy={extractingImages} disabled={busy && !extractingImages} title="Extract source images" onClick={() => onExtractImages(note.id)} />
         <span style={{ marginLeft: "auto" }}>
           <IconButton icon={Trash2} danger disabled={busy} title="Delete note" onClick={() => { if (confirm(`Delete \"${note.title}\"?`)) onDelete(note.id); }} />
         </span>

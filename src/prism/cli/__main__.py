@@ -92,6 +92,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("reprocess", help="Re-run LLM generation for a note").add_argument("note_id")
     sub.add_parser("reprocess-all", help="Re-run LLM generation for every note")
+    p = sub.add_parser("extract-images", help="Extract source images for a note (or --all)")
+    p.add_argument("note_id", nargs="?")
+    p.add_argument("--all", action="store_true", help="Backfill images for every fetched note")
     sub.add_parser("repersonalize", help="Re-run only personalization for a note").add_argument("note_id")
     sub.add_parser("repersonalize-all", help="Re-run personalization for every note")
     sub.add_parser("retry-failed", help="Retry failed LLM and embedding work").add_argument(
@@ -315,6 +318,21 @@ def _reprocess_all(core: CliCore, args) -> int:
     return 0 if not s.errors else 1
 
 
+def _extract_images(core: CliCore, args) -> int:
+    if args.all:
+        s = core.extract_images_all()
+        print(f"total={s.total} processed={s.processed} images={s.images} failed={len(s.errors)}")
+        for err in s.errors:
+            print(f"  ! {err}", file=sys.stderr)
+        return 0 if not s.errors else 1
+    if not args.note_id:
+        print("Provide a note id or --all", file=sys.stderr)
+        return 2
+    result = core.extract_images(args.note_id)
+    print(result.message)
+    return 0 if result.ok else 1
+
+
 def _repersonalize(core: CliCore, args) -> int:
     result = core.repersonalize(args.note_id)
     print(result.message)
@@ -409,6 +427,7 @@ _HANDLERS = {
     "set-purpose": _set_purpose,
     "reprocess": _reprocess,
     "reprocess-all": _reprocess_all,
+    "extract-images": _extract_images,
     "repersonalize": _repersonalize,
     "repersonalize-all": _repersonalize_all,
     "retry-failed": _retry_failed,

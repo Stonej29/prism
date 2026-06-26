@@ -584,6 +584,83 @@ class WebApiTest(unittest.TestCase):
         self.assertNotIn("rev01", ids)
         self.assertEqual(resp["count"], 1)
 
+    def test_note_images_serialized_and_served(self) -> None:
+        import dataclasses
+        archive = self.vault / "archives" / "img01"
+        (archive / "images").mkdir(parents=True, exist_ok=True)
+        (archive / "images" / "img-001.jpg").write_bytes(b"\xff\xd8\xff\xe0jpegbytes")
+        self.db.insert_note(dataclasses.replace(
+            make_note("img01"),
+            local_archive=str(archive),
+            metadata_json=json.dumps({"images": [{"file": "img-001.jpg", "w": 800, "h": 600}]}),
+        ))
+
+        detail = self.client.get("/api/notes/img01").json()
+        self.assertEqual(len(detail["images"]), 1)
+        url = detail["images"][0]["url"]
+        self.assertEqual(detail["images"][0]["width"], 800)
+
+        summary = next(i for i in self.client.get("/api/notes").json()["items"] if i["id"] == "img01")
+        self.assertEqual(summary["image_count"], 1)
+        self.assertEqual(summary["thumbnail"], url)
+
+        # The url resolves through the archive file route.
+        self.assertEqual(self.client.get(url).status_code, 200)
+
+    def test_extract_images_route(self) -> None:
+        import dataclasses
+        import fitz
+        archive = self.vault / "archives" / "pdf01"
+        archive.mkdir(parents=True, exist_ok=True)
+        pix = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 600, 400))
+        pix.clear_with(180)
+        doc = fitz.open()
+        page = doc.new_page(width=700, height=500)
+        page.insert_image(fitz.Rect(0, 0, 600, 400), stream=pix.tobytes("png"))
+        (archive / "source.pdf").write_bytes(doc.tobytes())
+        doc.close()
+        self.db.insert_note(dataclasses.replace(make_note("pdf01"), source_kind="pdf", local_archive=str(archive), metadata_json="{}"))
+
+        resp = self.client.post("/api/notes/pdf01/extract-images").json()
+        self.assertTrue(resp["ok"])
+        self.assertGreaterEqual(len(resp["note"]["images"]), 1)
+        self.assertEqual(self.client.get(resp["note"]["images"][0]["url"]).status_code, 200)
+
+    def test_inbox_purpose_filter(self) -> None:
+        import dataclasses
+        self.db.insert_note(dataclasses.replace(make_note("thesis1"), purpose="Thesis"))
+        self.db.insert_note(dataclasses.replace(make_note("work1"), purpose="Work"))
+        self.db.insert_note(make_note("unsorted1"))  # no purpose
+
+        thesis = self.client.get("/api/inbox", params={"purpose": "Thesis"}).json()
+        self.assertEqual({i["id"] for i in thesis["items"]}, {"thesis1"})
+
+        unsorted = self.client.get("/api/inbox", params={"purpose": "Unsorted"}).json()
+        self.assertEqual({i["id"] for i in unsorted["items"]}, {"unsorted1"})
+
+        all_ids = {i["id"] for i in self.client.get("/api/inbox").json()["items"]}
+        self.assertEqual(all_ids, {"thesis1", "work1", "unsorted1"})
+
+    def test_mark_read_stamps_date_reviewed_and_leaves_inbox(self) -> None:
+        self.db.insert_note(make_note("read01"))  # unreviewed -> in inbox
+        self.assertIn("read01", {i["id"] for i in self.client.get("/api/inbox").json()["items"]})
+        self.assertIsNone(self.client.get("/api/notes/read01").json()["date_reviewed"])
+
+        marked = self.client.put("/api/notes/read01/status", json={"status": "reviewed"}).json()
+        self.assertEqual(marked["status"], "reviewed")
+        self.assertIsNotNone(marked["date_reviewed"])  # stamped on first read
+        stamp = marked["date_reviewed"]
+
+        # Reflected in the summary DTO and dropped from the inbox queue.
+        summary = next(i for i in self.client.get("/api/notes").json()["items"] if i["id"] == "read01")
+        self.assertEqual(summary["date_reviewed"], stamp)
+        self.assertNotIn("read01", {i["id"] for i in self.client.get("/api/inbox").json()["items"]})
+
+        # Re-reviewing keeps the original timestamp rather than overwriting it.
+        self.client.put("/api/notes/read01/status", json={"status": "unreviewed"})
+        again = self.client.put("/api/notes/read01/status", json={"status": "reviewed"}).json()
+        self.assertEqual(again["date_reviewed"], stamp)
+
     def test_rediscovery_on_this_day_and_forgotten_gems(self) -> None:
         import dataclasses
         # A note saved on today's calendar day in a past year.

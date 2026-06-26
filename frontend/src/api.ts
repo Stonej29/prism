@@ -48,10 +48,11 @@ export const api = {
   graph: (source?: string) =>
     req<GraphPayload>(`/graph${source ? `?source=${encodeURIComponent(source)}` : ""}`),
 
-  notes: (params: { source?: string; tag?: string; limit?: number; offset?: number } = {}) => {
+  notes: (params: { source?: string; tag?: string; status?: string; limit?: number; offset?: number } = {}) => {
     const q = new URLSearchParams();
     if (params.source) q.set("source", params.source);
     if (params.tag) q.set("tag", params.tag);
+    if (params.status) q.set("status", params.status);
     if (params.limit != null) q.set("limit", String(params.limit));
     if (params.offset != null) q.set("offset", String(params.offset));
     const qs = q.toString();
@@ -74,6 +75,9 @@ export const api = {
 
   research: (id: string) =>
     req<{ ok: boolean; message: string; note: NoteDetail }>(`/notes/${id}/research`, { method: "POST" }),
+
+  extractImages: (id: string) =>
+    req<{ ok: boolean; message: string; note: NoteDetail }>(`/notes/${id}/extract-images`, { method: "POST" }),
 
   retryFailed: () =>
     req<{ total: number; retried: number; repaired: number; failed: number; skipped: number; messages: string[] }>(
@@ -98,13 +102,23 @@ export const api = {
   setPurpose: (id: string, purpose: string | null) =>
     req<NoteDetail>(`/notes/${id}/purpose`, { method: "PUT", body: JSON.stringify({ purpose }) }),
 
-  inbox: (sort = "newest") =>
-    req<{ items: NoteSummary[]; sort: string; count: number }>(`/inbox?sort=${encodeURIComponent(sort)}`),
+  inbox: (params: { sort?: string; purpose?: string | null; limit?: number; offset?: number } = {}) => {
+    const q = new URLSearchParams();
+    q.set("sort", params.sort ?? "newest");
+    if (params.purpose) q.set("purpose", params.purpose);
+    if (params.limit != null) q.set("limit", String(params.limit));
+    if (params.offset != null) q.set("offset", String(params.offset));
+    return req<{ items: NoteSummary[]; sort: string; count: number }>(`/inbox?${q.toString()}`);
+  },
 
   rediscovery: (strategy: string, noteId?: string) =>
     req<{ strategy: string; items: { id: string; title: string }[] }>(
       `/rediscovery?strategy=${encodeURIComponent(strategy)}${noteId ? `&note_id=${encodeURIComponent(noteId)}` : ""}`,
     ),
+
+  // Feed-card variant: on_this_day / forgotten_gems return full note summaries.
+  feedRediscovery: (strategy: "on_this_day" | "forgotten_gems") =>
+    req<{ strategy: string; items: NoteSummary[] }>(`/rediscovery?strategy=${encodeURIComponent(strategy)}`),
 
   setStatusBulk: (ids: string[], status: string) =>
     req<{ status: string; results: { id: string; ok: boolean; status?: string }[] }>(`/notes/status`, {

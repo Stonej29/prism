@@ -1,15 +1,18 @@
-// Palette + fonts for the Atlas dark theme. Mirrors the concept's `P` object.
+// Palette + fonts. Neutral tokens resolve to CSS custom properties so the whole
+// app (Atlas + feed) switches between light and dark by toggling
+// `document.documentElement[data-theme]` — see index.html and hooks/useTheme.ts.
+// Source-kind hues stay constant; they read fine on both themes.
 export const P = {
-  bg0: "#0a0c10",
-  bg1: "#0f1217",
-  bg2: "#161a21",
-  line: "#232830",
-  hi: "#e6e9ef",
-  mid: "#9aa3b2",
-  lo: "#6b7280",
-  faint: "#4b5563",
-  accent: "#6ea8fe",
-  accentDim: "rgba(110,168,254,0.14)",
+  bg0: "var(--p-bg0)",
+  bg1: "var(--p-bg1)",
+  bg2: "var(--p-bg2)",
+  line: "var(--p-line)",
+  hi: "var(--p-hi)",
+  mid: "var(--p-mid)",
+  lo: "var(--p-lo)",
+  faint: "var(--p-faint)",
+  accent: "var(--p-accent)",
+  accentDim: "var(--p-accent-dim)",
   arxiv: "#f0776a",
   github: "#a78bfa",
   huggingface: "#f5c542",

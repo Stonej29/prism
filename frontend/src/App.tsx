@@ -13,6 +13,9 @@ import { FileViewer, type OpenFile } from "./components/FileViewer";
 import { ActivityLog } from "./components/ActivityLog";
 import { SettingsOverlay } from "./components/SettingsOverlay";
 import { Login } from "./components/Login";
+import { FeedView } from "./components/FeedView";
+import { useIsMobile } from "./hooks/useIsMobile";
+import { useTheme } from "./hooks/useTheme";
 import type { IdeaStatus } from "./components/Lightbulb";
 
 interface AskState {
@@ -56,7 +59,7 @@ export default function App() {
   const [noteLoading, setNoteLoading] = useState(false);
   const [paneBusy, setPaneBusy] = useState(false);
   // Multiple notes can be reprocessing/researching at once — keyed by note id.
-  const [processingNotes, setProcessingNotes] = useState<Record<string, "reprocess" | "repersonalize" | "research">>({});
+  const [processingNotes, setProcessingNotes] = useState<Record<string, "reprocess" | "repersonalize" | "research" | "extract_images">>({});
 
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(false);
@@ -89,9 +92,23 @@ export default function App() {
   const [authed, setAuthed] = useState<boolean | null>(null);
   const [needsSetup, setNeedsSetup] = useState(false);
 
+  // The reading feed is the default on phones (the Atlas three-pane is desktop-only);
+  // desktop users can open it from the TopBar.
+  const isMobile = useIsMobile();
+  const { theme, toggle: toggleTheme } = useTheme();
+  const [view, setView] = useState<"atlas" | "feed">("atlas");
+  const mobileDefaulted = useRef(false);
+
   useEffect(() => {
     selectedIdRef.current = selectedId;
   }, [selectedId]);
+
+  useEffect(() => {
+    if (isMobile && !mobileDefaulted.current) {
+      mobileDefaulted.current = true;
+      setView("feed");
+    }
+  }, [isMobile]);
 
   useEffect(() => {
     setUnauthorizedHandler(() => setAuthed(false));
@@ -106,7 +123,7 @@ export default function App() {
   }, []);
 
   const selectedAction = selectedId ? processingNotes[selectedId] ?? null : null;
-  const clearProcessing = (id: string, action: "reprocess" | "repersonalize" | "research") =>
+  const clearProcessing = (id: string, action: "reprocess" | "repersonalize" | "research" | "extract_images") =>
     setProcessingNotes((m) => (m[id] === action ? Object.fromEntries(Object.entries(m).filter(([k]) => k !== id)) : m));
 
   const noteKind = useMemo(() => {
@@ -451,6 +468,19 @@ export default function App() {
     }
   };
 
+  const onExtractImages = async (id: string) => {
+    setProcessingNotes((m) => ({ ...m, [id]: "extract_images" }));
+    try {
+      const res = await api.extractImages(id);
+      setNote((current) => (selectedIdRef.current === id ? res.note : current));
+      setToast(res.message);
+    } catch (e) {
+      setToast(String(e));
+    } finally {
+      clearProcessing(id, "extract_images");
+    }
+  };
+
   const onDelete = async (id: string) => {
     setPaneBusy(true);
     try {
@@ -658,6 +688,10 @@ export default function App() {
         inboxCount={stats?.notes.inbox ?? 0}
         inboxActive={flagFilters.includes("inbox")}
         onOpenInbox={() => toggleFlagFilter("inbox")}
+        feedActive={view === "feed"}
+        onToggleFeed={() => setView((v) => (v === "feed" ? "atlas" : "feed"))}
+        theme={theme}
+        onToggleTheme={toggleTheme}
         onAsk={onAsk}
         onFind={onFind}
         onSave={onSave}
@@ -729,6 +763,7 @@ export default function App() {
           reprocessing={selectedAction === "reprocess"}
           repersonalizing={selectedAction === "repersonalize"}
           researching={selectedAction === "research"}
+          extractingImages={selectedAction === "extract_images"}
           open={rightOpen}
           onToggle={() => setRightOpen((o) => !o)}
           width={rightWidth}
@@ -738,6 +773,7 @@ export default function App() {
           onReprocess={onReprocess}
           onRepersonalize={onRepersonalize}
           onResearch={onResearch}
+          onExtractImages={onExtractImages}
           onDelete={onDelete}
           onEditTags={onEditTags}
           onEditTitle={onEditTitle}
@@ -746,6 +782,13 @@ export default function App() {
           onSelectTag={(tag) => selectTag(tag)}
           onSetFavorite={onSetFavorite}
         />
+
+        {view === "feed" && (
+          <FeedView
+            onClose={isMobile ? undefined : () => setView("atlas")}
+            onReadChanged={() => { refreshData().catch((e) => setToast(String(e))); }}
+          />
+        )}
 
         {ask.open && (
           <AskOverlay

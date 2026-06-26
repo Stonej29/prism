@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { Inbox, Lightbulb, Plus, Settings } from "lucide-react";
+import { Inbox, Layers, Lightbulb, Moon, Plus, Settings, Sun } from "lucide-react";
+import type { Theme } from "../hooks/useTheme";
 import { P } from "../theme";
 import { Omnibar } from "./Omnibar";
 import type { IdeaStatus } from "./Lightbulb";
@@ -14,6 +15,10 @@ export function TopBar({
   inboxCount,
   inboxActive,
   onOpenInbox,
+  feedActive,
+  onToggleFeed,
+  theme,
+  onToggleTheme,
   onAsk,
   onFind,
   onSave,
@@ -26,6 +31,10 @@ export function TopBar({
   inboxCount: number;
   inboxActive: boolean;
   onOpenInbox: () => void;
+  feedActive: boolean;
+  onToggleFeed: () => void;
+  theme: Theme;
+  onToggleTheme: () => void;
   onAsk: (q: string) => void;
   onFind: (q: string) => void;
   onSave: (url: string) => void;
@@ -105,6 +114,12 @@ export function TopBar({
 
       <div ref={actionsRef} style={{ display: "flex", alignItems: "center", gap: 4 }}>
         <IconButton
+          icon={Layers}
+          color={feedActive ? P.accent : undefined}
+          title={feedActive ? "Back to the graph" : "Open the reading feed"}
+          onClick={onToggleFeed}
+        />
+        <IconButton
           icon={Lightbulb}
           busy={ideaStatus === "loading"}
           color={ideaStatus === "ready" ? "#ffd66e" : undefined}
@@ -112,6 +127,7 @@ export function TopBar({
           onClick={onLightbulb}
         />
         <IconButton icon={Plus} busy={saving} title={saving ? "Saving…" : "Save a URL"} onClick={() => setSaveOpen((o) => !o)} />
+        <IconButton icon={theme === "dark" ? Sun : Moon} title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"} onClick={onToggleTheme} />
         <IconButton icon={Settings} title="Settings — profile, feeds, maintenance" onClick={onOpenSettings} />
       </div>
 

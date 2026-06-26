@@ -69,6 +69,7 @@ class NoteRecord:
     related_notes_json: str | None = None
     favorite: int = 0
     purpose: str | None = None
+    date_reviewed: str | None = None
 
 
 @dataclass(frozen=True)
@@ -178,9 +179,9 @@ class PrismDatabase:
                     fetched_at, metadata_json, llm_status, llm_error, llm_generated_at, llm_model,
                     tags_json, scores_json, structured_summary_json, embedding_status, embedding_error,
                     embedded_at, embedding_model, embedding_dimensions, embedding_text_hash, related_notes_json,
-                    favorite, purpose
+                    favorite, purpose, date_reviewed
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record.note_id,
@@ -216,6 +217,7 @@ class PrismDatabase:
                     record.related_notes_json,
                     record.favorite,
                     record.purpose,
+                    record.date_reviewed,
                 ),
             )
 
@@ -231,7 +233,7 @@ class PrismDatabase:
                     llm_model = ?, tags_json = ?, scores_json = ?, structured_summary_json = ?,
                     embedding_status = ?, embedding_error = ?, embedded_at = ?, embedding_model = ?,
                     embedding_dimensions = ?, embedding_text_hash = ?, related_notes_json = ?,
-                    favorite = ?, purpose = ?
+                    favorite = ?, purpose = ?, date_reviewed = ?
                 WHERE note_id = ?
                 """,
                 (
@@ -267,6 +269,7 @@ class PrismDatabase:
                     record.related_notes_json,
                     record.favorite,
                     record.purpose,
+                    record.date_reviewed,
                     record.note_id,
                 ),
             )
@@ -410,18 +413,27 @@ class PrismDatabase:
         records = [_row_to_record(row) for row in rows]
         return [r for r in records if tag in _parse_tags_json(r.tags_json)]
 
-    def list_inbox_notes(self, limit: int, offset: int = 0, sort: str = "newest") -> list[NoteRecord]:
+    def list_inbox_notes(
+        self, limit: int, offset: int = 0, sort: str = "newest", purpose: str | None = None
+    ) -> list[NoteRecord]:
         """The review queue: unreviewed notes that actually warrant reading.
 
         Excludes archived notes and ``purpose='Keep'`` (knowledge kept on purpose but not
         meant to be read). ``sort`` is one of newest/oldest (by date) or relevance/by_purpose
-        (computed in Python from the JSON columns, since the corpus is small).
+        (computed in Python from the JSON columns, since the corpus is small). ``purpose``
+        optionally narrows to a single class ("Unsorted" => no purpose set).
         """
         base = "WHERE status = 'unreviewed' AND (purpose IS NULL OR purpose != 'Keep')"
+        params: list[str] = []
+        if purpose == "Unsorted":
+            base += " AND purpose IS NULL"
+        elif purpose:
+            base += " AND purpose = ?"
+            params.append(purpose)
         if sort in ("relevance", "by_purpose"):
             # Pull the eligible set, then order in Python over the parsed JSON / nullable fields.
             with self.connect() as conn:
-                rows = conn.execute(f"SELECT {_NOTE_COLUMNS} FROM notes {base}").fetchall()
+                rows = conn.execute(f"SELECT {_NOTE_COLUMNS} FROM notes {base}", params).fetchall()
             records = [_row_to_record(row) for row in rows]
             if sort == "relevance":
                 records.sort(key=lambda r: (_overall_score(r), r.date_saved), reverse=True)
@@ -434,7 +446,7 @@ class PrismDatabase:
         with self.connect() as conn:
             rows = conn.execute(
                 f"SELECT {_NOTE_COLUMNS} FROM notes {base} ORDER BY date_saved {order} LIMIT ? OFFSET ?",
-                (limit, offset),
+                (*params, limit, offset),
             ).fetchall()
         return [_row_to_record(row) for row in rows]
 
@@ -796,7 +808,7 @@ _NOTE_COLUMNS = """
     source_kind, input_source, local_archive, pdf_path, content_hash, fetch_status, fetch_error, fetched_at, metadata_json,
     llm_status, llm_error, llm_generated_at, llm_model, tags_json, scores_json, structured_summary_json,
     embedding_status, embedding_error, embedded_at, embedding_model, embedding_dimensions,
-    embedding_text_hash, related_notes_json, favorite, purpose
+    embedding_text_hash, related_notes_json, favorite, purpose, date_reviewed
 """
 
 _ADDED_COLUMNS = {
@@ -825,6 +837,7 @@ _ADDED_COLUMNS = {
     "related_notes_json": "TEXT",
     "favorite": "INTEGER NOT NULL DEFAULT 0",
     "purpose": "TEXT",
+    "date_reviewed": "TEXT",
 }
 
 
@@ -928,6 +941,7 @@ def _row_to_record(row: sqlite3.Row) -> NoteRecord:
         related_notes_json=row["related_notes_json"],
         favorite=row["favorite"] if "favorite" in row.keys() else 0,
         purpose=row["purpose"] if "purpose" in row.keys() else None,
+        date_reviewed=row["date_reviewed"] if "date_reviewed" in row.keys() else None,
     )
 
 

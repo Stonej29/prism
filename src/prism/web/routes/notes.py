@@ -146,6 +146,20 @@ def research_note(note_id: str, notes: NoteService = Depends(get_notes)) -> dict
     return {"ok": result.ok, "message": result.message, "note": note_to_dto(result.record)}
 
 
+@router.post("/{note_id}/extract-images")
+def extract_images(note_id: str, notes: NoteService = Depends(get_notes)) -> dict:
+    try:
+        result = notes.extract_images(note_id)
+    except Exception as exc:
+        log_activity("extract_images", "failed", f"{type(exc).__name__}: {exc}", note_id=note_id)
+        raise
+    if not result.record:
+        log_activity("extract_images", "failed", result.message, note_id=note_id)
+        raise HTTPException(status_code=404, detail=result.message)
+    log_activity("extract_images", "ok" if result.ok else "failed", result.message, note_id=result.record.note_id)
+    return {"ok": result.ok, "message": result.message, "note": note_to_dto(result.record)}
+
+
 @router.delete("/{note_id}")
 def delete_note(note_id: str, notes: NoteService = Depends(get_notes)) -> dict:
     result = notes.delete_note(note_id)
