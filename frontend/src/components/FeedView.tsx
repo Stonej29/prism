@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Check, SlidersHorizontal } from "lucide-react";
+import { Check, Settings, SlidersHorizontal } from "lucide-react";
 import { api } from "../api";
 import { P } from "../theme";
 import type { NoteSummary } from "../types";
@@ -64,9 +64,11 @@ function PopOption({ label, active, onClick }: { label: string; active: boolean;
 export function FeedView({
   onClose,
   onReadChanged,
+  onOpenSettings,
 }: {
   onClose?: () => void;
   onReadChanged?: () => void;
+  onOpenSettings?: () => void;
 }) {
   const [tab, setTab] = useState<Tab>("inbox");
   const [sort, setSort] = useState("newest");
@@ -207,8 +209,8 @@ export function FeedView({
           );
         })}
 
-        {tab === "inbox" && (
-          <div style={{ marginLeft: "auto", alignSelf: "center" }}>
+        <div style={{ marginLeft: "auto", alignSelf: "center", display: "flex", alignItems: "center", gap: 8 }}>
+          {tab === "inbox" && (
             <button
               onClick={() => setControlsOpen((o) => !o)}
               title="Filter & sort"
@@ -228,8 +230,17 @@ export function FeedView({
               <SlidersHorizontal size={16} />
               {purpose && <span>{purpose}</span>}
             </button>
-          </div>
-        )}
+          )}
+          {onOpenSettings && (
+            <button
+              onClick={onOpenSettings}
+              title="Settings & purposes"
+              style={{ display: "inline-flex", alignItems: "center", background: "none", border: "none", padding: "6px 4px", cursor: "pointer", color: P.lo }}
+            >
+              <Settings size={17} />
+            </button>
+          )}
+        </div>
 
         {controlsOpen && tab === "inbox" && (
           <div

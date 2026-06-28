@@ -790,6 +790,7 @@ export default function App() {
           <FeedView
             onClose={isMobile ? undefined : () => setView("atlas")}
             onReadChanged={() => { refreshData().catch((e) => setToast(String(e))); }}
+            onOpenSettings={() => setSettingsOpen(true)}
           />
         )}
 
