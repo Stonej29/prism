@@ -13,6 +13,17 @@ def _png(width: int, height: int, gray: int = 200) -> bytes:
     return pix.tobytes("png")
 
 
+def _webp(width: int, height: int) -> bytes:
+    """A real WebP — the format modern sites (WordPress/CDN) serve that PyMuPDF can't decode."""
+    import io
+
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGB", (width, height), (180, 120, 90)).save(buf, format="WEBP")
+    return buf.getvalue()
+
+
 def _pdf_with_image(image_png: bytes) -> bytes:
     doc = fitz.open()
     page = doc.new_page(width=400, height=400)
@@ -63,6 +74,33 @@ class ImageExtractionTests(unittest.TestCase):
         finally:
             fetch._http_get_bytes = original  # type: ignore[assignment]
         self.assertEqual(len(result), 1)  # badge skipped, one real image kept
+
+    def test_webp_is_decoded_and_downscaled(self) -> None:
+        # Regression: PyMuPDF cannot decode WebP, so a WebP-only page yielded zero
+        # images. Pillow decodes it; it should be stored as a downscaled JPEG.
+        result = images._downscale_to_jpeg(_webp(2000, 1000))
+        self.assertIsNotNone(result)
+        jpeg, width, height = result
+        self.assertEqual(jpeg[:2], b"\xff\xd8")  # JPEG SOI marker
+        self.assertEqual((width, height), (1280, 640))  # capped to MAX_DIM on the long side
+
+    def test_website_webp_images_downloaded(self) -> None:
+        (self.archive / "raw.html").write_text(
+            '<html><body><img src="https://example.com/hero.webp"></body></html>',
+            encoding="utf-8",
+        )
+        webp = _webp(800, 600)
+        import prism.fetch as fetch
+
+        original = fetch._http_get_bytes
+        fetch._http_get_bytes = lambda url, headers=None: (webp, url, "image/webp")  # type: ignore[assignment]
+        try:
+            result = images.extract_images_for_archive(
+                self.archive, "website", {"resolved_url": "https://example.com/post"}
+            )
+        finally:
+            fetch._http_get_bytes = original  # type: ignore[assignment]
+        self.assertEqual(len(result), 1)
 
     def test_missing_source_returns_empty(self) -> None:
         self.assertEqual(images.extract_images_for_archive(self.archive, "website", {}), [])

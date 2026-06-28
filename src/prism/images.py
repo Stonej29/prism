@@ -95,18 +95,67 @@ def _clear_images(images_dir: Path) -> None:
 
 
 def _downscale_to_jpeg(data: bytes) -> tuple[bytes, int, int] | None:
-    """Load image bytes, drop tiny ones, convert to RGB, downscale, return JPEG."""
+    """Load image bytes, drop tiny ones, convert to RGB, downscale, return JPEG.
+
+    Pillow is the primary decoder because it covers the formats the modern web
+    actually serves — WebP, AVIF (where libavif is present), PNG, JPEG, GIF —
+    which PyMuPDF's Pixmap cannot read (it fails on WebP/AVIF). PyMuPDF is kept
+    only as a fallback so extraction still degrades gracefully if Pillow is
+    somehow unavailable.
+    """
+    result = _downscale_with_pillow(data)
+    if result is not None:
+        return result
+    return _downscale_with_fitz(data)
+
+
+def _downscale_with_pillow(data: bytes) -> tuple[bytes, int, int] | None:
+    try:
+        import io
+
+        from PIL import Image
+    except ImportError:  # pragma: no cover - Pillow is a hard dep
+        return None
+    try:
+        img = Image.open(io.BytesIO(data))
+        img.load()
+    except Exception:  # noqa: BLE001 - unsupported/corrupt image
+        return None
+    width, height = img.size
+    if width < IMAGE_MIN_DIM or height < IMAGE_MIN_DIM:
+        return None
+    if img.mode != "RGB":  # JPEG can't carry alpha / palette / CMYK
+        try:
+            img = img.convert("RGB")
+        except Exception:  # noqa: BLE001
+            return None
+    longest = max(width, height)
+    if longest > IMAGE_MAX_DIM:
+        scale = IMAGE_MAX_DIM / longest
+        size = (max(1, round(width * scale)), max(1, round(height * scale)))
+        try:
+            img = img.resize(size, Image.LANCZOS)
+        except Exception:  # noqa: BLE001
+            pass
+    try:
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=IMAGE_JPEG_QUALITY)
+    except Exception:  # noqa: BLE001
+        return None
+    return buf.getvalue(), img.width, img.height
+
+
+def _downscale_with_fitz(data: bytes) -> tuple[bytes, int, int] | None:
     try:
         import fitz
-    except ImportError:  # pragma: no cover - PyMuPDF is a hard dep
+    except ImportError:  # pragma: no cover
         return None
     try:
         pix = fitz.Pixmap(data)
-    except Exception:  # noqa: BLE001 - unsupported/corrupt image
+    except Exception:  # noqa: BLE001 - unsupported/corrupt image (e.g. WebP)
         return None
     if pix.width < IMAGE_MIN_DIM or pix.height < IMAGE_MIN_DIM:
         return None
-    # JPEG can't carry alpha / CMYK — normalise to RGB (also drops alpha).
     if pix.alpha or pix.colorspace is None or pix.colorspace.n not in (1, 3):
         try:
             pix = fitz.Pixmap(fitz.csRGB, pix)
