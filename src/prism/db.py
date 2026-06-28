@@ -70,6 +70,8 @@ class NoteRecord:
     favorite: int = 0
     purpose: str | None = None
     date_reviewed: str | None = None
+    # "auto" = AI-classified, "user" = manually set/endorsed (sticky, never auto-overridden).
+    purpose_source: str | None = None
 
 
 @dataclass(frozen=True)
@@ -99,6 +101,14 @@ class ProposalRecord:
     note_ids_json: str | None = None
     payload_json: str | None = None
     resolved_at: str | None = None
+
+
+@dataclass(frozen=True)
+class PurposeRecord:
+    name: str
+    description: str = ""
+    sort_order: int = 0
+    created_at: str = ""
 
 
 @dataclass(frozen=True)
@@ -188,9 +198,9 @@ class PrismDatabase:
                     fetched_at, metadata_json, llm_status, llm_error, llm_generated_at, llm_model,
                     tags_json, scores_json, structured_summary_json, embedding_status, embedding_error,
                     embedded_at, embedding_model, embedding_dimensions, embedding_text_hash, related_notes_json,
-                    favorite, purpose, date_reviewed
+                    favorite, purpose, date_reviewed, purpose_source
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record.note_id,
@@ -227,6 +237,7 @@ class PrismDatabase:
                     record.favorite,
                     record.purpose,
                     record.date_reviewed,
+                    record.purpose_source,
                 ),
             )
 
@@ -242,7 +253,7 @@ class PrismDatabase:
                     llm_model = ?, tags_json = ?, scores_json = ?, structured_summary_json = ?,
                     embedding_status = ?, embedding_error = ?, embedded_at = ?, embedding_model = ?,
                     embedding_dimensions = ?, embedding_text_hash = ?, related_notes_json = ?,
-                    favorite = ?, purpose = ?, date_reviewed = ?
+                    favorite = ?, purpose = ?, date_reviewed = ?, purpose_source = ?
                 WHERE note_id = ?
                 """,
                 (
@@ -279,6 +290,7 @@ class PrismDatabase:
                     record.favorite,
                     record.purpose,
                     record.date_reviewed,
+                    record.purpose_source,
                     record.note_id,
                 ),
             )
@@ -394,8 +406,7 @@ class PrismDatabase:
                     SUM(CASE WHEN status = 'unreviewed' THEN 1 ELSE 0 END) as unreviewed,
                     SUM(CASE WHEN status = 'reviewed' THEN 1 ELSE 0 END) as reviewed,
                     SUM(CASE WHEN status = 'archived' THEN 1 ELSE 0 END) as archived,
-                    SUM(CASE WHEN status = 'unreviewed' AND (purpose IS NULL OR purpose != 'Keep')
-                        THEN 1 ELSE 0 END) as inbox
+                    SUM(CASE WHEN status = 'unreviewed' THEN 1 ELSE 0 END) as inbox
                 FROM notes
             """).fetchone()
         return NoteStats(
@@ -427,14 +438,13 @@ class PrismDatabase:
     def list_inbox_notes(
         self, limit: int, offset: int = 0, sort: str = "newest", purpose: str | None = None
     ) -> list[NoteRecord]:
-        """The review queue: unreviewed notes that actually warrant reading.
+        """The review queue: every unreviewed note (archived excluded).
 
-        Excludes archived notes and ``purpose='Keep'`` (knowledge kept on purpose but not
-        meant to be read). ``sort`` is one of newest/oldest (by date) or relevance/by_purpose
+        ``sort`` is one of newest/oldest (by date) or relevance/by_purpose
         (computed in Python from the JSON columns, since the corpus is small). ``purpose``
         optionally narrows to a single class ("Unsorted" => no purpose set).
         """
-        base = "WHERE status = 'unreviewed' AND (purpose IS NULL OR purpose != 'Keep')"
+        base = "WHERE status = 'unreviewed'"
         params: list[str] = []
         if purpose == "Unsorted":
             base += " AND purpose IS NULL"
@@ -473,11 +483,11 @@ class PrismDatabase:
         return [_row_to_record(row) for row in rows]
 
     def list_stale_unreviewed(self, before_iso: str, limit: int = 200) -> list[NoteRecord]:
-        """Unreviewed, read-worthy (not Keep) notes older than a cutoff — Forgotten Gems source."""
+        """Unreviewed notes older than a cutoff — Forgotten Gems source."""
         with self.connect() as conn:
             rows = conn.execute(
                 f"""SELECT {_NOTE_COLUMNS} FROM notes
-                    WHERE status = 'unreviewed' AND (purpose IS NULL OR purpose != 'Keep')
+                    WHERE status = 'unreviewed'
                       AND date_saved < ?
                     ORDER BY date_saved ASC LIMIT ?""",
                 (before_iso, limit),
@@ -787,6 +797,17 @@ class PrismDatabase:
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_note_chats_note ON note_chats(note_id)"
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS purposes (
+                    name TEXT PRIMARY KEY,
+                    description TEXT NOT NULL DEFAULT '',
+                    sort_order INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            _seed_default_purposes(conn)
 
     def add_token_usage(self, prompt_tokens: int, completion_tokens: int, total_tokens: int, day: str | None = None) -> None:
         """Accumulate one call's token usage into the per-day running totals."""
@@ -864,13 +885,77 @@ class PrismDatabase:
             cursor = conn.execute("DELETE FROM note_chats WHERE note_id = ?", (note_id,))
         return cursor.rowcount
 
+    # --- Purpose categories (user-defined) -------------------------------------------------
+
+    def list_purposes(self) -> list[PurposeRecord]:
+        """All purpose categories, ordered by sort_order then name."""
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT name, description, sort_order, created_at FROM purposes ORDER BY sort_order, name"
+            ).fetchall()
+        return [
+            PurposeRecord(name=r["name"], description=r["description"] or "", sort_order=r["sort_order"], created_at=r["created_at"])
+            for r in rows
+        ]
+
+    def purpose_exists(self, name: str) -> bool:
+        with self.connect() as conn:
+            row = conn.execute("SELECT 1 FROM purposes WHERE name = ?", (name,)).fetchone()
+        return row is not None
+
+    def add_purpose(self, name: str, description: str = "", sort_order: int | None = None) -> PurposeRecord:
+        created_at = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        with self.connect() as conn:
+            if sort_order is None:
+                row = conn.execute("SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM purposes").fetchone()
+                sort_order = int(row["n"])
+            conn.execute(
+                "INSERT INTO purposes (name, description, sort_order, created_at) VALUES (?, ?, ?, ?)",
+                (name, description, sort_order, created_at),
+            )
+        return PurposeRecord(name=name, description=description, sort_order=sort_order, created_at=created_at)
+
+    def update_purpose(self, name: str, description: str) -> bool:
+        with self.connect() as conn:
+            cursor = conn.execute("UPDATE purposes SET description = ? WHERE name = ?", (description, name))
+        return cursor.rowcount > 0
+
+    def delete_purpose(self, name: str) -> bool:
+        with self.connect() as conn:
+            cursor = conn.execute("DELETE FROM purposes WHERE name = ?", (name,))
+        return cursor.rowcount > 0
+
+    def list_reclassify_candidates(self, limit: int = 500) -> list[NoteRecord]:
+        """Generated, non-archived notes eligible for a re-classification proposal sweep:
+        everything the AI set (`auto`) or never classified (`NULL`) — user-pinned notes excluded."""
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"""SELECT {_NOTE_COLUMNS} FROM notes
+                    WHERE llm_status = 'generated' AND status != 'archived'
+                      AND (purpose_source IS NULL OR purpose_source = 'auto')
+                    ORDER BY date_saved DESC LIMIT ?""",
+                (limit,),
+            ).fetchall()
+        return [_row_to_record(row) for row in rows]
+
+    def list_user_classified_notes(self, limit: int = 8) -> list[NoteRecord]:
+        """Recent notes whose purpose the user set/endorsed — few-shot examples for classification."""
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"""SELECT {_NOTE_COLUMNS} FROM notes
+                    WHERE purpose_source = 'user' AND purpose IS NOT NULL AND purpose != ''
+                    ORDER BY date_saved DESC LIMIT ?""",
+                (limit,),
+            ).fetchall()
+        return [_row_to_record(row) for row in rows]
+
 
 _NOTE_COLUMNS = """
     note_id, source_url, resolved_url, note_path, date_saved, status, title, summary,
     source_kind, input_source, local_archive, pdf_path, content_hash, fetch_status, fetch_error, fetched_at, metadata_json,
     llm_status, llm_error, llm_generated_at, llm_model, tags_json, scores_json, structured_summary_json,
     embedding_status, embedding_error, embedded_at, embedding_model, embedding_dimensions,
-    embedding_text_hash, related_notes_json, favorite, purpose, date_reviewed
+    embedding_text_hash, related_notes_json, favorite, purpose, date_reviewed, purpose_source
 """
 
 _ADDED_COLUMNS = {
@@ -900,6 +985,7 @@ _ADDED_COLUMNS = {
     "favorite": "INTEGER NOT NULL DEFAULT 0",
     "purpose": "TEXT",
     "date_reviewed": "TEXT",
+    "purpose_source": "TEXT",
 }
 
 
@@ -956,6 +1042,29 @@ def _add_missing_proposal_columns(conn: sqlite3.Connection) -> None:
             conn.execute(f"ALTER TABLE proposals ADD COLUMN {column} {definition}")
 
 
+# Seeded once into an empty `purposes` table — these reproduce the pre-existing hardcoded
+# categories (and the descriptions that used to live in note_system.md) so behavior is
+# preserved on upgrade. Afterwards the table is fully user-editable.
+_DEFAULT_PURPOSES: tuple[tuple[str, str], ...] = (
+    ("Thesis", "Academic research papers / thesis material."),
+    ("Work", "Professional or job-related material."),
+    ("Self-Host", "Self-hostable tools, infrastructure, homelab software."),
+    ("Dataset", "Datasets or data sources."),
+    ("Keep", "General reference worth retaining but not necessarily worth reading end to end."),
+)
+
+
+def _seed_default_purposes(conn: sqlite3.Connection) -> None:
+    """Populate the default purpose set only when the table is empty (first run / upgrade)."""
+    if conn.execute("SELECT 1 FROM purposes LIMIT 1").fetchone():
+        return
+    created_at = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    conn.executemany(
+        "INSERT INTO purposes (name, description, sort_order, created_at) VALUES (?, ?, ?, ?)",
+        [(name, desc, i, created_at) for i, (name, desc) in enumerate(_DEFAULT_PURPOSES)],
+    )
+
+
 def _row_to_proposal(row: sqlite3.Row) -> ProposalRecord:
     return ProposalRecord(
         proposal_id=row["proposal_id"],
@@ -1004,6 +1113,7 @@ def _row_to_record(row: sqlite3.Row) -> NoteRecord:
         favorite=row["favorite"] if "favorite" in row.keys() else 0,
         purpose=row["purpose"] if "purpose" in row.keys() else None,
         date_reviewed=row["date_reviewed"] if "date_reviewed" in row.keys() else None,
+        purpose_source=row["purpose_source"] if "purpose_source" in row.keys() else None,
     )
 
 

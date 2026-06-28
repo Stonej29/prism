@@ -21,6 +21,7 @@ from prism.notes import NoteService
 KIND_MERGE = "merge"
 KIND_RETAG = "retag"
 KIND_PRUNE = "prune"
+KIND_REPURPOSE = "repurpose"
 
 
 @dataclass(frozen=True)
@@ -81,6 +82,12 @@ class ProposalService:
             return ProposalActionResult(ok=False, message=f"No proposal found for {proposal_id}.")
         if record.status != "pending":
             return ProposalActionResult(ok=False, message=f"Proposal {record.proposal_id} is already {record.status}.", record=record)
+        if record.kind == KIND_REPURPOSE:
+            # "Current is right" — pin it as a user decision so the sweep stops re-proposing.
+            note_id = str(proposal_payload(record).get("note_id") or "").strip().lower()
+            note = self.database.find_by_note_id(note_id)
+            if note:
+                self.notes.pin_purpose(note)
         self.database.update_proposal_status(record.proposal_id, "rejected", _now())
         updated = self.database.find_by_proposal_id(record.proposal_id)
         return ProposalActionResult(ok=True, message=f"Rejected proposal {record.proposal_id}.", record=updated)
@@ -95,6 +102,18 @@ class ProposalService:
                 return f"Approved {record.proposal_id} (merge): payload missing keep/remove."
             result = self.notes.merge_notes(keep_id, remove_id)
             return result.message
+        if record.kind == KIND_REPURPOSE:
+            payload = proposal_payload(record)
+            note_id = str(payload.get("note_id") or "").strip().lower()
+            proposed = payload.get("proposed")
+            note = self.database.find_by_note_id(note_id)
+            if not note:
+                return f"Approved {record.proposal_id} (repurpose): note not found."
+            try:
+                updated = self.notes.set_purpose(note, proposed)  # pins as a user choice
+            except ValueError as exc:
+                return f"Approved {record.proposal_id} (repurpose) but purpose invalid: {exc}"
+            return f"Re-classified “{note.title}” → {updated.purpose or 'Unsorted'}."
         return f"Approved {record.proposal_id} ({record.kind})."
 
 
@@ -107,6 +126,9 @@ def describe_proposal(record: ProposalRecord) -> str:
         keep = payload.get("keep_title") or payload.get("keep")
         remove = payload.get("remove_title") or payload.get("remove")
         return f"Merge near-duplicates{sim_str}: keep “{keep}”, remove “{remove}”."
+    if record.kind == KIND_REPURPOSE:
+        current = payload.get("current") or "Unsorted"
+        return f"Re-classify “{payload.get('title')}”: {current} → {payload.get('proposed')}."
     ids = ", ".join(proposal_note_ids(record))
     return f"{record.kind} proposal for {ids or 'notes'}."
 

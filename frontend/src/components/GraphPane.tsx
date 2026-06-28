@@ -121,8 +121,8 @@ export function GraphPane({
       if (purposeFilters.length > 0 && !(n.purpose != null && purposeFilters.includes(n.purpose))) return false;
       if (flagFilters.includes("favorite") && !n.favorite) return false;
       if (flagFilters.includes("unreviewed") && n.status !== "unreviewed") return false;
-      // Inbox = the review queue: unreviewed AND not "Keep" (kept knowledge needn't be read).
-      if (flagFilters.includes("inbox") && !(n.status === "unreviewed" && n.purpose !== "Keep")) return false;
+      // Inbox = the review queue: every unreviewed note.
+      if (flagFilters.includes("inbox") && n.status !== "unreviewed") return false;
       if (flagFilters.includes("failed") && !n.failed) return false;
       if (minAgeDays > 0) {
         const saved = Date.parse(n.date_saved ?? "");

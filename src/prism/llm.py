@@ -82,18 +82,27 @@ class LLMClient:
             web_sources=web_sources_from_response(data),
         )
 
-    def personalize_note(self, ground_truth: dict[str, Any], profile: str) -> LLMGeneration:
-        """Personalization pass: score relevance and reader-specific prose from the note's
-        ground truth + profile only (no source text), so it can be re-run cheaply."""
+    def personalize_note(
+        self,
+        ground_truth: dict[str, Any],
+        profile: str,
+        *,
+        purposes: list[dict[str, str]] | None = None,
+        examples: list[dict[str, str]] | None = None,
+    ) -> LLMGeneration:
+        """Personalization pass: score relevance, reader-specific prose, and a single purpose
+        from the note's ground truth + profile only (no source text), so it can be re-run
+        cheaply. `purposes` is the user-defined category set ({name, description}); `examples`
+        is a compact few-shot of the reader's past purpose choices ({title, purpose})."""
         if not self.config.is_configured:
             raise RuntimeError("LLM_API_KEY and LLM_MODEL are required")
 
-        payload = self._personalize_payload(ground_truth, profile, use_response_format=True)
+        payload = self._personalize_payload(ground_truth, profile, True, purposes, examples)
         try:
             data = self._post(payload)
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code == 400:
-                data = self._post(self._personalize_payload(ground_truth, profile, use_response_format=False))
+                data = self._post(self._personalize_payload(ground_truth, profile, False, purposes, examples))
             else:
                 raise
 
@@ -253,14 +262,26 @@ class LLMClient:
             payload["plugins"] = [{"id": "web"}]
         return payload
 
-    def _personalize_payload(self, ground_truth: dict[str, Any], profile: str, use_response_format: bool) -> dict[str, Any]:
+    def _personalize_payload(
+        self,
+        ground_truth: dict[str, Any],
+        profile: str,
+        use_response_format: bool,
+        purposes: list[dict[str, str]] | None = None,
+        examples: list[dict[str, str]] | None = None,
+    ) -> dict[str, Any]:
+        context: dict[str, Any] = {"profile": profile, "note": ground_truth}
+        if purposes:
+            context["purposes"] = purposes
+        if examples:
+            context["examples"] = examples
         payload: dict[str, Any] = {
             "model": self.config.model,
             "temperature": 0.2,
             "max_tokens": 2000,
             "messages": [
                 {"role": "system", "content": personalize_system_prompt()},
-                {"role": "user", "content": json.dumps({"profile": profile, "note": ground_truth}, ensure_ascii=True)},
+                {"role": "user", "content": json.dumps(context, ensure_ascii=True)},
             ],
         }
         if use_response_format:

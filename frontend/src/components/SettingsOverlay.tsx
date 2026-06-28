@@ -5,6 +5,7 @@ import { Backdrop } from "./AskOverlay";
 import { MaintenancePanel } from "./MaintenancePanel";
 import { TextAction } from "./TextAction";
 import { ConnectionsSettings } from "./ConnectionsSettings";
+import { PurposesSettings } from "./PurposesSettings";
 import { AccountSettings } from "./AccountSettings";
 
 function SettingsSection({ title, children }: { title: string; children: React.ReactNode }) {
@@ -98,6 +99,10 @@ export function SettingsOverlay({
             </div>
           </>
         )}
+      </SettingsSection>
+
+      <SettingsSection title="Purposes">
+        <PurposesSettings onReviewProposals={onReviewProposals} />
       </SettingsSection>
 
       <SettingsSection title="Feeds">

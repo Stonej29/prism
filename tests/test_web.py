@@ -14,7 +14,7 @@ from prism.db import IdeaRecord, NoteRecord, PrismDatabase
 from prism.embedding import EmbeddingConfig
 from prism.ideas import IdeaService
 from prism.index import NoteIndexer, RelatedCandidate
-from prism.llm import LLMConfig
+from prism.llm import LLMConfig, LLMGeneration
 from prism.notes import NoteService
 from prism.proposals import ProposalService
 from prism.web.activity import clear_activity
@@ -568,11 +568,11 @@ class WebApiTest(unittest.TestCase):
         cleared = self.client.put("/api/notes/aaa111/purpose", json={"purpose": "none"}).json()
         self.assertIsNone(cleared["purpose"])
 
-    def test_inbox_excludes_keep_and_archived(self) -> None:
+    def test_inbox_includes_keep_excludes_reviewed_and_archived(self) -> None:
         import dataclasses
         self.db.insert_note(make_note("inbox01"))  # unreviewed, no purpose -> in inbox
         keep = dataclasses.replace(make_note("keep01"), purpose="Keep")
-        self.db.insert_note(keep)
+        self.db.insert_note(keep)  # Keep is unreviewed -> now in inbox too
         archived = dataclasses.replace(make_note("arch01"), status="archived")
         self.db.insert_note(archived)
         reviewed = dataclasses.replace(make_note("rev01"), status="reviewed")
@@ -581,10 +581,10 @@ class WebApiTest(unittest.TestCase):
         resp = self.client.get("/api/inbox").json()
         ids = {item["id"] for item in resp["items"]}
         self.assertIn("inbox01", ids)
-        self.assertNotIn("keep01", ids)
+        self.assertIn("keep01", ids)
         self.assertNotIn("arch01", ids)
         self.assertNotIn("rev01", ids)
-        self.assertEqual(resp["count"], 1)
+        self.assertEqual(resp["count"], 2)
 
     def test_note_images_serialized_and_served(self) -> None:
         import dataclasses
@@ -672,7 +672,7 @@ class WebApiTest(unittest.TestCase):
         otd = self.client.get("/api/rediscovery", params={"strategy": "on_this_day"}).json()
         self.assertIn("today01", {i["id"] for i in otd["items"]})
 
-        # Forgotten gem: high score, unreviewed, old; a Keep note of equal age is excluded.
+        # Forgotten gem: high score, unreviewed, old; Keep notes now qualify too.
         gem = dataclasses.replace(make_note("gem01"), date_saved="2020-01-01T00:00:00Z",
                                   scores_json=json.dumps({"overall": 9}))
         keep_old = dataclasses.replace(make_note("keepold"), date_saved="2020-01-01T00:00:00Z",
@@ -682,7 +682,7 @@ class WebApiTest(unittest.TestCase):
         gems = self.client.get("/api/rediscovery", params={"strategy": "forgotten_gems"}).json()
         gem_ids = {i["id"] for i in gems["items"]}
         self.assertIn("gem01", gem_ids)
-        self.assertNotIn("keepold", gem_ids)
+        self.assertIn("keepold", gem_ids)
 
         # related requires a note_id.
         self.assertEqual(self.client.get("/api/rediscovery", params={"strategy": "related"}).status_code, 400)
@@ -1099,6 +1099,78 @@ class WebApiTest(unittest.TestCase):
 
     def test_chat_history_404_for_unknown_note(self) -> None:
         self.assertEqual(self.client.get("/api/notes/nope/chat").status_code, 404)
+
+    def test_purposes_seeded_and_crud(self) -> None:
+        items = self.client.get("/api/purposes").json()["items"]
+        self.assertEqual([p["name"] for p in items], ["Thesis", "Work", "Self-Host", "Dataset", "Keep"])
+
+        # Add a custom purpose with a description.
+        created = self.client.post("/api/purposes", json={"name": "Reading List", "description": "to read later"})
+        self.assertEqual(created.status_code, 200)
+        # A near-duplicate name (case/separator-insensitive) is rejected.
+        self.assertEqual(self.client.post("/api/purposes", json={"name": "reading-list"}).status_code, 409)
+        # Reserved synthetic name is rejected.
+        self.assertEqual(self.client.post("/api/purposes", json={"name": "Unsorted"}).status_code, 400)
+
+        # Update the description, then delete it.
+        self.assertEqual(self.client.put("/api/purposes/Reading List", json={"description": "queue"}).status_code, 200)
+        names = [p["name"] for p in self.client.get("/api/purposes").json()["items"]]
+        self.assertIn("Reading List", names)
+        self.assertEqual(self.client.delete("/api/purposes/Reading List").status_code, 200)
+        self.assertNotIn("Reading List", [p["name"] for p in self.client.get("/api/purposes").json()["items"]])
+        self.assertEqual(self.client.delete("/api/purposes/Nope").status_code, 404)
+
+    def test_set_purpose_dynamic_validation_and_source(self) -> None:
+        self.db.insert_note(make_note("aaa111"))
+        self.client.post("/api/purposes", json={"name": "Reading List", "description": "later"})
+        # A custom purpose validates and is marked as a user choice (sticky).
+        ok = self.client.put("/api/notes/aaa111/purpose", json={"purpose": "reading list"})
+        self.assertEqual(ok.status_code, 200)
+        self.assertEqual(ok.json()["purpose"], "Reading List")
+        self.assertEqual(self.db.find_by_note_id("aaa111").purpose_source, "user")
+        # An unknown value is rejected.
+        self.assertEqual(self.client.put("/api/notes/aaa111/purpose", json={"purpose": "Nonsense"}).status_code, 400)
+
+    def test_scan_creates_repurpose_proposal_and_apply_reject(self) -> None:
+        import dataclasses
+        from prism.proposals import KIND_REPURPOSE, ProposalService, describe_proposal
+
+        # An AI-classified note (eligible) and a user-pinned note (must be skipped).
+        self.db.insert_note(dataclasses.replace(make_note("auto01"), purpose="Work", purpose_source="auto"))
+        self.db.insert_note(dataclasses.replace(make_note("user01"), purpose="Work", purpose_source="user"))
+        notes = self._configured_notes()
+        self.app.dependency_overrides[get_notes] = lambda: notes
+
+        # The classifier now says "Thesis" for both — only the auto note yields a proposal.
+        with patch("prism.llm.LLMClient.personalize_note", return_value=LLMGeneration({"purpose": "Thesis"}, "model")):
+            resp = self.client.post("/api/purposes/scan").json()
+        self.assertTrue(resp["ok"])
+        self.assertEqual(resp["created"], 1)
+
+        pending = self.db.list_proposals("pending")
+        self.assertEqual(len(pending), 1)
+        prop = pending[0]
+        self.assertEqual(prop.kind, KIND_REPURPOSE)
+        self.assertIn("Work → Thesis", describe_proposal(prop))
+
+        # A second scan is a no-op (dedupe on the pending proposal).
+        with patch("prism.llm.LLMClient.personalize_note", return_value=LLMGeneration({"purpose": "Thesis"}, "model")):
+            self.assertEqual(self.client.post("/api/purposes/scan").json()["created"], 0)
+
+        # Approving applies the new purpose and pins it as a user choice.
+        svc = ProposalService(self.db, notes)
+        self.assertTrue(svc.approve(prop.proposal_id).ok)
+        approved = self.db.find_by_note_id("auto01")
+        self.assertEqual(approved.purpose, "Thesis")
+        self.assertEqual(approved.purpose_source, "user")
+
+        # Rejecting a fresh proposal pins the current value so it stops being re-proposed.
+        self.db.insert_note(dataclasses.replace(make_note("auto02"), purpose="Work", purpose_source="auto"))
+        with patch("prism.llm.LLMClient.personalize_note", return_value=LLMGeneration({"purpose": "Thesis"}, "model")):
+            self.client.post("/api/purposes/scan")
+        prop2 = [p for p in self.db.list_proposals("pending") if "auto02" in (p.note_ids_json or "")][0]
+        self.assertTrue(svc.reject(prop2.proposal_id).ok)
+        self.assertEqual(self.db.find_by_note_id("auto02").purpose_source, "user")
 
 
 if __name__ == "__main__":

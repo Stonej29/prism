@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { P, srcColor, srcLabel, topicColor } from "../theme";
 import type { GraphPayload, Stats, TagCount, TreeNode, Usage } from "../types";
-import { PURPOSES } from "../types";
+import { usePurposes } from "../hooks/usePurposes";
 import { GraphPresets, type GraphView } from "./GraphPresets";
 import { FileTree } from "./FileTree";
 import type { OpenFile } from "./FileViewer";
@@ -158,6 +158,7 @@ export function TreePane({
     );
   }
 
+  const { names: purposeNames } = usePurposes();
   const graphNodes = graph?.nodes ?? [];
   const idsFor = (predicate: (node: GraphPayload["nodes"][number]) => boolean) => graphNodes.filter(predicate).map((n) => n.id);
   const counts: Record<string, number> = {};
@@ -229,18 +230,9 @@ export function TreePane({
               label="Inbox (to read)"
               count={stats?.notes.inbox ?? 0}
               active={flagFilters.includes("inbox")}
-              previewIds={idsFor((n) => n.status === "unreviewed" && n.purpose !== "Keep")}
-              onPreviewFilter={onPreviewFilter}
-              onClick={(e) => onToggleFlagFilter("inbox", additive(e))}
-            />
-            <FilterRow
-              glyph="?"
-              label="Unreviewed (all)"
-              count={stats?.notes.unreviewed ?? 0}
-              active={flagFilters.includes("unreviewed")}
               previewIds={idsFor((n) => n.status === "unreviewed")}
               onPreviewFilter={onPreviewFilter}
-              onClick={(e) => onToggleFlagFilter("unreviewed", additive(e))}
+              onClick={(e) => onToggleFlagFilter("inbox", additive(e))}
             />
             <FilterRow
               glyph="!"
@@ -264,10 +256,15 @@ export function TreePane({
                 onClick={(e) => onSelectSource(kind, additive(e))}
               />
             ))}
-            {PURPOSES.some((p) => (purposeCounts[p] ?? 0) > 0) && (
+            {(() => {
+              // Show the user-defined purposes in order, then any orphaned purposes still
+              // present on notes (e.g. a category since deleted) — only those with notes.
+              const ordered = [...purposeNames, ...Object.keys(purposeCounts).filter((p) => !purposeNames.includes(p))];
+              const present = ordered.filter((p) => (purposeCounts[p] ?? 0) > 0);
+              return present.length > 0 ? (
               <>
                 <div style={{ fontFamily: P.mono, fontSize: 9, letterSpacing: 1, color: P.faint, padding: "8px 12px 4px" }}>BY PURPOSE</div>
-                {PURPOSES.filter((p) => (purposeCounts[p] ?? 0) > 0).map((p) => (
+                {present.map((p) => (
                   <FilterRow
                     key={p}
                     label={p}
@@ -279,7 +276,8 @@ export function TreePane({
                   />
                 ))}
               </>
-            )}
+              ) : null;
+            })()}
             {topicOptions.length > 0 && (
               <>
                 <div style={{ fontFamily: P.mono, fontSize: 9, letterSpacing: 1, color: P.faint, padding: "8px 12px 4px" }}>TOPICS</div>

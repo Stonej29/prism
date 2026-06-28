@@ -2,7 +2,7 @@ import { useState } from "react";
 import { ExternalLink, Images, Loader2, MessageCircle, RotateCw, Share2, Telescope, Trash2, UserCog } from "lucide-react";
 import { P } from "../theme";
 import type { NoteDetail } from "../types";
-import { PURPOSES } from "../types";
+import { usePurposes } from "../hooks/usePurposes";
 import { ImageGallery } from "./ImageGallery";
 import { SourceBadge } from "./SourceBadge";
 import { NoteSkeleton } from "./Skeleton";
@@ -157,6 +157,7 @@ export function NotePane({
   const [draft, setDraft] = useState("");
   const [titleEditing, setTitleEditing] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
+  const { names: purposeNames } = usePurposes();
 
   const wrap = (children: React.ReactNode) => (
     <div
@@ -334,7 +335,7 @@ export function NotePane({
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
           <span style={{ fontFamily: P.mono, fontSize: 10, color: P.faint, marginRight: 2 }}>purpose</span>
-          {PURPOSES.map((pp) => {
+          {purposeNames.map((pp) => {
             const active = note.purpose === pp;
             return (
               <span

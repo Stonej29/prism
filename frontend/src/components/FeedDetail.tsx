@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Check, ChevronLeft, ExternalLink, MessageCircle, Pencil } from "lucide-react";
 import { api } from "../api";
 import { P, srcColor, srcLabel } from "../theme";
-import { PURPOSES } from "../types";
+import { usePurposes } from "../hooks/usePurposes";
 import type { NoteDetail } from "../types";
 import { ChatPanel } from "./ChatPanel";
 import { ImageGallery } from "./ImageGallery";
@@ -73,6 +73,7 @@ export function FeedDetail({
   const [tagsDraft, setTagsDraft] = useState("");
   const [saving, setSaving] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
+  const { names: purposeNames } = usePurposes();
 
   useEffect(() => {
     let cancelled = false;
@@ -219,7 +220,7 @@ export function FeedDetail({
                 <div>
                   <Label>Purpose</Label>
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 7 }}>
-                    {PURPOSES.map((pp) => {
+                    {purposeNames.map((pp) => {
                       const active = note.purpose === pp;
                       return (
                         <button

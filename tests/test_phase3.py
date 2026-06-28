@@ -346,19 +346,26 @@ class Phase3NoteServiceTests(unittest.TestCase):
             self.assertIn("## Detailed Summary", note_text)
             self.assertIn("Claim one", note_text)
 
-    def test_ground_truth_classifies_and_persists_purpose(self) -> None:
+    def test_personalization_classifies_and_persists_purpose(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             db = PrismDatabase(root / "prism.sqlite3")
             service = NoteService(root / "vault", db, root / "archives", LLMConfig("https://llm.example", "key", "model-a"))
-            # LLM returns a loosely-cased purpose; it should canonicalize to "Self-Host".
-            generation = LLMGeneration({**structured(), "purpose": "self host"}, "model-a")
+            generation = LLMGeneration(structured(), "model-a")
+            # The cheap personalization pass returns a loosely-cased purpose; it should
+            # canonicalize to "Self-Host" and be marked as an AI ("auto") classification.
+            personalize = patch(
+                "prism.notes.LLMClient.personalize_note",
+                return_value=LLMGeneration({**personalization(), "purpose": "self host"}, "model-a"),
+            )
 
-            with patch("prism.notes.fetch_source", return_value=fetch_result(root)), patch("prism.notes.LLMClient.generate_note", return_value=generation), _patch_personalize():
+            with patch("prism.notes.fetch_source", return_value=fetch_result(root)), patch("prism.notes.LLMClient.generate_note", return_value=generation), personalize:
                 result = service.save_url("https://example.com/article")
 
             self.assertEqual(result.record.purpose, "Self-Host")
-            self.assertEqual(db.find_by_note_id(result.record.note_id).purpose, "Self-Host")
+            stored = db.find_by_note_id(result.record.note_id)
+            self.assertEqual(stored.purpose, "Self-Host")
+            self.assertEqual(stored.purpose_source, "auto")
             note_text = (root / "vault" / result.record.note_path).read_text(encoding="utf-8")
             self.assertIn("purpose: Self-Host", note_text)
 
@@ -717,9 +724,10 @@ class PersonalizationSplitTests(unittest.TestCase):
             service = self._seed_note(root, db)
             captured: dict = {}
 
-            def fake_personalize(ground_truth, profile):
+            def fake_personalize(ground_truth, profile, **kwargs):
                 captured["gt"] = ground_truth
                 captured["profile"] = profile
+                captured["kwargs"] = kwargs
                 return LLMGeneration(personalization(), "model-a")
 
             note_id = db.list_notes_for_reindexing()[0].note_id
@@ -764,6 +772,25 @@ class PersonalizationSplitTests(unittest.TestCase):
             self.assertEqual(after.related_notes_json, related_before)
             self.assertEqual(struct_after["detailed_summary"], detail_before)
             self.assertEqual(canonical_index_text(after), idx_before)
+
+    def test_repersonalize_does_not_relabel_classified_purpose(self) -> None:
+        import dataclasses
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = PrismDatabase(root / "prism.sqlite3")
+            service = self._seed_note(root, db)
+            # An already-classified (auto) note.
+            before = db.list_notes_for_reindexing()[0]
+            db.update_note(dataclasses.replace(before, purpose="Work", purpose_source="auto"))
+
+            # The classifier now suggests a different purpose, but repersonalize must NOT
+            # silently relabel an already-classified note (that goes through proposals).
+            moved = {**personalization(), "purpose": "Thesis"}
+            with patch("prism.notes.LLMClient.personalize_note", return_value=LLMGeneration(moved, "model-a")):
+                result = service.repersonalize(before.note_id)
+            self.assertTrue(result.ok)
+            self.assertEqual(result.record.purpose, "Work")
+            self.assertEqual(result.record.purpose_source, "auto")
 
     def test_repersonalize_rejects_ungenerated_note(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

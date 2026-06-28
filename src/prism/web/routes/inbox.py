@@ -19,7 +19,7 @@ def get_inbox(
     offset: int = 0,
     db: PrismDatabase = Depends(get_db),
 ) -> dict:
-    """The review queue: unreviewed notes worth reading (Keep + archived excluded).
+    """The review queue: every unreviewed note (archived excluded).
 
     ``purpose`` optionally narrows to a single class ("Unsorted" => unclassified).
     """

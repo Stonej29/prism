@@ -1,6 +1,10 @@
-// Single-select content classification, mirrors PURPOSE_VALUES in prism/notes.py.
-// `null` on a note means "Unsorted" (unclassified).
-export const PURPOSES = ["Thesis", "Work", "Self-Host", "Dataset", "Keep"] as const;
+// Single-select content classification. The live set is user-defined (the `purposes`
+// API / usePurposes hook). `null` on a note means "Unsorted" (unclassified).
+export interface Purpose {
+  name: string;
+  description: string;
+  sort_order?: number;
+}
 
 export interface NoteSummary {
   id: string;

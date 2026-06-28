@@ -21,7 +21,7 @@ def rediscover(
     """Surface forgotten/contextual knowledge.
 
     - on_this_day: notes saved on today's date previously
-    - forgotten_gems: high-scoring, unreviewed, >30d old (Keep excluded)
+    - forgotten_gems: high-scoring, unreviewed, >30d old
     - related: live semantic neighbours of ``note_id``
     """
     if strategy not in _STRATEGIES:

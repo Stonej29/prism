@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 
 from prism.config import load_web_settings
 from prism.web import auth
-from prism.web.routes import activity, files, graph, ideas, inbox, maintenance, notes, profile, proposals, rediscovery, search, settings, stats, tags, tree
+from prism.web.routes import activity, files, graph, ideas, inbox, maintenance, notes, profile, proposals, purposes, rediscovery, search, settings, stats, tags, tree
 from prism.web.routes import auth as auth_routes
 
 logger = logging.getLogger(__name__)
@@ -101,7 +101,7 @@ def create_app() -> FastAPI:
         _install_auth(app, authenticator)
 
     api = APIRouter(prefix="/api")
-    for module in (notes, graph, tags, stats, search, ideas, inbox, rediscovery, proposals, maintenance, tree, files, activity, profile, settings, auth_routes):
+    for module in (notes, graph, tags, stats, search, ideas, inbox, rediscovery, proposals, purposes, maintenance, tree, files, activity, profile, settings, auth_routes):
         api.include_router(module.router)
     app.include_router(api)
 

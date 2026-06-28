@@ -52,6 +52,15 @@ class SetPurposeBody(BaseModel):
     purpose: str | None = None
 
 
+class PurposeBody(BaseModel):
+    name: str = Field(..., min_length=1, max_length=40)
+    description: str = Field(default="", max_length=400)
+
+
+class PurposeUpdateBody(BaseModel):
+    description: str = Field(default="", max_length=400)
+
+
 class BulkStatusBody(BaseModel):
     ids: list[str] = Field(..., min_length=1)
     status: str = Field(..., min_length=1)

@@ -6,6 +6,7 @@ import type { NoteSummary } from "../types";
 import { FeedCard } from "./FeedCard";
 import { FeedDetail } from "./FeedDetail";
 import { Spinner } from "./Spinner";
+import { usePurposes } from "../hooks/usePurposes";
 
 type Tab = "inbox" | "rediscovery" | "all";
 const PAGE_SIZE = 20;
@@ -19,9 +20,8 @@ const SORTS: { key: string; label: string }[] = [
   { key: "oldest", label: "Oldest" },
   { key: "relevance", label: "Top score" },
 ];
-// Single-purpose filters for the inbox (Keep is excluded from the queue by design;
-// "Unsorted" => notes with no purpose set). null = all purposes.
-const PURPOSE_FILTERS = ["Thesis", "Work", "Self-Host", "Dataset", "Unsorted"];
+// Inbox purpose filters are the user-defined set plus a synthetic "Unsorted"
+// ("Unsorted" => notes with no purpose set). null = all purposes.
 
 function PopLabel({ children }: { children: React.ReactNode }) {
   return (
@@ -71,6 +71,8 @@ export function FeedView({
   const [tab, setTab] = useState<Tab>("inbox");
   const [sort, setSort] = useState("newest");
   const [purpose, setPurpose] = useState<string | null>(null);
+  const { names: purposeNames } = usePurposes();
+  const purposeFilters = [...purposeNames, "Unsorted"];
   const [items, setItems] = useState<NoteSummary[]>([]);
   const [offset, setOffset] = useState(0);
   const [hasMore, setHasMore] = useState(true);
@@ -247,7 +249,7 @@ export function FeedView({
             }}
           >
             <PopLabel>Show</PopLabel>
-            {[{ key: null, label: "All purposes" }, ...PURPOSE_FILTERS.map((p) => ({ key: p as string | null, label: p }))].map((p) => (
+            {[{ key: null, label: "All purposes" }, ...purposeFilters.map((p) => ({ key: p as string | null, label: p }))].map((p) => (
               <PopOption key={p.label} label={p.label} active={purpose === p.key} onClick={() => setPurpose(p.key)} />
             ))}
             <div style={{ height: 1, background: P.line, margin: "6px 0" }} />

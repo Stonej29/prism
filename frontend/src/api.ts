@@ -13,6 +13,7 @@ import type {
   Proposal,
   ProposalAction,
   ProposalList,
+  Purpose,
   MaintenanceSettings,
   Stats,
   TagCount,
@@ -114,6 +115,16 @@ export const api = {
 
   setPurpose: (id: string, purpose: string | null) =>
     req<NoteDetail>(`/notes/${id}/purpose`, { method: "PUT", body: JSON.stringify({ purpose }) }),
+
+  purposes: () => req<{ items: Purpose[] }>(`/purposes`),
+  addPurpose: (name: string, description: string) =>
+    req<Purpose>(`/purposes`, { method: "POST", body: JSON.stringify({ name, description }) }),
+  updatePurpose: (name: string, description: string) =>
+    req<Purpose>(`/purposes/${encodeURIComponent(name)}`, { method: "PUT", body: JSON.stringify({ description }) }),
+  deletePurpose: (name: string) =>
+    req<{ ok: boolean }>(`/purposes/${encodeURIComponent(name)}`, { method: "DELETE" }),
+  scanPurposes: () =>
+    req<{ ok: boolean; created: number; scanned: number; message: string }>(`/purposes/scan`, { method: "POST" }),
 
   inbox: (params: { sort?: string; purpose?: string | null; limit?: number; offset?: number } = {}) => {
     const q = new URLSearchParams();

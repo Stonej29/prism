@@ -28,9 +28,13 @@ export function FeedCard({
        <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 7 }}>
         {/* Meta line */}
         <div style={{ display: "flex", alignItems: "center", gap: 7, fontFamily: P.mono, fontSize: 12, color: P.lo }}>
+          {note.purpose && (
+            <span style={{ color: P.accent, border: `1px solid ${P.accent}`, borderRadius: 5, padding: "1px 7px", fontSize: 11, letterSpacing: 0.3, flexShrink: 0 }}>
+              {note.purpose}
+            </span>
+          )}
           <span style={{ width: 6, height: 6, borderRadius: "50%", background: srcColor(note.source_kind), flexShrink: 0 }} />
           <span>{srcLabel(note.source_kind)}</span>
-          {note.purpose && (<>{dot}<span>{note.purpose}</span></>)}
           {note.overall != null && (<>{dot}<span style={{ color: scoreColor(note.overall) }}>{note.overall.toFixed(1)}</span></>)}
           {read && (<><span style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 4, color: P.pdf }}><Check size={12} /> read</span></>)}
         </div>

@@ -8,6 +8,7 @@ import shutil
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from collections.abc import Sequence
 from typing import Any
 from urllib.parse import urlparse
 
@@ -54,14 +55,15 @@ Preferences: describe what makes a note useful, which tradeoffs matter, and what
 
 NOTE_STATUSES = ("unreviewed", "reviewed", "archived")
 
-# Single-select content classification, auto-assigned by the LLM ground-truth pass and
-# user-editable. `None` ("Unsorted") means unclassified (LLM unsure or unconfigured).
-# `Keep` = worth retaining but not worth reading, so it is excluded from the review queue.
+# Single-select content classification, AI-assigned in the cheap personalization pass and
+# user-editable. `None` ("Unsorted") means unclassified (LLM unsure or unconfigured). The
+# category set is user-defined (the `purposes` DB table); these are only the seed defaults,
+# still used for CLI/bot usage hints.
 PURPOSE_VALUES = ("Thesis", "Work", "Self-Host", "Dataset", "Keep")
 
 
-def normalize_purpose(value: str | None) -> str | None:
-    """Map a free-form purpose to its canonical casing, or None if unrecognized.
+def normalize_purpose(value: str | None, names: Sequence[str] = PURPOSE_VALUES) -> str | None:
+    """Map a free-form purpose to a canonical name from `names`, or None if unrecognized.
 
     Matching is case- and separator-insensitive so the LLM (or a user) can pass
     "self host", "self_host", "SELF-HOST" etc. and still land on "Self-Host".
@@ -69,7 +71,7 @@ def normalize_purpose(value: str | None) -> str | None:
     if not value or not isinstance(value, str):
         return None
     key = re.sub(r"[\s_-]+", "", value).strip().lower()
-    for canonical in PURPOSE_VALUES:
+    for canonical in names:
         if re.sub(r"[\s_-]+", "", canonical).lower() == key:
             return canonical
     return None
@@ -151,6 +153,14 @@ class RepersonalizeSummary:
     updated: int
     failed: int
     errors: list[str]
+
+
+@dataclass(frozen=True)
+class ReclassifySummary:
+    ok: bool
+    created: int
+    scanned: int
+    message: str
 
 
 @dataclass(frozen=True)
@@ -598,15 +608,29 @@ class NoteService:
         any other unrecognized value raises ValueError.
         """
         cleaned = (purpose or "").strip()
+        names = [p.name for p in self.database.list_purposes()]
         if cleaned.lower() in ("", "none", "unsorted"):
             normalized: str | None = None
+            source: str | None = None
         else:
-            normalized = normalize_purpose(cleaned)
+            normalized = normalize_purpose(cleaned, names)
             if normalized is None:
-                raise ValueError(f"Purpose must be one of {', '.join(PURPOSE_VALUES)} (or none)")
-        updated = replace(record, purpose=normalized)
+                allowed = ", ".join(names) or "(no purposes defined)"
+                raise ValueError(f"Purpose must be one of {allowed} (or none)")
+            # A manual choice is sticky: it pins the value and teaches the classifier.
+            source = "user"
+        updated = replace(record, purpose=normalized, purpose_source=source)
         self.database.update_note(updated)
         self._render_to_disk(updated)
+        return updated
+
+    def pin_purpose(self, record: NoteRecord) -> NoteRecord:
+        """Mark a note's current purpose as a user decision (sticky) without changing the value.
+        Used when a re-classification proposal is rejected — "current is right, stop proposing"."""
+        if record.purpose_source == "user":
+            return record
+        updated = replace(record, purpose_source="user")
+        self.database.update_note(updated)
         return updated
 
     def apply_tags(self, record: NoteRecord, new_tags: list[str]) -> NoteRecord:
@@ -1001,9 +1025,8 @@ class NoteService:
             summary = _string_field(structured, "quick_summary") or record.summary
             tags = _tags(structured.get("tags"))
             scores = _scores(structured)
-            # Auto-classify into a single purpose; fall back to the existing value (or
-            # Unsorted) when the LLM omits it or returns something unrecognized.
-            purpose = normalize_purpose(structured.get("purpose")) or record.purpose
+            # Purpose is no longer chosen here — the cheap personalization pass classifies it
+            # against the user-defined category set (and learns from corrections).
             generated_at = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
             metadata_json = record.metadata_json
             if web and generation.web_sources:
@@ -1022,7 +1045,6 @@ class NoteService:
                 structured_summary_json=json.dumps(structured, ensure_ascii=True, sort_keys=True),
                 related_notes_json=json.dumps(structured.get("related_notes", []), ensure_ascii=True, sort_keys=True),
                 metadata_json=metadata_json,
-                purpose=purpose,
             )
         except Exception as exc:
             if force or record.llm_status != "generated":
@@ -1040,13 +1062,13 @@ class NoteService:
             return record
         try:
             structured = structured_summary(record)
-            ground_truth = {key: structured.get(key) for key in GROUND_TRUTH_CONTEXT_FIELDS if structured.get(key) is not None}
-            ground_truth.setdefault("title", record.title)
-            ground_truth.setdefault("source_kind", record.source_kind)
-            ground_truth.setdefault("source_url", record.source_url)
-            ground_truth["tags"] = tags_for_record(record)
+            ground_truth = self._ground_truth_context(record, structured)
+            purposes, names = self._purpose_definitions()
             generation = LLMClient(self.llm_config).personalize_note(
-                ground_truth, self.profile_path.read_text(encoding="utf-8")
+                ground_truth,
+                self.profile_path.read_text(encoding="utf-8"),
+                purposes=purposes,
+                examples=self._purpose_examples(),
             )
             personal = generation.data
             new_structured = dict(structured)
@@ -1059,16 +1081,104 @@ class NoteService:
                 if key in personal_scores:
                     scores[key] = personal_scores[key]
                     new_structured[key] = personal_scores[key]
+            # Purpose: apply the classifier only on first classification. An already-classified
+            # note is never silently relabelled here (that goes through proposals); user-pinned
+            # notes are likewise left alone.
+            purpose = record.purpose
+            purpose_source = record.purpose_source
+            if record.purpose is None and record.purpose_source is None:
+                suggested = normalize_purpose(personal.get("purpose"), names)
+                if suggested:
+                    purpose = suggested
+                    purpose_source = "auto"
             return replace(
                 record,
                 scores_json=json.dumps(scores, ensure_ascii=True, sort_keys=True),
                 structured_summary_json=json.dumps(new_structured, ensure_ascii=True, sort_keys=True),
+                purpose=purpose,
+                purpose_source=purpose_source,
             )
         except Exception as exc:
             if raise_on_error:
                 # Surface the failure to the caller but keep the existing (stale) note intact.
                 raise RuntimeError(f"{type(exc).__name__}: {exc}") from exc
             return record
+
+    def _purpose_definitions(self) -> tuple[list[dict[str, str]], list[str]]:
+        """The user-defined purpose set as ({name, description} dicts, [names]) for the classifier."""
+        purposes = self.database.list_purposes()
+        return (
+            [{"name": p.name, "description": p.description} for p in purposes],
+            [p.name for p in purposes],
+        )
+
+    def _purpose_examples(self, limit: int = 8) -> list[dict[str, str]]:
+        """Compact few-shot of the reader's own purpose choices (title + purpose), most recent
+        first, filtered to purposes that still exist — teaches the classifier without bloat."""
+        valid = {p.name for p in self.database.list_purposes()}
+        examples: list[dict[str, str]] = []
+        for r in self.database.list_user_classified_notes(limit):
+            if r.purpose in valid:
+                examples.append({"title": r.title, "purpose": r.purpose})
+        return examples
+
+    def _ground_truth_context(self, record: NoteRecord, structured: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Read-only ground-truth context handed to the cheap personalization/classification pass."""
+        structured = structured if structured is not None else structured_summary(record)
+        ground_truth = {key: structured.get(key) for key in GROUND_TRUTH_CONTEXT_FIELDS if structured.get(key) is not None}
+        ground_truth.setdefault("title", record.title)
+        ground_truth.setdefault("source_kind", record.source_kind)
+        ground_truth.setdefault("source_url", record.source_url)
+        ground_truth["tags"] = tags_for_record(record)
+        return ground_truth
+
+    def _classify_purpose(self, record: NoteRecord, purposes: list[dict[str, str]], names: list[str], examples: list[dict[str, str]]) -> str | None:
+        """Run the cheap classifier on a note's stored ground truth and return a canonical purpose."""
+        generation = LLMClient(self.llm_config).personalize_note(
+            self._ground_truth_context(record),
+            self.profile_path.read_text(encoding="utf-8"),
+            purposes=purposes,
+            examples=examples,
+        )
+        return normalize_purpose(generation.data.get("purpose"), names)
+
+    def propose_reclassification(self, limit: int = 500) -> ReclassifySummary:
+        """Re-classify every non-user note against the current purpose set and write a `repurpose`
+        proposal for each note whose suggestion differs from its current value. Nothing is applied
+        — the user reviews/accepts each change. User-pinned notes are never touched."""
+        from prism.db import ProposalRecord
+        from prism.proposals import KIND_REPURPOSE, new_proposal_id
+
+        if not self.llm_config.is_configured:
+            return ReclassifySummary(ok=False, created=0, scanned=0, message="Reclassification needs LLM_API_KEY and LLM_MODEL.")
+        purposes, names = self._purpose_definitions()
+        if not names:
+            return ReclassifySummary(ok=False, created=0, scanned=0, message="No purposes defined.")
+        examples = self._purpose_examples()
+        candidates = self.database.list_reclassify_candidates(limit)
+        created = 0
+        for record in candidates:
+            try:
+                suggested = self._classify_purpose(record, purposes, names, examples)
+            except Exception:
+                continue
+            if not suggested or suggested == record.purpose:
+                continue
+            note_ids_json = json.dumps([record.note_id], ensure_ascii=True)
+            if self.database.pending_proposal_exists(KIND_REPURPOSE, note_ids_json):
+                continue
+            payload = {"note_id": record.note_id, "title": record.title, "current": record.purpose, "proposed": suggested}
+            created_at = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+            self.database.insert_proposal(ProposalRecord(
+                proposal_id=new_proposal_id(self.database),
+                created_at=created_at,
+                kind=KIND_REPURPOSE,
+                note_ids_json=note_ids_json,
+                payload_json=json.dumps(payload, ensure_ascii=True, sort_keys=True),
+            ))
+            created += 1
+        plural = "proposal" if created == 1 else "proposals"
+        return ReclassifySummary(ok=True, created=created, scanned=len(candidates), message=f"Scanned {len(candidates)} notes, created {created} {plural}.")
 
     def rediscover_on_this_day(self, limit: int = 12) -> list[NoteRecord]:
         """Notes saved on today's calendar day in previous periods."""
@@ -1336,8 +1446,6 @@ def _merge_candidates(*groups: list[RelatedCandidate], limit: int) -> list[Relat
 def normalize_structured_summary(data: dict[str, Any], related_candidates: list[RelatedCandidate] | None = None) -> dict[str, Any]:
     normalized = dict(data)
     normalized["tags"] = _tags(normalized.get("tags"))
-    if "purpose" in normalized:
-        normalized["purpose"] = normalize_purpose(normalized.get("purpose"))
     normalized["related_notes"] = normalize_related_notes(normalized.get("related_notes"), related_candidates or [])
     for key, value in _scores(normalized).items():
         normalized[key] = value
